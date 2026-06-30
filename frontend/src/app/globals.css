@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 222 20% 12%;
+  --muted: 220 14% 96%;
+  --primary: 262 80% 58%;
+  --border: 220 13% 91%;
+}
+
+.dark {
+  --background: 222 18% 11%;
+  --foreground: 210 20% 96%;
+  --muted: 222 14% 20%;
+  --primary: 262 78% 66%;
+  --border: 222 12% 24%;
+}
+
+html,
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: Pretendard, system-ui, -apple-system, sans-serif;
+}

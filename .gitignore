@@ -1,0 +1,35 @@
+# --- secrets / data ---
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.sqlite3
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# --- node / next ---
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# --- misc ---
+.DS_Store
+*.log
+.idea/
+.vscode/
+dist/
+build/
