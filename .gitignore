@@ -25,6 +25,10 @@ out/
 npm-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.tsbuildinfo
+
+# --- python test cache ---
+.hypothesis/
 
 # --- misc ---
 .DS_Store
