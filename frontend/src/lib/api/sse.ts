@@ -1,6 +1,6 @@
 // SSE parser for chat/continue streaming (design 6.4, 7.13).
 // Accumulates `token` events; preserves partial buffer on error/disconnect (Property 9).
-import { API_BASE } from "./client";
+import { API_BASE, getAccessToken } from "./client";
 
 export interface SSEHandlers {
   onToken: (delta: string) => void;
@@ -12,16 +12,29 @@ export async function streamSSE(
   path: string,
   body: unknown,
   handlers: SSEHandlers,
-  accessToken?: string | null,
+  opts?: { accessToken?: string | null; signal?: AbortSignal },
 ): Promise<string> {
+  const token = opts?.accessToken ?? getAccessToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+  if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers,
     body: JSON.stringify(body ?? {}),
+    signal: opts?.signal,
   });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const j = await res.json();
+      message = j?.error?.message || j?.detail || message;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.({ code: `HTTP_${res.status}`, message });
+    return "";
+  }
   if (!res.body) throw new Error("No response body");
 
   const reader = res.body.getReader();
@@ -56,7 +69,7 @@ export async function streamSSE(
   return accumulated;
 }
 
-function parseFrame(frame: string): { event: string; data: any } | null {
+export function parseFrame(frame: string): { event: string; data: any } | null {
   let event = "message";
   let data = "";
   for (const line of frame.split("\n")) {

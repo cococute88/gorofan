@@ -112,6 +112,15 @@ export interface Chapter {
   updated_at: string;
 }
 
+export interface WorkCharacter {
+  id: string;
+  work_id: string;
+  character_id: string;
+  role_in_work: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ModelConfig {
   id: string;
   provider: string;

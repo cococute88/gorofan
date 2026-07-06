@@ -1,4 +1,4 @@
-import { BookOpen, Globe, Home, MessageCircle, Settings, User } from "lucide-react";
+import { BookOpen, Globe, Home, MessageCircle, Settings, User, UserCircle2 } from "lucide-react";
 
 export const PRIMARY_NAV = [
   { href: "/", label: "홈", icon: Home },
@@ -18,5 +18,6 @@ export const MOBILE_TABS = [
 
 export const SECONDARY_NAV = [
   { href: "/worlds", label: "세계관", icon: Globe },
+  { href: "/personas", label: "페르소나", icon: UserCircle2 },
   { href: "/settings", label: "설정", icon: Settings },
 ] as const;

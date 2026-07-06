@@ -2,10 +2,25 @@
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1";
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 let accessToken: string | null = null;
 
 export function setAccessToken(token: string | null) {
   accessToken = token;
+}
+
+export function getAccessToken(): string | null {
+  return accessToken;
 }
 
 function headers(extra?: Record<string, string>): Record<string, string> {
@@ -40,17 +55,22 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function apiDelete(path: string): Promise<void> {
+export async function apiDelete<T = void>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: headers() });
   if (!res.ok && res.status !== 204) throw await toError(res);
+  return undefined as T;
 }
 
-async function toError(res: Response): Promise<Error> {
+async function toError(res: Response): Promise<ApiError> {
   try {
     const body = await res.json();
-    return new Error(body?.error?.message || `HTTP ${res.status}`);
+    return new ApiError(
+      body?.error?.message || body?.detail || `HTTP ${res.status}`,
+      res.status,
+      body?.error?.code,
+    );
   } catch {
-    return new Error(`HTTP ${res.status}`);
+    return new ApiError(`HTTP ${res.status}`, res.status);
   }
 }
 

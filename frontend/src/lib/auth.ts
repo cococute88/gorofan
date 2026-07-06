@@ -17,3 +17,14 @@ export function clearToken(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(TOKEN_KEY);
 }
+
+/**
+ * Extract the access token the OAuth callback delivers in the URL fragment,
+ * e.g. `#access_token=ey...`. Returns null when absent/empty. Pure + SSR-safe
+ * so it can be unit-tested (login completion flow, design 14.4).
+ */
+export function parseAccessTokenFromHash(hash: string): string | null {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  const token = new URLSearchParams(raw).get("access_token");
+  return token && token.length > 0 ? token : null;
+}
