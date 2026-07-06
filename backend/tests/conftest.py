@@ -25,9 +25,9 @@ os.environ["CORS_ORIGINS"] = "http://localhost:3000"
 def _create_schema():
     from sqlalchemy import create_engine
 
+    from app import models  # noqa: F401  (register tables)
     from app.config import get_settings
     from app.db.base import Base
-    from app import models  # noqa: F401  (register tables)
 
     get_settings.cache_clear()
     sync_engine = create_engine(f"sqlite:///{_DB_PATH}")

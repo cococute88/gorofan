@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str | None = None
     GOOGLE_CLIENT_SECRET: SecretStr | None = None
     OAUTH_REDIRECT_BASE: str = "http://localhost:8000"
+    # Frontend origin the OAuth callback bounces back to (login completion flow).
+    FRONTEND_BASE_URL: str = "http://localhost:3000"
 
     # --- providers / runtime ---
     PROVIDER_MAX_CONCURRENCY: int = 4

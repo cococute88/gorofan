@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.registry import ProviderRegistry
 from app.config import Settings
-from app.core.errors import NotFound, ValidationAppError
+from app.core.errors import ValidationAppError
 from app.core.security import decrypt_secret, encrypt_secret, mask_secret
 from app.models.ai_config import ModelConfig, PromptTemplate, ProviderCredential
 from app.schemas.ai_config import (

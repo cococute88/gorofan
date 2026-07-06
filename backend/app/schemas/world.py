@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.schemas.common import ORMModel, TimestampedOut
+from app.schemas.common import TimestampedOut
 
 
 class WorldCreate(BaseModel):

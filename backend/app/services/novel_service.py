@@ -14,7 +14,7 @@ from app.core.pagination import Page, PageParams
 from app.engines.novel.engine import ChapterContext, NovelEngine, words_to_tokens
 from app.models.character import Character
 from app.models.novel import Chapter, Work, WorkCharacter
-from app.models.world import LoreEntry, Lorebook, World
+from app.models.world import Lorebook, LoreEntry, World
 from app.repositories.base import BaseRepository
 from app.schemas.novel import (
     ChapterCreate,
@@ -143,17 +143,49 @@ class NovelService:
             await s.commit()
 
     # ----- characters link -----
+    async def list_characters(self, user_id: str, work_id: str) -> list[WorkCharacter]:
+        async with self.sm() as s:
+            await self._owned_work(s, user_id, work_id)
+            stmt = select(WorkCharacter).where(WorkCharacter.work_id == work_id)
+            return list((await s.execute(stmt)).scalars().all())
+
     async def link_character(self, user_id: str, work_id: str, dto: WorkCharacterLink) -> WorkCharacter:
         async with self.sm() as s:
             await self._owned_work(s, user_id, work_id)
             ch = await s.get(Character, dto.character_id)
             if ch is None or ch.user_id != user_id:
                 raise ValidationAppError("character must be your own")
+            existing = (
+                await s.execute(
+                    select(WorkCharacter).where(
+                        WorkCharacter.work_id == work_id,
+                        WorkCharacter.character_id == dto.character_id,
+                    )
+                )
+            ).scalars().first()
+            if existing is not None:
+                raise Conflict("Character already linked to this work")
             link = WorkCharacter(work_id=work_id, character_id=dto.character_id, role_in_work=dto.role_in_work)
             s.add(link)
             await s.commit()
             await s.refresh(link)
             return link
+
+    async def unlink_character(self, user_id: str, work_id: str, character_id: str) -> None:
+        async with self.sm() as s:
+            await self._owned_work(s, user_id, work_id)
+            link = (
+                await s.execute(
+                    select(WorkCharacter).where(
+                        WorkCharacter.work_id == work_id,
+                        WorkCharacter.character_id == character_id,
+                    )
+                )
+            ).scalars().first()
+            if link is None:
+                raise NotFound("Character not linked to this work")
+            await s.delete(link)
+            await s.commit()
 
     # ----- continue writing (SSE) -----
     async def continue_chapter(
@@ -195,7 +227,7 @@ class NovelService:
             yield StreamEvent(event="error", code=code, message=str(exc))
             return
 
-        new_version = await self._append_chapter(user_id, chapter_id, buffer, base_version, partial=False)
+        await self._append_chapter(user_id, chapter_id, buffer, base_version, partial=False)
         yield StreamEvent(event="done", finish_reason="stop", token_count=len(buffer))
 
     async def _append_chapter(

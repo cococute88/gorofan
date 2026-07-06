@@ -31,10 +31,10 @@ class ChatSession(BaseModel):
     )
     title: Mapped[str] = mapped_column(String(300), default="새 대화")
 
-    messages: Mapped[list["Message"]] = relationship(
+    messages: Mapped[list[Message]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
-    memories: Mapped[list["Memory"]] = relationship(
+    memories: Mapped[list[Memory]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
 

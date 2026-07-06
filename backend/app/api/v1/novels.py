@@ -70,9 +70,19 @@ async def reorder(work_id: str, dto: ReorderRequest, user: User = Depends(get_cu
     await _svc(state).reorder_chapters(user.id, work_id, dto.ordered_chapter_ids)
 
 
+@router.get("/{work_id}/characters", response_model=list[WorkCharacterOut])
+async def list_work_characters(work_id: str, user: User = Depends(get_current_user), state=Depends(get_state)):
+    return await _svc(state).list_characters(user.id, work_id)
+
+
 @router.post("/{work_id}/characters", response_model=WorkCharacterOut, status_code=201)
 async def link_character(work_id: str, dto: WorkCharacterLink, user: User = Depends(get_current_user), state=Depends(get_state)):
     return await _svc(state).link_character(user.id, work_id, dto)
+
+
+@router.delete("/{work_id}/characters/{character_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unlink_character(work_id: str, character_id: str, user: User = Depends(get_current_user), state=Depends(get_state)):
+    await _svc(state).unlink_character(user.id, work_id, character_id)
 
 
 # chapter-scoped (mounted under /works for path simplicity → /works/chapters/{id})

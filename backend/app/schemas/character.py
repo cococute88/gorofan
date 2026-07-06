@@ -42,6 +42,11 @@ class PersonaCreate(BaseModel):
     description: str = ""
 
 
+class PersonaUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+    description: str | None = None
+
+
 class PersonaOut(TimestampedOut):
     user_id: str
     name: str

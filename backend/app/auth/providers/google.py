@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import httpx
 
-from app.auth.providers.base import OAuthIdentity, OAuthProvider, OAuthTokens, PKCE
+from app.auth.providers.base import PKCE, OAuthIdentity, OAuthProvider, OAuthTokens
 from app.core.errors import Unauthenticated
 
 AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"

@@ -7,7 +7,7 @@ from app.core.errors import NotFound
 from app.core.pagination import Page, PageParams
 from app.models.character import Persona
 from app.repositories.base import BaseRepository
-from app.schemas.character import PersonaCreate
+from app.schemas.character import PersonaCreate, PersonaUpdate
 
 
 class PersonaService:
@@ -29,3 +29,17 @@ class PersonaService:
         if p is None:
             raise NotFound("Persona not found")
         return p
+
+    async def update(
+        self, session: AsyncSession, user_id: str, persona_id: str, dto: PersonaUpdate
+    ) -> Persona:
+        p = await self.get(session, user_id, persona_id)
+        await self.repo.update(session, p, dto.model_dump(exclude_unset=True))
+        await session.commit()
+        await session.refresh(p)
+        return p
+
+    async def delete(self, session: AsyncSession, user_id: str, persona_id: str) -> None:
+        p = await self.get(session, user_id, persona_id)
+        await session.delete(p)
+        await session.commit()

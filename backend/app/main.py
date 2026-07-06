@@ -10,10 +10,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.adapters.registry import build_provider_registry
 from app.api.router import api_router
 from app.auth.providers.google import GoogleOAuthProvider
 from app.auth.service import AuthService, ensure_default_user
-from app.adapters.registry import build_provider_registry
 from app.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.jobs import build_job_queue

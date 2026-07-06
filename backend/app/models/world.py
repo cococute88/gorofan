@@ -21,10 +21,10 @@ class World(BaseModel, SoftDeleteMixin):
     nations: Mapped[list[str]] = mapped_column(JSONList, default=list)
     taboos: Mapped[list[str]] = mapped_column(JSONList, default=list)
 
-    lorebooks: Mapped[list["Lorebook"]] = relationship(
+    lorebooks: Mapped[list[Lorebook]] = relationship(
         back_populates="world", cascade="all, delete-orphan"
     )
-    glossary_terms: Mapped[list["GlossaryTerm"]] = relationship(
+    glossary_terms: Mapped[list[GlossaryTerm]] = relationship(
         back_populates="world", cascade="all, delete-orphan"
     )
 
@@ -51,7 +51,7 @@ class Lorebook(BaseModel):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
     world: Mapped[World] = relationship(back_populates="lorebooks")
-    entries: Mapped[list["LoreEntry"]] = relationship(
+    entries: Mapped[list[LoreEntry]] = relationship(
         back_populates="lorebook", cascade="all, delete-orphan"
     )
 

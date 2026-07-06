@@ -1,11 +1,13 @@
 """Auth router (design 6.2, 14)."""
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import RedirectResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, get_db, get_state
+from app.core.deps import get_current_user, get_state
+from app.core.errors import AppError
 from app.models.user import User
 
 router = APIRouter()
@@ -26,10 +28,21 @@ async def callback(
     state_param: str = Query(..., alias="state"),
     state=Depends(get_state),
 ):
-    pair = await state.auth_service.complete(provider, code, state_param)
+    frontend = state.settings.FRONTEND_BASE_URL.rstrip("/")
+    if state.auth_service is None:
+        return RedirectResponse(url=f"{frontend}/login?error=auth_disabled", status_code=302)
+    try:
+        pair = await state.auth_service.complete(provider, code, state_param)
+    except AppError as exc:
+        # Bounce back to the login screen with a machine-readable reason.
+        return RedirectResponse(
+            url=f"{frontend}/login?error={quote(exc.code)}", status_code=302
+        )
+
+    # Hand the access token to the SPA via the URL fragment (never sent to a
+    # server / not logged), and set the refresh token as an HttpOnly cookie.
     resp = Response(status_code=302)
-    resp.headers["Location"] = "/"
-    # refresh token as HttpOnly cookie (design 14.4)
+    resp.headers["Location"] = f"{frontend}/auth/callback#access_token={quote(pair.access_token)}"
     resp.set_cookie(
         "refresh_token",
         pair.refresh_token,
@@ -38,7 +51,6 @@ async def callback(
         samesite="lax",
         max_age=state.settings.REFRESH_TTL_SECONDS,
     )
-    resp.headers["X-Access-Token"] = pair.access_token
     return resp
 
 

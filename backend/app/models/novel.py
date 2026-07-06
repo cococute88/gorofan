@@ -27,10 +27,10 @@ class Work(BaseModel, SoftDeleteMixin):
     genre: Mapped[str] = mapped_column(String(120), default="")
     tags: Mapped[list[str]] = mapped_column(JSONList, default=list)
 
-    chapters: Mapped[list["Chapter"]] = relationship(
+    chapters: Mapped[list[Chapter]] = relationship(
         back_populates="work", cascade="all, delete-orphan"
     )
-    work_characters: Mapped[list["WorkCharacter"]] = relationship(
+    work_characters: Mapped[list[WorkCharacter]] = relationship(
         back_populates="work", cascade="all, delete-orphan"
     )
 

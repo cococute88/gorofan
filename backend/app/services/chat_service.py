@@ -25,7 +25,7 @@ from app.core.pagination import Page, PageParams
 from app.engines.chat.engine import ChatEngine
 from app.models.character import Character, Persona
 from app.models.chat import ChatSession, Message
-from app.models.world import LoreEntry, Lorebook, World
+from app.models.world import Lorebook, LoreEntry, World
 from app.schemas.chat import ChatCreate, MessageCreate
 from app.services.provider_resolve import resolve_provider_request
 

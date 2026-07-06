@@ -13,6 +13,7 @@ from app.schemas.character import (
     CharacterUpdate,
     PersonaCreate,
     PersonaOut,
+    PersonaUpdate,
 )
 from app.schemas.common import PageOut
 from app.services.character_service import CharacterService
@@ -96,3 +97,31 @@ async def create_persona(
     db: AsyncSession = Depends(get_db),
 ):
     return await _personas.create(db, user.id, dto)
+
+
+@persona_router.get("/{persona_id}", response_model=PersonaOut)
+async def get_persona(
+    persona_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _personas.get(db, user.id, persona_id)
+
+
+@persona_router.patch("/{persona_id}", response_model=PersonaOut)
+async def update_persona(
+    persona_id: str,
+    dto: PersonaUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _personas.update(db, user.id, persona_id, dto)
+
+
+@persona_router.delete("/{persona_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_persona(
+    persona_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _personas.delete(db, user.id, persona_id)

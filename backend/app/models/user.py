@@ -17,7 +17,7 @@ class User(BaseModel):
     avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    oauth_accounts: Mapped[list["OAuthAccount"]] = relationship(
+    oauth_accounts: Mapped[list[OAuthAccount]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 

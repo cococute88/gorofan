@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,13 +93,13 @@ class MemoryEngine:
 
     # ----- ranking (design 10.8) -----
     def _rank(self, candidates: list[Memory], query: str | None) -> list[Memory]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         q_tokens = {t for t in (query or "").lower().split() if len(t) > 1}
 
         def score(m: Memory) -> float:
             created = m.created_at or now
             if created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
+                created = created.replace(tzinfo=UTC)
             dt = max(0.0, (now - created).total_seconds())
             recency = math.exp(-dt / TAU_SECONDS)
             content = (m.content or "").lower()
