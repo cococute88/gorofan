@@ -4,6 +4,7 @@ SQLite gets WAL + foreign_keys=ON pragmas (design 8.1.4 / 8.16).
 """
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 
 from sqlalchemy import event
@@ -17,10 +18,29 @@ from sqlalchemy.ext.asyncio import (
 from app.config import Settings
 
 
+def ensure_sqlite_dir(database_url: str) -> None:
+    """Create the parent directory of a sqlite file DB if missing.
+
+    A clean clone has no ``data/`` dir (it's gitignored); sqlite refuses to
+    create the file's parent directory itself, so the first connection fails
+    with ``unable to open database file``. The path is CWD-relative, matching
+    sqlite3/aiosqlite's own resolution semantics.
+    """
+    if not database_url.startswith("sqlite"):
+        return
+    path = database_url.split("///", 1)[-1]
+    if not path or path == ":memory:":
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
 def create_engine(settings: Settings) -> AsyncEngine:
     connect_args: dict = {}
     if settings.is_sqlite:
         connect_args["check_same_thread"] = False
+        ensure_sqlite_dir(settings.DATABASE_URL)
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=False,

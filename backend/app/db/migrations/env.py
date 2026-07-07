@@ -14,6 +14,7 @@ from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 from app.db.base import Base
+from app.db.session import ensure_sqlite_dir
 from app.models import *  # noqa: F401,F403  (register all tables)
 
 config = context.config
@@ -22,6 +23,7 @@ if config.config_file_name is not None:
 
 settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+ensure_sqlite_dir(settings.DATABASE_URL)  # clean clone has no gitignored data/ dir yet
 
 target_metadata = Base.metadata
 

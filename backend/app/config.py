@@ -6,15 +6,24 @@ governs SQLite <-> PostgreSQL (design 4.4 / 8.6). Secrets use ``SecretStr``.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_BACKEND_DIR = Path(__file__).resolve().parent.parent  # backend/
+_REPO_ROOT = _BACKEND_DIR.parent  # project root (holds the documented `.env`)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # `.env` is documented to live at the repo root (README quickstart:
+        # `cp .env.example .env` run from there), but pydantic-settings
+        # resolves a bare filename against the process CWD — which is
+        # `backend/` for the standalone dev flow. Check both, backend-local
+        # last so it can override the shared root file when present.
+        env_file=(_REPO_ROOT / ".env", _BACKEND_DIR / ".env"),
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
         extra="ignore",
