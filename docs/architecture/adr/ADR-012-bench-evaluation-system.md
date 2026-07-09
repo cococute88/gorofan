@@ -1,61 +1,65 @@
 # ADR-012: Bench Evaluation System
 
-- **Status:** Accepted — *lightweight, offline, developer-facing Bench adopted; in-product continuous evaluation runtime rejected. Whether to build even the lightweight Bench is **Needs Validation***
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — **upgraded** from "optional, maybe-never" to a **necessary** dev harness, built early)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-005, ADR-007, ADR-009, ADR-010, ADR-016
+- **Related:** ADR-001, ADR-005, ADR-008, ADR-009, ADR-013
 
 ## 1. Context
 
-Prompt tuning (ADR-009), the single-vs-multi-pass question (ADR-005), character-consistency choices (ADR-007), and provider/model selection (ADR-016) all raise the same need: **a way to tell whether a change actually improved output**, rather than relying on vibes. A "Bench" is an evaluation harness: a fixed set of scenarios run through the system, whose outputs are scored (by human, by rubric, or by an LLM-judge) and compared across prompts/models/pipeline variants.
+v1 adopted a *lightweight, offline* Bench but was lukewarm — it flagged *whether to build it at all* as "Needs Validation," reasoning that a single user is already the judge. `architecture-final-minimal.md` §0/§7 makes the opposite case forcefully and, on reflection, correctly for **this** architecture:
 
-The risk is over-building. A production-grade eval platform (continuous scoring of live generations, regression dashboards, automated gates) is heavy infrastructure — and for a **single user**, most of it has no audience. But *some* measurement discipline is what separates principled tuning from superstition.
+> *"The missing engine that matters most after shipping is the Bench … everything above makes creative behavior live in prompt files — which means creative behavior will change constantly. Without measurement, week-6-you will 'improve' a prompt and silently break voice consistency, and you will not find out until a user does."*
 
-This is the one ADR where the Board is least certain the artifact is worth building at all for a one-person product; that uncertainty is stated openly.
+The key is a **conditional the Board now grants**: v2's whole architecture deliberately moves creative logic *into constantly-changing prompt files and entry types* (ADR-001 governing rule, ADR-005 stages, ADR-008 facets). That choice *creates* the regression risk — so the Bench is not an optional nicety, it is the **safety mechanism that makes prompt-file-centrism survivable.** v1 was lukewarm because v1 put less in prompt files; v2's design makes the Bench necessary.
+
+The reservation the Board *keeps*: the Bench stays strictly dev-only, zero-UI, and cheap — it reuses the Writer's checks as metrics, so its marginal build cost is a runner + fixtures.
 
 ## 2. Decision
 
-**Adopt a deliberately lightweight, offline, developer-facing Bench — a tuning instrument, not a product subsystem. Reject any in-product, always-on evaluation runtime.**
+**Adopt the Bench as a necessary, dev-only evaluation harness, built early (build-order step 4), reusing the Writer's checks as metrics. No in-product evaluation runtime.**
 
-1. **Offline and opt-in.** The Bench is a development tool the *maintainer* runs, not a service that scores live user generations.
-2. **Small curated scenario set.** A handful of representative fixtures (a chat exchange, a chapter continuation, a style-imitation task, a character-consistency probe) — not a large corpus. Fixtures are versioned as files (ADR-013 kinship: tuning artifacts belong in the repo).
-3. **Comparison, not grading.** Its core job is *A/B comparison* — old prompt vs new, model X vs Y, single-pass vs multi-pass — surfaced side by side. Scoring may be manual (maintainer judgment) and/or an **LLM-as-judge** rubric; both are acceptable, neither is authoritative.
-4. **No runtime coupling.** The Bench imports the same Prompt Engine / Adapter code paths as production (so it tests the real system) but runs out-of-band. It adds **no** always-on evaluation, no live scoring, no dashboards in the app.
-5. **Feature-flagged if surfaced at all.** Any in-app entry point (e.g. a "prompt/model playground" — a listed future extension) is L3/advanced, behind a flag, and reuses the Bench fixtures. It never enters primary navigation (ADR-014).
-6. **Existence is Needs Validation.** Build it only when a real tuning decision (e.g. ADR-005 multi-pass, ADR-009 priority tuning, provider selection) actually needs evidence. Do not build a Bench speculatively.
+1. **Necessary, not optional.** Because creative behavior lives in prompt files/stages/entry types that change weekly, every such change is Bench-gated. This is the meta-engine that lets quality *compound* instead of oscillate.
+2. **Golden set:** 20–30 fixed scenarios (scene card + a frozen entry snapshot) spanning scene types — confession, banter, action, reveal, quiet interiority (`architecture-final-minimal.md` §7).
+3. **Metrics = the checks already built** (ADR-005/020): contradiction count, voice-attribution accuracy, hook presence, length adherence, LLM-ism hits, repetition score — **plus** a pairwise "old vs. new — which is better?" model judgment per golden scene.
+4. **Usage:** every prompt/stage/retrieval change runs the Bench and emits a one-page diff report. Marginal cost = a runner script + fixtures (it reuses Writer checks).
+5. **Dev-only, zero UI, zero runtime coupling.** It imports the real code paths (so it tests what ships) but runs out-of-band. **No** per-generation live scoring, **no** automated quality gates blocking the user's own output, **no** dashboards in the app.
+6. **Build it in step 4** (with the first checks + diff capture), not speculatively before there is a pipeline to measure — but not deferred indefinitely either.
+
+**Where the Board updates itself:** v1's "maybe never build it" is withdrawn. Given v2's prompt-file-centric architecture, *not* building the Bench would be negligent. The Board agrees with `architecture-final-minimal.md` that this is the single most important thing to add after the quality core.
 
 ## 3. Alternatives Considered
 
-- **A. Continuous in-product evaluation** — score every live generation, track quality metrics over time, show dashboards.
-- **B. Automated quality gates** — block/flag generations that fall below an eval threshold.
-- **C. No evaluation at all** — tune by intuition and manual spot-checks.
-- **D. Full external eval platform** — adopt/build a comprehensive LLM-eval framework with datasets, metrics, and CI integration.
+- **A. v1's "optional, maybe never."**
+- **B. Continuous in-product evaluation** — score every live generation, dashboards.
+- **C. Automated quality gates** — block/flag sub-threshold generations.
+- **D. Full external eval platform** with large datasets/CI.
 
 ## 4. Why Rejected
 
-- **A — Continuous in-product eval:** Doubles token cost (a judge call per generation), adds latency and complexity, and produces dashboards with an audience of one who is already reading the output. The value/cost ratio for a single user is poor. Rejected.
-- **B — Automated gates:** Blocking or auto-rejecting the user's own generation based on an imperfect automated judge is user-hostile and paternalistic in a personal creative tool — the user *is* the judge. Rejected.
-- **C — Nothing:** Leaves consequential decisions (multi-pass? which model? which prompt?) to guesswork, risking silent quality regressions precisely where the product's value lives. Some measurement is worth its modest cost. Rejected.
-- **D — Full eval platform:** Enormous over-build for a personal app; a second product's worth of machinery. Directly violates simplicity-as-tie-breaker (ADR-001). Rejected.
+- **A — Optional/maybe-never:** Withdrawn. It ignored that v2 deliberately concentrates volatile behavior in prompt files, which mandates regression measurement. Rejected.
+- **B — Continuous in-product eval:** Doubles token cost (judge per generation), latency, and complexity, with an audience of one who already reads the output. Rejected.
+- **C — Automated gates:** Blocking the user's *own* creative output on an imperfect automated judge is paternalistic in a personal tool — the user is the final judge. Rejected.
+- **D — Full eval platform:** A second product's worth of machinery; violates simplicity (ADR-001). The 20–30-scene reuse-the-checks Bench captures the value cheaply. Rejected.
 
 ## 5. Consequences
 
 **Positive**
-- Turns the highest-leverage tuning decisions (prompt, model, pipeline shape) from vibes into evidence, cheaply.
-- Zero runtime cost/complexity for end users; nothing ships in the hot path.
-- Reuses production code paths, so it tests what actually runs.
+- Turns constant prompt/stage tuning from vibes into measured A/B — the difference between compounding and oscillating quality.
+- Near-free to build (reuses Writer checks); zero runtime cost/complexity for users.
+- Tests the real code paths, so results reflect what ships.
 
 **Negative**
-- A small fixture set has limited coverage; it can mislead if fixtures aren't representative (over-fitting prompts to the Bench).
-- LLM-as-judge scoring is itself imperfect and provider-dependent; results are directional, not authoritative.
-- It is maintainer effort that produces no user-visible feature — easy to skip, hence the explicit Needs-Validation stance.
+- A 20–30-scene set has limited coverage; prompts can over-fit to fixtures (mitigate: diverse fixtures, treat scores as directional).
+- LLM-as-judge pairwise scoring is itself imperfect and provider-dependent — directional, not authoritative.
+- Maintainer effort with no user-visible feature (but now justified as necessary infrastructure).
 
 **Future risks**
-- Prompt/model tuning could over-fit to the Bench fixtures and generalize poorly; mitigated by keeping fixtures diverse and treating scores as directional.
-- Scope creep toward option A/D is a constant temptation ("just log every generation's score"); this ADR is the guardrail.
+- Over-fitting to the golden set; refresh fixtures periodically.
+- The "two critics may be too few" question (ADR-005) is *resolved by the Bench* — converting an argument into a measurement.
 
 ## 6. Future Revisit Conditions
 
-- **Decide to build it** when the first real evidence-needing decision arrives (ADR-005 multi-pass validation is the likely trigger). If no such decision materializes, the Bench may never be built — and that is an acceptable outcome for a personal tool.
-- If the maintainer becomes a heavy multi-model user, revisit a slightly richer comparison surface (still offline, still opt-in).
-- Reconsider (still cautiously) any in-product surfacing only via the feature-flagged playground extension, never as default behavior.
+- Grow/refresh the golden set as new scene types or failure classes appear.
+- Use the Bench to decide ADR-005's third-critic and ADR-018's embeddings questions — it is the designated arbiter for both.
+- Reconsider a minimal in-product surfacing only via the feature-flagged playground extension, never as default behavior (ADR-014).

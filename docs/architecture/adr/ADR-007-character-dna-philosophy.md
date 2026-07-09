@@ -1,63 +1,64 @@
 # ADR-007: Character DNA Philosophy
 
-- **Status:** Accepted — *prose-based character definition adopted; rigid trait schemas rejected*
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — prose-first **validated** by both reviews; enriched with layers-as-prompt-org + exemplars-first)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-003, ADR-009, ADR-004
+- **Related:** ADR-003, ADR-005, ADR-008, ADR-011
 
 ## 1. Context
 
-The `Character` is the product's unifying entity — the same record is both a chat partner and a novel cast member (`design.md` §3.1). "Character DNA" asks: **how do we represent a character's identity so the AI keeps them consistent** across hundreds of chat turns and dozens of chapters?
+v1 adopted **prose + examples + tags** for character identity and rejected rigid trait schemas (OCEAN/stat-blocks/genomes/axes) and learned embeddings. The reviews both engage this directly and, notably, **converge toward the v1 position after a self-correction**:
 
-The design space runs from:
-- **Prose** — free-text `personality`, `speech_style`, `greeting`, plus a few `tags` (the existing `design.md` model), to
-- **Structured trait schemas** — Big-Five/OCEAN sliders, stat blocks, formal trait ontologies, mood/relationship state machines, or a "character genome" of weighted attributes.
+- `design-review-ai-author-os.md` R15/R16 first proposes a **five-layer DNA** (Core / Behavioral / Voice / Relational / Arc) with *"tags become axes with intensity (냉정 0.8)"* and *edit→attribute back-propagation*.
+- `architecture-final-minimal.md` §2 **self-corrects**: the five layers survive *"as prompt organization for the Analyst and rendering order for the card, **not** as schema"*; it **drops axes-with-intensity as first-class schema** and **drops R16 back-propagation** from v1 — *"when a user fixes an example line, just store the corrected line as a canonical `character.exemplar`… exemplars outrank descriptions in prompt assembly anyway."*
 
-The seductive idea is that more structure = more consistency. In practice, LLMs consume and honor **well-written prose descriptions and concrete examples** far more faithfully than numeric sliders, which must be re-verbalized into prose before they influence generation anyway. Over-structuring also multiplies UI complexity (forms, sliders, editors) — directly against mobile-first minimalism.
+So the Board's v1 anti-rigid-schema instinct is corroborated. What the reviews add — and v1 under-specified — is the **structure of the prose** (which fields carry the most depth) and the primacy of **example dialogue (exemplars)**.
 
 ## 2. Decision
 
-**Adopt prose-and-example-based Character DNA. The "DNA" of a character is authored natural-language text plus a small set of tags — not a formal trait model.**
+**Keep prose-and-example-first Character DNA. Store it as `character.*` Store entries auto-populated by the Analyst with provenance. Use the five layers as prompt/rendering organization, not schema. Make exemplars first-class and outranking.**
 
-1. **Core DNA fields are prose:** identity/personality, speech style/voice, greeting, and background — authored by the user as expressive text that is injected largely verbatim by the Prompt Engine (ADR-009). Plus lightweight `tags` for filtering/discovery.
-2. **Consistency comes from injection + examples, not from a model.** Character voice is held stable by (a) always injecting the character block at high priority (near-protected from truncation, `design.md` §9.8), and (b) optionally attaching a few **example utterances** (few-shot) that demonstrate voice — themselves just text.
-3. **No numeric personality schema, no stat blocks, no mood state machine** in the canonical model. If a user wants such structure, they express it in the prose ("cold on the surface, fiercely loyal underneath").
-4. **Character-specific canon (facts, relationships, memories) lives in the Bible as Entries** (ADR-003/004), not crammed into the Character record. The Character record stays the stable "who they are"; evolving facts are Entries.
-5. **Extensibility is via optional structured fields added non-destructively** (ADR-015) *only if validated* — never a speculative trait ontology up front.
+1. **DNA lives as entries** (ADR-003): `character.core`, `character.voice`, `character.exemplar` (+ later `character.behavioral|relational|arc`). Each has prose `content`, `provenance` (reference excerpt / chapter / user), `confidence`, `status`.
+2. **The five layers are prompt organization + card rendering order, not tables/columns.** The Analyst knows to *look for* Core/Behavioral/Voice/Relational/Arc signals (`design-review` §2.2–2.8) and renders them in that order on the character card — but nothing is normalized into a rigid attribute schema.
+3. **Highest-yield depth fields (adopt as prose):** the **contradiction pair** ("겉은 얼음, 아이 앞에서만 무장해제"), the **never-says list**, and **example dialogue** are the three fields that most raise perceived character depth. These are prose/exemplars, not sliders.
+4. **Exemplars are first-class and outrank descriptions.** Models imitate examples better than descriptions (R14). A user correcting a line stores it as a canonical `character.exemplar` with provenance `user` (this replaces R16 back-propagation — same effect, far less machinery). The chat engine feeds this too: a bookmarked chat line becomes an exemplar (R22, ADR-014).
+5. **Tags stay simple search keys**, not booleans-driving-generation and not axes-with-intensity. Custom tags are labels the Analyst may *expand into prose* on use — never a first-class numeric schema.
+6. **Still rejected:** rigid trait ontologies, numeric personality axes as canonical schema, mood/affinity state machines, learned/opaque character embeddings (ADR-010). Precedence for conflicting inputs (R17) starts as **last-write-wins by declared precedence** (user desc > bible > tags > collection DNA > genre baseline), surfacing a conflict Review Card only when the Bench shows silent averaging hurts (deferred, per `architecture-final-minimal.md` §6).
+
+**Explicit agreement with the reviews:** the Board agrees with `architecture-final-minimal.md`'s self-correction to drop axes-as-schema and back-propagation — these were the exact over-engineering v1 warned against, and their own senior reviewer reached the same conclusion.
 
 ## 3. Alternatives Considered
 
-- **A. Formal trait model** — OCEAN/Big-Five sliders, alignment grids, weighted attribute genome, mood/affinity state machines as canonical character data.
-- **B. Card-format import compatibility as the canonical model** — adopt an external character-card spec (e.g. SillyTavern-style fields) verbatim as the internal schema.
-- **C. Minimal single-field** — one free-text "description" blob, no separation of personality vs speech vs greeting.
-- **D. Learned character embeddings** — derive a vector "DNA" from past dialogue and condition generation on it.
+- **A. Five-layer DNA with axes-with-intensity as schema + edit→attribute back-propagation** (R15/R16 as originally written).
+- **B. Rigid trait model** (OCEAN/stat blocks/state machines) — v1's alternative A.
+- **C. Single free-text blob** — v1's alternative C.
+- **D. Learned character embeddings** — v1's alternative D.
 
 ## 4. Why Rejected
 
-- **A — Formal trait model:** Numeric traits don't improve LLM fidelity commensurate with their cost; they must be translated back into prose to matter, so the prose is the real payload. They add substantial UI (sliders, editors) against mobile-first minimalism, and they encode a psychological theory the product has no reason to commit to. State machines for mood/affinity add runtime complexity and failure modes. **Rejected as complexity without proportional quality.**
-- **B — External card spec as canonical schema:** Coupling the internal model to a third-party card format is a subtle lock-in and imports fields we may not want. *Import/export compatibility* with such formats is worthwhile as an adapter at the edges (future), but it should not dictate the core schema. Rejected as canonical; acceptable as an I/O adapter later.
-- **C — Single blob:** Under-structured: separating personality, speech style, and greeting has real value (greeting seeds the first message per AC-CHAT-5; speech style can be emphasized in prompting). Collapsing them loses useful injection control. Rejected as too coarse.
-- **D — Learned embeddings:** Opaque, hard to edit ("tweak the vector"?), provider/model-dependent, and a large ML apparatus for a single-user app. Directly conflicts with the human-editable, transparent ethos. Rejected (and see ADR-010 on learning systems).
+- **A — Axes-as-schema + back-prop:** Over-built; the reviewer who proposed it retracted it. Axes must be re-verbalized into prose to matter; back-propagation is inference machinery when *just storing the corrected exemplar* achieves ~the same effect (exemplars outrank descriptions). Rejected as schema; the layers survive as prompt organization.
+- **B — Rigid trait model:** Numeric traits don't improve LLM fidelity commensurate with UI cost; both reviews prefer prose/exemplars. Rejected.
+- **C — Single blob:** Loses the useful separation (core vs. voice vs. exemplar) that drives targeted injection and the voice-attribution check (ADR-005). Rejected.
+- **D — Learned embeddings:** Opaque, un-editable, provider-dependent — contra the transparent ethos (ADR-010). Rejected.
 
 ## 5. Consequences
 
 **Positive**
-- Maximum expressiveness with minimum machinery: users write who the character is, the model honors it.
-- Trivial editing on mobile (text fields, not slider arrays).
-- Character record stays stable and small; evolving canon is cleanly separated into Bible Entries.
-- No commitment to any psychological ontology; portable across models.
+- Maximum character depth with *less* UI than a tag form (the DNA Editor is a card + a few dials + editable example dialogue — ADR-014), backed by a 10× richer store that is still just prose entries.
+- Exemplars-first gives the voice-attribution check (ADR-005) real ground truth and makes editing intuitive ("fix the line").
+- Auto-population from references (Analyst, ADR-008) means no empty forms; provenance makes it trustworthy.
 
 **Negative**
-- Consistency quality depends on the user's writing skill and on prompt injection discipline; a vaguely-written character yields a vague AI.
-- No automatic enforcement of trait consistency (nothing "checks" the AI stayed in character) — mitigated only by injection priority and optional examples, and by user regeneration.
-- Free-text is harder to analyze programmatically (e.g. for a future consistency checker) than structured fields.
+- Character quality depends on reference/extraction quality and on the user occasionally correcting exemplars.
+- No DB-enforced trait consistency; consistency comes from injection priority + the voice-attribution check, not schema.
+- Prose DNA is harder to query programmatically than columns (accepted; ADR-003).
 
 **Future risks**
-- A future "character consistency checker" (a listed extension) would have to work over prose + generated text rather than structured traits; this is an LLM-judgment task, not a rule check.
-- If users demand structured attributes, resisting scope creep into a full trait system will require re-deciding here.
+- If a specific structured field proves to measurably help (Bench-verified), it may be added as bounded `data` on a `character.*` type — never a full ontology.
+- Conflict resolution starting as last-write-wins may occasionally pick wrong; the escalation (conflict Review Card) is Bench-gated.
 
 ## 6. Future Revisit Conditions
 
-- If a Bench (ADR-012) demonstrates that a *small, specific* structured field (e.g. an explicit "speech quirks" list, or example-utterance count) measurably improves consistency, add it as an optional non-destructive field — not a full ontology.
-- If character-card import/export becomes a real need, add an edge adapter mapping external formats to the prose model, keeping the canonical schema unchanged.
-- Reconsider learned/derived character conditioning only if (a) local, cheap, editable-by-humans methods exist, and (b) they clearly beat prose+examples in a Bench.
+- Add a small structured `data` field to a `character.*` type only if the Bench shows it beats prose+exemplars.
+- Re-enable an R16-style back-propagation facet only if storing corrected exemplars proves insufficient in practice.
+- Add the conflict Review Card (R17) if silent precedence resolution is shown to hurt quality.

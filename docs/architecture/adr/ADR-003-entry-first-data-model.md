@@ -1,64 +1,62 @@
-# ADR-003: Entry-first Data Model
+# ADR-003: Entry-first Data Model (One Prose-first Entry Model)
 
-- **Status:** Accepted (scoped) — *Entry-first is adopted for the knowledge/Bible layer only; rejected as the model-wide organizing principle*
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — **reversed** from v1's rejection of the single Entry model)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-002, ADR-004, ADR-006, ADR-007
+- **Related:** ADR-002, ADR-004, ADR-007, ADR-017, ADR-018
 
 ## 1. Context
 
-"Entry-first" proposes that the atomic unit of the system is an **Entry** — a small, typed, keyworded knowledge fragment (a lore fact, a glossary term, an event, a relationship note, a character trait, a memory) — and that the larger structures (world, character, story bible) are *compositions of entries*.
+v1 adopted a **two-tier** model: typed aggregates (Character, World, …) as the backbone, with entries only for the knowledge tier, and it explicitly **rejected** a model-wide single Entry table as "EAV / God-Table." `architecture-final-minimal.md` §2 challenges exactly this and proposes **one Entry model** for all knowledge — Character DNA (five layers), World DNA, Style Profile, Plot/Dialogue/Emotion libraries, and all ledgers (fact / knowledge / promise / relationship / timeline / summary) — with `Character` and `World` demoted to **thin containers**.
 
-The existing `design.md` is **aggregate-first**: `Character` and `World` are the declared centers ("도메인의 중심은 Character와 World"), with `LoreEntry`, `GlossaryTerm`, and `Memory (kind: summary|fact|event)` as satellites. So the design already has an "entry-like" pattern in exactly the places where knowledge is polymorphic — but it does **not** dissolve typed aggregates into generic entries.
-
-The Board must decide how far "entry-first" should go. Taken to its extreme, entry-first becomes an **Entity-Attribute-Value (EAV)** / universal-table model where one `entries` table holds everything. That is the God-Object trap of ADR-002 expressed in the schema (a "God Table"): it maximizes flexibility and destroys type safety, query clarity, and referential integrity simultaneously.
+The Board must decide whether v1's EAV alarm was correct. On re-examination it was **overstated**: the proposal is not classic EAV (one logical row shredded into attribute rows). It is a **discriminated single-table document model** — a well-understood, legitimate pattern — whose primary field is **prose** (`content`), with a `data` JSON escape hatch used *only* where a deterministic check needs structure. That is materially different from an attribute bag, and the alternative (≈10 tables/editors/retrieval paths) is the heavier debt.
 
 ## 2. Decision
 
-**Adopt a two-tier data model:**
+**Adopt one prose-first `Entry` model as the Store's knowledge representation. Reverse v1's rejection of the single table. Keep true aggregates as typed tables; demote Character/World to thin containers.**
 
-1. **Typed aggregates are the backbone (aggregate-first).** `User`, `World`, `Character`, `Persona`, `Work`, `Chapter`, `ChatSession`, `Message`, `ModelConfig` remain **explicit, strongly-typed entities** with their own tables, columns, invariants, and repositories. These are *not* entries. They have distinct lifecycles, distinct UIs, and distinct invariants (INV-1..7).
+1. **One `Entry` type** carries all knowledge/DNA/ledger data. Its shape (conceptual — RFCs own the DDL): a `scope` (collection / work), a governed `type` discriminator, an optional `subject`, a **prose `content`** field written *to be injected into prompts*, an optional `data` JSON (only when a check needs structure), plus `provenance`, `confidence`, `status` (proposed / canon / rejected), `superseded_by`, and `created_at_chapter`.
+2. **Prose-first is the governing principle.** The heavy consumer of entries is prompt assembly, and models read prose better than schemas. Normalize into `data` JSON *only* where a deterministic check reads it (promise due-dates, knowledge-matrix lookups, relationship stage, summary level). **Do not** build an ontology, a knowledge graph, per-attribute columns, or "axes-with-intensity" as first-class schema.
+3. **`type` is a governed closed vocabulary** — e.g. `character.core|character.voice|character.exemplar`, `world.rule|world.naming|world.place`, `style.prose`, `emotion.repertoire`, `plot.trope`, `fact`, `knowledge`, `promise`, `relationship`, `summary`, `preference`, `note`. **A new library/ledger = a new `type` string, never a new table.** Adding a `type` is a deliberate decision (ADR/RFC), never user-supplied data. **No `type:"misc"` catch-all** (that would re-open EAV by the back door).
+4. **True aggregates stay typed tables:** `User`, `Work`, `Chapter` (TipTap doc), `ChatSession`, `Message` (append-only, immutable — INV-4), `ModelConfig`, `Collection`. These have distinct lifecycles/invariants and are **not** entries. Chat `Memory` stays its own chat-private table (ADR-018) — it is not folded into Entry.
+5. **Character and World become thin containers.** `Character` keeps identity/container fields; its personality/voice move into `character.*` entries. `World` keeps name/description/tone; races/nations/taboos/lore move into `world.*` entries. Legacy free-text columns become a *rendered view of entries* or are dropped (migrations in ADR-017 / `architecture-final-minimal.md` §5).
+6. **Provenance + status are mandatory** and power Review Cards (status=proposed → ADR-011) and the "why does the AI think this?" popover (ADR-014).
 
-2. **Entry-first applies to the knowledge/Bible layer only.** The polymorphic *knowledge fragments* that feed generation — lore, glossary, extracted facts, events, relationship notes, style notes — are modeled as **typed Entries** sharing a common shape: `{ kind, keywords[], content, priority, enabled, source, provenance }`. This is the unit the Living Story Bible (ADR-004) is composed of, and the unit the Analyst scans and injects (ADR-009).
-
-The dividing line is a rule: **if a thing has its own screen, its own lifecycle, and its own invariants, it is an aggregate; if it exists only to be retrieved and injected as context, it is an Entry.**
-
-Constraints on the Entry tier:
-- Entries are **typed by `kind`**, not free-form EAV. `kind` is a closed vocabulary (e.g. `lore`, `glossary`, `fact`, `event`, `relationship`, `style`), extended only by deliberate migration — never by user data.
-- Entries carry **provenance** (authored-by-user vs AI-proposed vs extracted-from-chapter) so the Bible can distinguish canon from suggestion (critical for ADR-004/ADR-011).
-- Entries **do not replace** `Message` or `Chapter`. Chat history and chapter prose are first-class immutable/authored content, not entries. Entries may be *derived from* them (a summary, an extracted fact) but the derivation is explicit and reviewed.
-
-> This ADR states the *decision and its boundaries*. It intentionally does **not** specify table columns, keys, or DDL — that belongs to an RFC.
+> This ADR decides the *model and its guardrails*. It writes no columns, keys, or DDL — those belong to an RFC.
 
 ## 3. Alternatives Considered
 
-- **A. Full entry-first / EAV** — one universal `entries` table (or a handful) holds all knowledge *and* the aggregates dissolve into entries with `kind` discriminators.
-- **B. Pure aggregate-first** — keep exactly the `design.md` model; treat lore/glossary/memory as unrelated satellite tables with no shared "Entry" concept.
-- **C. Document-per-world** — store the whole Story Bible as one JSON document per world, edited wholesale.
+- **A. v1's two-tier model** (typed aggregates + separate knowledge tier; no single Entry table).
+- **B. Full literal R1–R26** — Character DNA (5 layered tables), World DNA table, Style Profile table, Plot/Dialogue/Emotion library tables, fact/knowledge/promise/relationship ledger tables.
+- **C. Classic EAV** — one attribute-value store shredding every knowledge object into rows.
+- **D. Knowledge graph / ontology** for facts, relationships, and world rules.
 
 ## 4. Why Rejected
 
-- **A — Full EAV / God Table:** Destroys type safety (every field becomes a string/JSON blob), makes constraints and referential integrity nearly impossible, turns every query into a self-join, and cripples the ORM's ability to isolate SQLite/PostgreSQL dialects (CON-2). It also recreates the God-Object problem at the storage layer: one table every feature must touch. The flexibility it buys is not needed — the set of aggregate types is small and stable. **Rejected as an anti-pattern for a long-lived personal app.**
-- **B — Pure aggregate-first with no Entry concept:** This is *almost* the status quo, but it misses a real opportunity: lore, glossary, extracted facts, events, and relationships genuinely share a retrieval/injection contract (keyword match, priority, budget). Without a unifying Entry shape, the Analyst needs bespoke scan/inject logic per satellite type, and the "Living Story Bible" (ADR-004) has no coherent read model. Rejected as under-unified.
-- **C — Document-per-world JSON:** Simple to start, but wholesale-edit documents fight the mobile, incremental, review-one-fact-at-a-time UX (ADR-011), make keyword-triggered partial injection awkward, and turn concurrent edits into whole-document conflicts. Rejected for the interaction model it forces.
+- **A — v1 two-tier:** Its instinct (aggregates typed, knowledge unified) was right, but it stopped short and kept the knowledge tier as *multiple* typed tables while banning the single table. The single prose-first table is simpler (one editor, one retrieval path, new library = a string) and — crucially — **not** the EAV it feared. Superseded by the single Entry model.
+- **B — Literal R1–R26 tables:** The explicit debt bomb (`architecture-final-minimal.md`): ~10 tables/editors/retrieval paths for what is one document model. Rejected.
+- **C — Classic EAV:** Still rejected, and the Entry model is *not* this: the primary field is prose `content`, not shredded attributes; `type` is closed; `data` JSON is a narrow escape hatch. The genuine EAV harms (no type safety, self-join queries, integrity loss) do not apply to a discriminated prose-document table. Rejected.
+- **D — Graph/ontology:** The single most attractive over-engineering trap in this category (both reviews flag it). It produces *worse* prompts than well-written provenanced paragraphs, and adds a second storage engine (breaking Zero-Cost and the single-`DATABASE_URL` swap). Rejected; a derived read-only projection remains possible later (ADR-006).
 
 ## 5. Consequences
 
 **Positive**
-- Type safety and query clarity for the things that have real structure (aggregates); uniformity for the things that are genuinely uniform (knowledge fragments).
-- The Analyst has **one** scan/rank/inject path over a shared Entry contract → less code, fewer bugs, easier RAG upgrade later (a Retriever over Entries — FUT-2).
-- Provenance on entries makes the human-in-the-loop canon gate (ADR-011) implementable without bolt-ons.
+- One table, one editor (rendered by `type`), one `retrieve()` — the Store is ~100 lines, not a subsystem (ADR-018).
+- New DNA/library/ledger types cost a `type` string + a prompt facet, not a migration — the evolution surface the whole architecture wants (ADR-001, ADR-015).
+- Prose-first yields better prompt material than schema; provenance/confidence make DNA trustworthy and Review-Card-gated.
+- RAG upgrade later is a drop-in over one Entry space (ADR-018), not per-table retrofits.
 
 **Negative**
-- Two tiers means a judgment call at the boundary ("is a Character trait an aggregate field or an Entry?"). The rule in §2 resolves most cases but not all; some cases need a documented decision.
-- Slightly more schema than pure aggregate-first (a typed Entry tier), though far less than EAV.
+- Weaker database-enforced integrity for structured facts (they live in `data` JSON); deterministic checks must parse JSON.
+- Concentrated risk: a bug or a bad `type` proliferation affects one central table.
+- The aggregate/Entry boundary still needs judgment (e.g., is a Chapter summary an Entry? — yes, `summary` type; is Message? — no, aggregate).
 
 **Future risks**
-- Scope creep of the Entry `kind` vocabulary could re-introduce EAV by the back door (a `kind:"misc"` catch-all). Guard: adding a `kind` requires an ADR/RFC and a migration, never runtime data.
-- If character modeling later wants richer structure (ADR-007 currently keeps it prose-based), the aggregate/Entry boundary for character traits may need revisiting.
+- Prose-first is consciously the **riskiest** bet (both reviews and the Board agree). If `knowledge`/`promise`/`timeline` checks need heavy structure (timeline arithmetic, who-knows-what graphs), `data` JSON strains.
+- `type` vocabulary creep; guarded by the no-`misc`, ADR-gated rule.
 
 ## 6. Future Revisit Conditions
 
-- If a genuinely dynamic, user-defined schema requirement appears (e.g. users defining arbitrary custom fields per world), reconsider a *bounded* EAV escape hatch — scoped to a single `custom_fields` JSON column on an aggregate, never a global entities table.
-- If RAG/embedding retrieval (FUT-2) is adopted, revisit whether the Entry tier needs an embedding column and whether `Message`/`Chapter` chunks should be projected into the Entry retrieval space.
-- If the aggregate/Entry boundary produces repeated ambiguity in practice, promote §2's rule into a short decision-log appendix with worked examples.
+- **Promote a `type` to a real table** when its deterministic checks start doing "parsing gymnastics" (the visible failure mode). This is cheap *precisely because* everything routes through one Store — the canonical pressure valve.
+- Adopt embeddings on the Entry space only when keyword retrieval demonstrably misses, measured on the Bench (ADR-018).
+- If a genuine user-defined-schema need appears, add a bounded `data` extension on a specific `type`, never a global attribute store.

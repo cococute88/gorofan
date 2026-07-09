@@ -1,9 +1,19 @@
 # ADR-017: Persistence & DB Swap Strategy
 
-- **Status:** Accepted — *SQLite-first, ORM-isolated, PostgreSQL-ready; ownership scoping, soft-delete, and app-level encryption ratified*
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — swap/scoping/encryption strategy **unchanged**; schema is now Entry-model-centric with a named debt-migration list)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-001, ADR-003, ADR-013, ADR-015
+- **Related:** ADR-001, ADR-003, ADR-013, ADR-015, ADR-018
+
+> **v2 note.** The persistence *strategy* (SQLite-first, ORM-only, single-`DATABASE_URL` swap, hybrid `user_id` scoping, soft-delete, app-level encryption, append-only messages) is unchanged and validated. What changes is *what* is stored: the single prose-first **Entry** table (ADR-003) replaces the per-library tables, and the `design.md` data model carries named **two-year debt** to migrate (`architecture-final-minimal.md` §5):
+> 1. `Character.personality`/`speech_style` free-text → `character.core`/`character.voice` entries (columns become a rendered view or are dropped).
+> 2. `World.races/nations/taboos` string arrays → `world.*` entries; `World` stays a thin container.
+> 3. `Lorebook`/`LoreEntry` **keyword-trigger** machinery → `world.*`/`note` entries; **delete the trigger system** (superseded by unified retrieval — ADR-018; two retrieval systems is one too many).
+> 4. `Chapter.summary` single text → multi-level `summary` entries (`data.level`); the column may stay as a cache of `level=chapter`.
+> 5. Chat `Memory` table stays **chat-private**; it is *not* extended toward novel/Bible context (novel knowledge uses Entries).
+> 6. **No per-library table ever** (`dialogue_library`, `character_dna_attributes`, …) — its appearance would signal architectural failure (ADR-003/015).
+>
+> The Entry table follows the same conventions as every other table here: `user_id` ownership scoping (Property 1), soft-delete/status where applicable, forward-only Alembic migrations, ORM-only access. The rest of this ADR (swap mechanics, encryption, scoping model) stands as written.
 
 ## 1. Context
 

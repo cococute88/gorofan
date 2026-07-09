@@ -1,59 +1,62 @@
-# ADR-018: Memory & Retrieval Strategy
+# ADR-018: Memory & Retrieval Strategy (One retrieve() over the Store)
 
-- **Status:** Accepted — *keyword-first retrieval with background summarization; embedding/RAG deferred behind a shared `Retriever` seam*
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — **strongly validated**; unified into one `retrieve()` over the Entry store, multi-level summaries)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-002, ADR-004, ADR-008, ADR-009, ADR-015
+- **Related:** ADR-002, ADR-003, ADR-004, ADR-008, ADR-009
 
 ## 1. Context
 
-Long-form chat and novels exceed any context window, so the system needs **memory**: compress old dialogue into long-term summaries/facts, and retrieve the relevant pieces per turn within budget. `design.md` §10 specifies a Memory Engine that summarizes over a token threshold (background, non-blocking), stores `Memory` entries (`summary|fact|event`), and retrieves via a `Retriever` Protocol — **keyword matching for MVP**, with an embedding retriever as a schema-non-breaking future upgrade (FUT-2).
+v1 adopted keyword-first retrieval + background summarization, with embeddings deferred behind a `Retriever` seam. Both reviews validate this precisely and unify it:
 
-The tempting default in AI apps is "add a vector database and RAG everything." For a single user with modest data, an always-on embedding pipeline is cost and complexity that keyword retrieval largely obviates — while the *seam* for RAG is cheap to keep.
+> `design-review` R5: *"scene-relevant retrieval … your MemoryEngine's rank-and-budget design is already the correct pattern — generalize it from chat memories to Bible entries."*
+> `architecture-final-minimal.md` §2: *"one `retrieve(scope, cast, location, beat, budget) → entries` … rank by type-weight × relevance × recency, cut to token budget … ~100 lines, not an engine. Start with keyword ranking; add embeddings only when keyword retrieval demonstrably misses (measured on the Bench), not before."*
+
+So v1's decision is corroborated, and two refinements are added: (1) the retrieval function is **one function over the whole Store** (Bible, DNA, ledgers, exemplars — not just chat memory); (2) summaries become **multi-granularity** entries (scene/chapter/arc/story-so-far), replacing the single `Chapter.summary`.
 
 ## 2. Decision
 
-**Adopt keyword-first retrieval + background summarization now; keep a single `Retriever` seam for a future embedding upgrade. This retrieval path is shared by memory, lore, and (future) reference analysis.**
+**Adopt a single `retrieve(scope, cast, location, beat, budget) → entries` function over the Entry store as the Store's core capability. Keep keyword-first ranking; defer embeddings behind the same seam, Bench-gated. Summaries are multi-level entries. Background, non-blocking summarization is retained.**
 
-1. **Summarize on threshold, in the background** (BR-6, AC-MEM-1/4): when unsummarized tokens exceed a threshold, compress older messages into long-term `Memory`; never block the interactive turn; failures are isolated and retriable (force-summarize available, AC-MEM-6).
-2. **Retrieve by keyword + rank by recency/relevance/priority** within the token budget (AC-MEM-2, `design.md` §10.8–10.9). The Analyst injects the selected memories via the Prompt Engine (ADR-009).
-3. **`Memory.cover_up_to_message_id` is monotonic and references a real message** (Property 5 / INV-5) — no dangling or overlapping summaries.
-4. **One retrieval abstraction for all knowledge.** Memory, lore Entries, and future reference/style Entries are retrieved through the *same* `Retriever` contract over the Bible (ADR-002/003/004). This avoids parallel retrieval systems.
-5. **Embedding/RAG is deferred** (ADR-015): the `Retriever` seam and a nullable embedding column (FUT-2) reserve the upgrade; the `EmbeddingRetriever` implementation is **not built** until a concrete need and a local/cheap embedding path exist (Zero-Cost).
-6. **Summarization model is configurable** (dedicated summary `ModelConfig`, falling back to the chat model — AC-MEM-5), so a cheaper/faster model can do compaction.
+1. **One retrieval function for everything** (ADR-003): ranks Store entries by *type-weight × relevance × recency*, cut to token budget — the existing MemoryEngine rank/budget pattern generalized (~100 lines, not an engine). It serves chat memory, Bible facts, DNA, exemplars (ADR-008), and ledgers (ADR-004) uniformly.
+2. **Keyword-first ranking; embeddings deferred, Bench-gated:** add an `EmbeddingRetriever` behind the same single seam **only** when keyword retrieval demonstrably misses, *measured on the Bench* (ADR-012) — never a parallel RAG (shared with ADR-008).
+3. **Retrieval, not dumping** (R5): scene-relevant selection (on-stage cast, locations, due `promise`s, `knowledge` state) puts the *right* facts in budget — critical past chapter ~50 when the Bible exceeds any context window.
+4. **Summaries are multi-granularity `summary` entries** (`data.level` = scene/chapter/arc/story-so-far), replacing the single `Chapter.summary` (ADR-004/017). Serialization needs summaries at multiple levels; one text field silently drops what a level needed.
+5. **Background, non-blocking summarization** retained (BR-6, NFR-1): compress on threshold, isolated/retriable, force-summarize available. `Memory.cover_up_to_message_id` monotonic + real (Property 5).
+6. **Chat `Memory` stays chat-private** (ADR-017 debt item 5): do not extend it toward novel context; shared knowledge (e.g. R22 chat-bookmark → exemplar) flows through **Entries**, not by widening the chat Memory table.
 
 ## 3. Alternatives Considered
 
-- **A. Embedding/RAG from day one** (vector DB, embed everything, semantic retrieval).
-- **B. No summarization — full history until it overflows**, then hard-truncate.
-- **C. Separate retrieval systems** for memory vs lore vs references.
-- **D. Synchronous (blocking) summarization** at the turn boundary.
+- **A. Embedding/RAG from day one** (vector DB, embed everything).
+- **B. Separate retrieval systems** for chat memory vs. Bible vs. references (the v1-era risk / lorebook keyword scanner).
+- **C. No summarization / single-level summary only.**
+- **D. Blocking summarization** at the turn boundary.
 
 ## 4. Why Rejected
 
-- **A — RAG from day one:** A vector store + embedding pipeline is non-trivial cost/complexity and often over-kill at personal scale, where keyword + priority retrieval over a curated Bible performs well. It also front-runs a decision better made with real data. The seam is kept; the system is not. Rejected as MVP default (revisit per FUT-2).
-- **B — No summarization:** Guarantees context overflow on exactly the long-form use case the product targets; hard truncation then silently drops story-critical history. Rejected.
-- **C — Separate retrieval systems:** Duplicates the most reusable machinery and guarantees drift; a single `Retriever` over the Bible is simpler and upgrades once. Rejected (ties to ADR-008's insistence on one RAG, if any).
-- **D — Blocking summarization:** Violates the non-blocking principle (BR-6, NFR-1); users would feel periodic stalls. Rejected.
+- **A — RAG day one:** Premature cost/complexity; keyword + priority over provenanced entries performs well at personal scale; embeddings should be Bench-gated. Rejected now; kept as a deferred shared seam.
+- **B — Separate retrieval systems:** Both reviews insist on *one* retrieval path; the `design.md` lorebook **keyword-trigger scanner** is explicitly deleted as a second retrieval system ("two retrieval systems is one too many," `architecture-final-minimal.md` §5). Rejected.
+- **C — No / single-level summaries:** Guarantees context overflow on long-form and drops granularity serialization needs. Rejected — multi-level `summary` entries.
+- **D — Blocking summarization:** Violates non-blocking principle (BR-6/NFR-1). Rejected.
 
 ## 5. Consequences
 
 **Positive**
-- Long-form continuity with zero vector-DB cost/complexity; keyword+priority retrieval is transparent and debuggable.
-- Non-blocking summarization keeps the interactive path fast.
-- One retrieval contract serves memory, lore, and future references; RAG upgrade is a drop-in behind the seam.
+- One ~100-line retrieval function serves the entire product; a single place to tune ranking and later add embeddings.
+- Long-form continuity (fact/knowledge/promise retrieval + multi-level summaries) without vector-DB cost/complexity.
+- Deleting the lorebook keyword scanner removes a whole retrieval subsystem (simplification).
 
 **Negative**
-- Keyword retrieval misses semantic matches (synonyms, paraphrase) that embeddings would catch — a real recall ceiling.
-- Summary quality bounds long-range coherence; a poor summary degrades future generation (and, for novels, the next continuation).
-- Background jobs add mild complexity (in-process queue, idempotency, retry).
+- Keyword ranking has a semantic-recall ceiling (synonyms/paraphrase) that embeddings would raise.
+- Summary quality bounds long-range coherence; poor summaries degrade the next scene/chapter.
+- Multi-level summaries add some Analyst work (produce them) and Store entries.
 
 **Future risks**
-- As a project's Bible/history grows large, keyword recall may degrade enough to justify embeddings; the trigger for FUT-2 must be watched.
-- Summarization drift (compounding lossy summaries of summaries) over very long projects; may need periodic re-summarization strategy.
+- As a Bible grows large, keyword recall may degrade enough to justify embeddings — the Bench is the trigger.
+- Summary-of-summaries drift over very long projects; may need periodic re-summarization.
 
 ## 6. Future Revisit Conditions
 
-- **Validate/adopt `EmbeddingRetriever`** when keyword recall demonstrably limits quality *and* a local/cheap embedding path preserves Zero-Cost/offline. Implement via the shared `Retriever` seam only.
-- Revisit summarization strategy (hierarchical summaries, re-summarization) if long-project coherence degrades.
-- Reassess ranking weights (recency/relevance/priority) if retrieval consistently surfaces the wrong memories (a Bench task, ADR-012).
+- Adopt the `EmbeddingRetriever` (single seam) when the Bench shows keyword recall limits quality *and* a local/cheap embedding path preserves Zero-Cost.
+- Retune ranking weights (type-weight × relevance × recency) if retrieval surfaces the wrong entries (a Bench task).
+- Revisit summarization strategy (hierarchical/re-summarization) if long-project coherence degrades.

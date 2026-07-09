@@ -1,62 +1,69 @@
-# ADR-005: Writer Pipeline
+# ADR-005: Writer Pipeline (Loop Runner + Stages as Data)
 
-- **Status:** Accepted (single-pass streaming; multi-agent draft/critique loops rejected for now — **Needs Validation** as future option)
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — **reversed** from v1's single-pass default to a bounded draft→validate→revise loop)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-002, ADR-004, ADR-009, ADR-011, ADR-016
+- **Related:** ADR-002, ADR-004, ADR-008, ADR-009, ADR-012, ADR-020
 
 ## 1. Context
 
-The "Writer" role (ADR-002) produces prose in two modes: **chat replies** (Chat Engine) and **novel chapter continuation** (Novel Engine, `design.md` §11). Both follow the same skeleton: gather context from the Bible → assemble a budgeted prompt → stream generation from a provider → persist the result → (background) summarize for future context.
+v1 adopted a **single-pass, streaming** Writer and deferred multi-pass/critique loops as "Needs Validation," reasoning from cost/latency for a personal user. Both reviews challenge this head-on and the Board finds the challenge persuasive:
 
-The open question is the *shape* of generation. AI-writing tools increasingly reach for multi-step agentic pipelines: outline → draft → self-critique → revise → continuity-check → finalize, sometimes with multiple model calls or multiple agents per paragraph. These can improve quality but multiply **latency, cost, and complexity** — each of which is expensive for a personal, zero-cost-infrastructure, mobile-first product where the user is watching a stream and paying per token.
+- `design-review-ai-author-os.md` R12: *"single-pass generation has a hard quality ceiling regardless of prompt quality,"* and the drafting loop (draft → specialized critics → targeted revision) is *"the largest single quality lever after scene-level planning."* The critics are cheap and **falsifiable** because they check against ground truth (fact/knowledge ledgers, Voice DNA, the scene card) — not vague "make it better."
+- `architecture-final-minimal.md` §3 tempers R12: launch with **two** checks that have ground truth (continuity, voice-attribution), make pacing/cliché cheap `qa` assertions, and add a third model-critic **only** when the Bench proves a recurring blind spot. It reframes the whole Writer as *one loop runner* executing a **declarative stage list**, dissolving Planning/Novel/Serialization/Style/critic "engines" into stages.
+
+For a product whose entire reason to exist is **novel quality**, keeping a known hard ceiling to save latency is the wrong trade — *especially* when latency can be hidden by streaming the draft optimistically and delivering "polish" as the finished state.
 
 ## 2. Decision
 
-**Adopt a single deterministic, single-pass, streaming Writer pipeline as the default for both chat and novel:**
+**Adopt a single Writer loop runner executing a bounded, declarative stage list. Replace single-pass generation with a draft → validate → targeted-revise loop, held to exactly two ground-truth checks at launch.**
 
-`build_context (Analyst) → assemble prompt (Prompt Engine) → stream generate (Adapter) → persist (Service, transactional) → summarize (background)`
+1. **One loop runner, stages-as-data.** A pipeline is a declarative stage list (illustrative shape in `architecture-final-minimal.md` §3), not code branches. Planning, drafting, critics, episode assembly, and the style pass are **stages**, each backed by a prompt file (ADR-013). The runner is written once; the stages are tuned weekly (ADR-001 governing rule).
+2. **The core loop:** `retrieve → assemble → generate → validate → revise → persist`, operating on the **scene** as the atomic unit (ADR-020).
+3. **Exactly two model-checks at launch**, both with ground truth:
+   - **Continuity check** — draft vs. retrieved `fact` + `knowledge` entries (the contradiction gate, ADR-004 R6).
+   - **Voice-attribution check (R13)** — strip speaker tags, ask a checker to attribute each dialogue line via Voice DNA exemplars; mis-attributed lines are the flat lines → revise those specifically. *Voice becomes measurable, not vibes.*
+   Pacing and cliché are cheap **`qa` assertions** (hook present? did the scene turn? LLM-ism screen, repetition counter — ADR-020, ADR-013), not model-critics. **A third model-critic is added only when the Bench (ADR-012) shows the two can't see a recurring failure.** Every critic is latency and cost — *earn each one.*
+4. **Targeted revision, not global rewrite:** only scenes with check findings are revised, with the critic notes as instructions — one pass. Two focused passes beat five generic ones.
+5. **Optimistic streaming hides the loop's latency:** stream the draft to the user immediately; deliver the validated/revised/styled result as the "polish ready" finished state (per both reviews). Partial output is preserved on disconnect (Property 9).
+6. **Persistence stays in the Service, transactional, post-loop**, with optimistic concurrency (`version`, 409) — engines never commit (unchanged from v1; upheld by the substrate).
+7. **Canon write-back only via review:** the `ingest` stage runs the Analyst (`scope=work`) to emit *proposed* entries (ADR-004/008/011), never inline canon writes.
 
-Binding rules:
-1. **Single primary generation call per user action.** One "continue" or one chat "send" = one streamed completion. No hidden fan-out of extra model calls in the interactive path.
-2. **Streaming is first-class.** Output is streamed via SSE (Property 9); partial output is preserved on disconnect (`status="partial"`). The user sees tokens immediately (NFR-1: system overhead < 200ms).
-3. **Persistence is transactional and post-stream.** The Service (not the Engine) commits results after the stream completes, using optimistic concurrency (`version`, 409 on conflict) so autosave and continuation cannot clobber each other (`design.md` §11.6). Engines never commit.
-4. **Summarization is background and non-blocking** (BR-6): the follow-on chapter/chat summary is produced off the interactive path and must never delay or fail the user's generation.
-5. **Canon write-back only via review.** Anything the Writer "notices" (new facts, events) is a *proposal* routed to the Review Card (ADR-011), never an inline canon write (ADR-002 rule #2).
-6. **Multi-pass/agentic generation is an opt-in future capability, not the default.** The pipeline's seams (a distinct "generate" step behind the Adapter) leave room to insert a critique/revise stage later, but it is **Needs Validation** and feature-flagged, never on by default.
+**Where the Board holds the line (partial disagreement with R12-maximalism):** the launch loop is **two ground-truth checks, per-scene, streamed** — not a four-critic ensemble. This is `architecture-final-minimal.md`'s tempered position, and the Board adopts it over R1–R26's fuller ensemble precisely on simplicity/cost grounds. More critics are Bench-gated, not default.
 
 ## 3. Alternatives Considered
 
-- **A. Multi-agent / multi-pass by default** — outline→draft→critique→revise→continuity-check as the standard chapter pipeline.
-- **B. Non-streaming batch generation** — generate the whole chapter, then display.
-- **C. Engine-owned persistence** — let the Novel/Chat Engine write to the DB directly for simplicity.
-- **D. Two divergent pipelines** — completely separate chat vs novel generation flows with no shared skeleton.
+- **A. v1 single-pass streaming** (no validate/revise).
+- **B. Full R12 four-critic ensemble at launch** (continuity + voice + pacing + cliché as model-critics).
+- **C. Per-episode (chapter) critique** instead of per-scene.
+- **D. Hard-coded pipeline** (Planning/Novel/Serialization/Style as separate coded engines).
 
 ## 4. Why Rejected
 
-- **A — Multi-agent by default:** 3–6× the token cost and latency for every generation, plus non-deterministic control flow that is hard to test and debug. For a single user paying their own API bill and watching a mobile stream, this is a poor default. Quality gains are real but uneven and provider-dependent; they belong behind a validated, opt-in flag — not in the base pipeline. **Rejected as default; retained as future seam.**
-- **B — Non-streaming batch:** Kills perceived responsiveness (long silent waits on mobile), loses partial-output preservation on disconnect (Property 9), and worsens the felt cost of a bad generation (you pay the whole latency before seeing it's wrong). Rejected.
-- **C — Engine-owned persistence:** Violates the layering rule (ADR-001) and the Store/Analyst/Writer contract (ADR-002): engines are stateless transformers; commits and transaction boundaries belong to the Service. Engine-owned writes would scatter transaction logic and break optimistic-concurrency guarantees. Rejected.
-- **D — Divergent pipelines:** Doubles the surface area, guarantees drift between chat and novel behavior, and duplicates the risky post-stream persistence logic. The shared skeleton with mode-specific context assembly is strictly simpler. Rejected.
+- **A — Single-pass:** Both reviews identify a hard quality ceiling; for a quality-first product this is the wrong default. The latency argument that motivated v1 is answered by optimistic streaming + "polish ready." Reversed.
+- **B — Four model-critics at launch:** Over-built (`architecture-final-minimal.md` §3): 2× more model calls (cost/latency) for critics that lack the clean ground truth continuity/voice have. Pacing/cliché are better as cheap assertions. Rejected as launch scope; available Bench-gated.
+- **C — Per-episode critique:** Chapters/episodes are too big to critique coherently and too coarse to revise surgically; the scene is the checkable unit (ADR-020). Rejected.
+- **D — Coded engines:** Recreates the engine sprawl (ADR-001/002). Stages-as-data + prompt files is the evolution surface. Rejected.
 
 ## 5. Consequences
 
 **Positive**
-- Predictable cost and latency: one call per action, streamed. Aligns with Zero-Cost and mobile-first.
-- Deterministic, testable pipeline (the LLM is the only non-determinism; everything around it is pure/ordered).
-- Clean separation: Analyst assembles, Writer streams, Service persists — each independently testable.
-- Partial-output preservation and optimistic concurrency protect user work.
+- Breaks the single-pass ceiling with the two highest-ground-truth checks — the largest quality lever after scene planning.
+- Voice quality becomes *measured* (attribution test), directly serving the dialogue-quality story.
+- Stages-as-data + prompt files mean the pipeline evolves by commits to `prompts/`, not code (ADR-001/015), and is Bench-testable (ADR-012).
+- Latency is hidden by optimistic streaming; cost is bounded by exactly-two-checks discipline.
 
 **Negative**
-- Out-of-the-box prose quality is bounded by single-pass generation + prompt quality; no automatic self-revision. Users wanting higher polish must iterate manually (regenerate, edit) until/unless the multi-pass flag is validated.
-- Long chapters near the context limit rely entirely on good summarization + budget truncation; a poor summary degrades the next continuation.
+- Real added cost/latency vs. single-pass (2 checks + conditional revise per scene) — the price of breaking the ceiling; must be watched on long works for a personal budget (**Needs Validation** that per-scene checks don't blow token cost on very long novels).
+- A loop runner + declarative stage contract is infrastructure to design once and keep clean.
+- Voice-attribution check quality depends on having good Voice DNA exemplars (ADR-007).
 
 **Future risks**
-- If single-pass quality proves insufficient for long-form coherence, pressure to enable multi-pass will grow; this must be validated (cost vs quality) rather than switched on reflexively.
-- Background summarization failures, if silently swallowed, could quietly starve future context; needs observability (a summary can be retried/forced — AC-MEM-6).
+- Stage/prompt tuning can regress silently — the reason the Bench is now necessary (ADR-012).
+- Revision passes can over-sanitize prose (flatten voice); the style pass must freeze dialogue (ADR-020/R18) and repetition/LLM-ism screens must exempt signature phrases.
 
 ## 6. Future Revisit Conditions
 
-- **Validate multi-pass:** run a Bench (ADR-012) comparing single-pass vs draft/critique/revise on representative chapters, measuring quality delta against token-cost delta. Adopt an opt-in flag only if the trade is clearly favorable for the maintainer's own use.
-- If a specific weakness (dialogue consistency, continuity) is isolated, consider a *targeted* second pass for that facet only, rather than a full agentic loop.
-- If providers add cheap "thinking"/reasoning modes that improve first-pass quality at low marginal cost, revisit whether they belong in the default pipeline.
+- **Add a third+ critic** only when the Bench shows the two-check loop repeatedly misses a failure class.
+- If per-scene checking proves too costly on long works, revisit granularity (per-scene vs. per-beat vs. sampled) using Bench cost/quality data.
+- If providers ship cheap high-quality reasoning modes, revisit whether some checks fold into the draft call.

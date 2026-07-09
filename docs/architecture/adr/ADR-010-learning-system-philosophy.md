@@ -1,65 +1,64 @@
-# ADR-010: Learning System Philosophy
+# ADR-010: Learning System Philosophy (Capture Now, Distill Later)
 
-- **Status:** Accepted — *explicit, human-curated "learning" adopted; automated ML/feedback-training subsystem rejected (**Needs Validation** for any bounded future form)*
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — anti-ML-training **validated**; adds the critical new decision to **capture edit diffs from day one**)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
 - **Related:** ADR-004, ADR-007, ADR-008, ADR-011, ADR-012
 
 ## 1. Context
 
-A "Learning System" implies the product improves over time from user behavior — edits, regenerations, accepted/rejected suggestions, ratings. The ambitious interpretation is a machine-learning feedback loop: collect preference signals, train/fine-tune a model or a reward model, and condition future generation on it (RLHF-lite, preference learning, personalized fine-tunes).
+v1 adopted "learning" as **human-curated accumulation** (richer Bible, example library, tuned prompts) and **rejected** ML training / fine-tuning / opaque preference vectors. The reviews both engage this and land close to v1 — with one important addition v1 missed:
 
-This is not in `design.md`. For a **single-user, zero-cost, provider-neutral** product, an ML training loop is one of the highest-complexity, lowest-ROI things imaginable: it needs data pipelines, training infrastructure, model hosting, evaluation to avoid regressions, and it *reintroduces vendor lock-in* (fine-tunes are provider-specific and non-portable) — contradicting the product's founding principles.
+- `design-review-ai-author-os.md` R25 calls edit-diff preference learning *"the moat … what makes it an Author OS rather than a generator."*
+- `architecture-final-minimal.md` §4 **self-corrects R25**: *"ship capture, not learning."* Store draft-vs-accepted text **from day one** — *"this is the data you can never retroactively collect."* The "learning" is a periodic **Analyst facet** over diffs producing `preference` entries injected into future prompts. **No online-learning machinery, no per-edit classification pipeline.**
 
-Yet "learning" in a weaker, valuable sense is real: the system *should* get better at serving *this* user as their world, characters, and preferences accrue.
+This is strong convergence with v1's transparency ethos — `preference` entries are exactly the "transparent, editable artifacts" v1 required — *plus* the point v1 got wrong by omission: **capture is urgent even though learning is deferred.**
 
 ## 2. Decision
 
-**Adopt "learning" as explicit, transparent, human-curated accumulation — not model training.** The system learns by *growing editable artifacts*, not by adjusting opaque weights.
+**Keep "learning" as human-curated, transparent accumulation — no ML training. Add: capture edit diffs from day one; distill them later via an Analyst facet into transparent `preference` entries.**
 
-Concretely, learning = the compounding of three transparent artifacts, all already in the architecture:
-1. **A richer Living Story Bible** (ADR-004): every accepted fact/relationship/style Entry makes future generation more grounded. This is the primary learning mechanism.
-2. **A growing example/few-shot library**: accepted outputs and user edits can be curated (via Review Cards, ADR-011) into reusable example Entries that demonstrate desired voice/style (ties to ADR-007/ADR-008).
-3. **User-tuned prompts and settings** (ADR-013): the user (or the maintainer) adjusts prompt templates and model configs based on observed results — versioned and diffable.
+1. **No fine-tuning, no reward models, no online learning, no opaque preference vectors** (unchanged from v1). Anything that shapes future output must be a **visible, editable, revertible** artifact.
+2. **Capture edit diffs from day one** (the new, urgent decision): store draft text vs. accepted text per chapter (one column pair on the substrate). This is data that *cannot be recovered retroactively*, so it is captured immediately even though the learning that uses it is deferred.
+3. **"Learning" = an Analyst facet, run periodically** (`scope=work`→`user`), that distills accumulated diffs into `preference` entries (e.g. sentence-length deltas, adverb-rate, per-character particle fixes). These are Store entries (ADR-003) with provenance `diff batch`, injected into future prompts by the Writer's retrieve step.
+4. **The primary learning mechanisms remain transparent artifacts** (validated by both reviews): a richer Living Bible (ADR-004), canonical exemplars (ADR-007, including chat-bookmarked lines R22), and versioned prompt/tone-contract tuning (ADR-013).
+5. **Scope discipline:** MVP-lite = capture + apply the 3 coarsest signals (sentence length, adverb rate, per-character particle fixes). A full edit taxonomy is Future. No per-edit real-time classification.
+6. **Optional delight, not configuration:** a periodic "문체 리포트" is acceptable as read-only output; it never becomes a control surface.
 
-Binding rules:
-- **No fine-tuning, no reward models, no training pipeline** in the base architecture.
-- **No silent behavioral adaptation.** Anything that changes future output is a visible, editable artifact (an Entry, an example, a prompt) the user can inspect and revert. Nothing learns behind the user's back.
-- **Signals may be *recorded* (opt-in) but not *auto-applied*.** Capturing which outputs were kept/edited/regenerated is acceptable as data for the *maintainer* to tune prompts or feed a Bench (ADR-012); it must not auto-mutate behavior.
-- **Automated learning is deferred and _Needs Validation_.** If ever revisited, it must preserve transparency, editability, portability, and Zero-Cost.
+**Explicit agreement:** the Board agrees with `architecture-final-minimal.md`'s "capture-not-learning" correction — it fixes a real v1 omission (urgency of capture) while *preserving* v1's core principle (no opaque ML; learning = transparent, injected `preference` entries).
 
 ## 3. Alternatives Considered
 
-- **A. Fine-tuning / preference-model training** on user feedback.
-- **B. Implicit personalization** — silently reweight prompt content or sampling based on tracked behavior.
-- **C. No learning of any kind** — the product is static; only manual edits change anything.
-- **D. Vector "memory of preferences"** — embed user edits/ratings and retrieve them to steer generation automatically.
+- **A. Fine-tuning / preference-model training** on user feedback (R25 read maximally).
+- **B. Online per-edit classification pipeline** that updates behavior continuously.
+- **C. Don't capture diffs** (v1's implicit stance — treat learning entirely as manual curation).
+- **D. Auto-applied preference vectors** (opaque embeddings of edits steering generation).
 
 ## 4. Why Rejected
 
-- **A — Training/fine-tuning:** Massive infrastructure and cost for one user; reintroduces provider lock-in (non-portable fine-tunes); opaque and non-editable (can't "undo" what a fine-tune learned); needs its own eval harness to avoid silent regressions. Every one of these contradicts a founding principle. Rejected.
-- **B — Implicit personalization:** Silent behavioral drift is user-hostile and undebuggable ("why did it start writing like this?"). It also makes reproducibility impossible. The product's ethos is transparency and control. Rejected.
-- **C — Nothing:** Wastes the genuine, cheap wins (the Bible and example library *do* make things better with zero ML). Under-ambitious. Rejected.
-- **D — Auto-applied preference vectors:** A lighter ML approach, but still opaque (a vector you can't read/edit), still an embedding subsystem (front-runs FUT-2), and still silently steering output. Fails the transparency test. Rejected as auto-applied; the *human-curated* version of the same idea (curate good examples into Entries) is what we adopt.
+- **A — Training/fine-tuning:** Infrastructure + cost for one user; reintroduces provider lock-in; opaque/un-revertible; needs its own eval to avoid regressions. Against founding principles; both reviews avoid it. Rejected.
+- **B — Online per-edit pipeline:** `architecture-final-minimal.md` explicitly deletes this from v1 scope; it is machinery where a monthly facet suffices. Rejected.
+- **C — Don't capture:** The v1 omission. Diffs uncaptured are *permanently* lost; deferring learning is fine, deferring capture is not. Rejected (this is the substantive v2 change).
+- **D — Opaque vectors:** Silent behavioral drift, un-editable — fails the transparency test (as v1 held). Rejected; the human-readable equivalent (`preference` entries) is adopted.
 
 ## 5. Consequences
 
 **Positive**
-- The product genuinely improves per-user over time with **zero** ML machinery, cost, or lock-in.
-- Everything that shapes output stays transparent, editable, versionable, and reversible.
-- No risk of silent quality regressions from an opaque learner.
+- The product genuinely improves per-author over time with **zero** ML machinery — via transparent, editable `preference` entries and a growing Bible/exemplar library.
+- Capturing diffs from day one preserves the option value of the "moat" without committing to any learning machinery now.
+- Everything shaping output stays inspectable and revertible; no silent regressions from an opaque learner.
 
 **Negative**
-- "Learning" requires user effort (curating Entries/examples, tuning prompts); it is not automatic.
-- The ceiling is lower than a well-executed fine-tune could theoretically reach for a very heavy user.
-- Preference signals, if recorded, sit unused by the runtime (only the maintainer/Bench uses them) — some may see that as under-leveraging data.
+- Diff storage grows over time (draft+accepted per chapter); modest at personal scale but non-zero.
+- "Learning" requires the periodic facet run + still benefits from user curation; it is not fully automatic.
+- Coarse initial signals (3) may under-capture nuance until the taxonomy expands.
 
 **Future risks**
-- Pressure to "just fine-tune on my edits" will recur, especially as local training gets cheaper; this ADR must be re-decided rather than drifted past.
-- Recorded signals could accumulate as privacy-relevant data; retention should stay local and minimal (personal tool).
+- Captured diffs are user-writing data; retention stays **local and minimal** (personal tool).
+- Pressure to "just fine-tune on my edits" as local training cheapens; this ADR must be re-decided, not drifted past.
 
 ## 6. Future Revisit Conditions
 
-- **Validate automated learning** only if a method exists that is simultaneously: local/cheap (Zero-Cost), portable (no provider lock-in), transparent/editable, and reversible. Absent all four, keep the human-curated model.
-- If recorded preference signals prove genuinely useful for maintainer-driven prompt tuning, formalize their (local, opt-in) capture and feed them into the Bench (ADR-012) — still not into runtime behavior.
-- Revisit the example-library mechanism if curating examples becomes a bottleneck (e.g. semi-automatic candidate selection surfaced as Review Cards).
+- Expand the diff taxonomy beyond the 3 coarse signals when the Bench (ADR-012) shows richer `preference` entries improve fidelity.
+- Reconsider any automated adaptation only if it can be simultaneously local/cheap, portable, transparent, and revertible — else keep the facet model.
+- Revisit retention/report design if diff volume or privacy considerations grow.

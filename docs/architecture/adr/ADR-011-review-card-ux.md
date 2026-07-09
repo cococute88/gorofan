@@ -1,9 +1,11 @@
 # ADR-011: Review Card UX
 
-- **Status:** Accepted — *the canonical human-in-the-loop gate for all AI-proposed canon changes*
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — **strongly validated**; a Review Card is now formally defined as an Entry with `status=proposed`)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-002, ADR-004, ADR-008, ADR-010, ADR-014
+- **Related:** ADR-002, ADR-003, ADR-004, ADR-008, ADR-010, ADR-014
+
+> **v2 note — a striking convergence.** v1 independently elevated "Review Card" to the universal human-in-the-loop write-path. Both Fable reviews name the *identical* primitive as the pattern that *"replaces forms everywhere"* (`design-review` §0/§10) and define it mechanically: **a Review Card *is* an entry with `status=proposed`** (`architecture-final-minimal.md` §1/§4). The v1 decision stands unchanged in substance; v2 only binds the vocabulary to the single Entry model (ADR-003) and confirms the reviews' framing that Bible ingestion (R4), world-fact creation (R21), and DNA conflicts (R17) are all one queue rendered by one editor component.
 
 ## 1. Context
 
@@ -18,7 +20,7 @@ The constraints are severe and specific: this must work **on a phone**, must **n
 **Adopt the Review Card as the single, canonical UX pattern for every AI-proposed change to canon.** No AI-proposed mutation reaches the source of truth by any other path.
 
 Principles (UX-level decisions, not visual spec):
-1. **Uniform shape:** every proposal — a new fact, a relationship, a glossary term, a style Entry, a chapter-derived event — is presented as a Card with: what is proposed, where it came from (provenance/source), and three actions: **Accept / Edit-then-accept / Reject**.
+1. **Uniform shape and mechanism:** every proposal — a new `fact`, `knowledge`, `promise`, `relationship`, `world.*`, `character.*` entry — *is a Store entry with `status=proposed`* (ADR-003). It is presented as a Card with: what is proposed, its `provenance`/`confidence`, and three actions: **Accept** (→ `status=canon`) / **Edit-then-accept** (edit prose, then canon) / **Reject** (→ `status=rejected`). One queue, rendered by the same editor that renders the Bible/DNA (one component, ADR-014).
 2. **Non-blocking and batchable:** Cards surface *asynchronously* (a review queue / badge), never interrupting the active chat or writing stream. The user triages when they choose. Proposals accumulate as pending Entries (ADR-004) until reviewed.
 3. **Editable before accept:** the user can correct a proposal in place; accepting an edited card writes the *edited* version as canon with provenance `user-approved`.
 4. **Reversible:** accept/reject are auditable and undoable (proposals and their disposition are recorded); a wrongly-accepted fact can be removed.

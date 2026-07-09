@@ -1,63 +1,61 @@
 # ADR-015: Future Expansion Principles
 
-- **Status:** Accepted — *non-destructive, flag-gated, seam-based expansion adopted; speculative abstraction rejected*
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — sharpened by the reviews' governing rule: **evolve via prompts + entry types, not services + migrations**)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-001, ADR-014, ADR-004, ADR-016, ADR-017
+- **Related:** ADR-001, ADR-003, ADR-013, ADR-014
 
 ## 1. Context
 
-A personal tool intended to live for years will grow: image generation, EPUB/PDF export, RAG retrieval, relationship visualization, story timeline, model/cost dashboards, eventual multi-user. `design.md` §7.15/§8.17/§16 already lay out an expansion philosophy: feature flags (default off), extension slots, non-destructive schema changes (nullable-only), Protocol seams (`Retriever`, `StorageBackend`, `JobQueue`, `LLMProvider`), and navigation invariance.
+v1 adopted "non-destructive, flag-gated, define-the-seam / defer-the-second-impl" expansion. The reviews supply a sharper governing rule that the Board now treats as the *primary* expansion principle:
 
-There are two opposing failure modes to steer between:
-1. **Rigidity** — an architecture so concrete that every new capability requires invasive surgery.
-2. **Speculative over-abstraction** — seams and plugin frameworks built for imagined futures that never arrive, paying complexity now for options never exercised (the classic YAGNI violation). `design.md` itself flirts with this by naming Celery/ARQ and S3 implementations that a single-user app may never need.
+> `architecture-final-minimal.md` §1: *"Code that must be written once (loop runner, entry store, retrieval, diff capture) is code; everything that will be tuned weekly (what to extract, how to plan, how to critique, how to style) is a prompt file in the repo. Two years of product evolution should be commits to `prompts/`, not migrations and new modules."*
 
-The Board must adopt expansion principles that keep the door open **without** paying to walk through doors nobody uses.
+And the concrete corollary (§2/§5): **a new library/ledger is a new entry `type` string, never a new table**; *"if a table named `dialogue_library` or `character_dna_attributes` ever appears in a migration, this document has failed."* Embeddings are added *"only when keyword retrieval demonstrably misses, measured on the Bench, not before"* — exactly v1's defer-the-second-impl, now with an explicit measurement trigger.
 
 ## 2. Decision
 
-**Adopt disciplined, non-destructive, seam-based expansion — with a strict rule against speculative implementation.**
+**Adopt "evolve via prompts and entry types" as the primary expansion principle, with v1's non-destructive, flag-gated, seam-based rules as the supporting frame.**
 
-1. **Non-destructive schema evolution.** New capabilities add *nullable* columns or new tables and forward-only migrations; they never break or repurpose existing structures (FUT-2, `design.md` §16.2). Existing data and the local-first path keep working untouched.
-2. **Feature flags, default off.** Every expansion ships behind a flag defaulting to off, so the MVP/base experience is unaffected until deliberately enabled (§7.15).
-3. **Navigation invariance** (ADR-014): expansions enter via slots/tabs/drawers/command palette, never the top-level nav.
-4. **Define the seam, defer the second implementation.** A Protocol/interface (a "seam") is introduced when a *second concrete implementation is genuinely foreseeable* — and even then, **only the first implementation is built.** The seam is cheap (an interface + the one impl behind it); the speculative second impl is not built until a real need exists.
-   - Sanctioned seams (interface now, second impl later): `LLMProvider` (ADR-016), `Retriever` (memory/reference RAG — FUT-2), `StorageBackend` (local→S3), `JobQueue` (in-process→distributed), `ImageProvider`, `AuthProvider` (ADR-019), Export/chapter-composition seam.
-   - **Not sanctioned now:** building the Celery/ARQ queue, the S3 backend, the embedding retriever, or the image adapter *implementations* before a concrete trigger. The seam holds the place; the implementation waits.
-5. **Local-first stays the invariant.** Every expansion keeps the fully-local, zero-cost, offline path working; cloud/remote is always optional (§16.2).
-6. **Core stays unchanged (0-core-change goal).** Adding a provider, retriever, storage, or auth method must be a registration/config act, not a change to Router/Service/Engine core (`design.md` §8.17).
+1. **The evolution surface is `prompts/` + entry `type`s** (ADR-001 governing rule). New craft (a critic, a planning heuristic, a facet, a style pass) = a **prompt file / stage**. New knowledge kind (a library, a ledger) = a new **`type` string** (ADR-003) — *never* a new table or service.
+2. **Non-destructive schema evolution** (unchanged): nullable columns / new tables via forward-only migrations; never break or repurpose existing structures. The single Entry model makes most "new data" need *no migration at all*.
+3. **Feature flags default off; navigation invariance** (ADR-014): expansions enter via slots/tabs/drawers/command palette.
+4. **Define the seam, defer the second implementation** (unchanged, now Bench-triggered where measurable). Sanctioned seams: `LLMProvider` (ADR-016), the single `Retriever` (ADR-018 — embeddings deferred, Bench-gated), `StorageBackend` (local→S3), `JobQueue` (in-process→distributed), `ImageProvider`, `AuthProvider` (ADR-019), Export/chapter-composition. **Not built until a concrete/Bench trigger:** the Celery/ARQ queue, S3, the embedding retriever, image generation, a third+ Writer critic (ADR-005).
+5. **Promote-a-type-to-a-table is the sanctioned structural escape valve** (ADR-003 §6), used only when deterministic checks strain prose-first `data` JSON — the one place new tables are legitimately added later.
+6. **Local-first stays invariant**; cloud/remote always optional.
 
 ## 3. Alternatives Considered
 
-- **A. Build the abstractions and their multiple implementations up front** (the "platform from day one" approach).
-- **B. No seams — YAGNI-maximalist** — write the simplest concrete code with zero interfaces; refactor only when a second need appears.
-- **C. Plugin framework / marketplace architecture** now (the long-term "장기 비전" made present).
+- **A. Build abstractions and their multiple implementations up front** (platform-from-day-one).
+- **B. No seams — YAGNI-maximalist.**
+- **C. Plugin framework / marketplace now** (the long-term vision made present).
+- **D. Extend by adding tables/services per capability** (the `design.md`/R1–R26-literal instinct).
 
 ## 4. Why Rejected
 
-- **A — Build implementations up front:** Pays real complexity for hypothetical futures. Celery, S3, embeddings, image generation — each is meaningful code, ops, and test surface that a single user may never touch. This is the over-abstraction failure mode. Rejected: define seams, don't build unused impls.
-- **B — No seams at all:** Tempting for simplicity, but a few boundaries are *genuinely* certain to be crossed (LLM providers *will* be swapped — it's a founding requirement; SQLite→Postgres *is* planned). For those, retrofitting an interface across a concrete codebase later is costly and risky. A thin seam at the known-volatile boundaries is cheap insurance. Rejected as too rigid at the *known* volatile points — while its spirit (no speculative interfaces elsewhere) is adopted.
-- **C — Plugin framework now:** Enormous complexity (extension API, sandboxing, versioning, discovery) for a single-user product with no third-party developers. It is explicitly a *long-term vision*, not a present need. Building it now is the ultimate speculative over-abstraction. Rejected until/unless the product genuinely opens to external extensions.
+- **A — Build impls up front:** Speculative complexity for hypothetical futures (Celery/S3/embeddings/image). The over-abstraction failure mode. Rejected — seams yes, unused impls no.
+- **B — No seams:** Some boundaries *will* be crossed (providers, DB swap); a thin seam there is cheap insurance. Rejected as too rigid at *known-volatile* points, while its spirit (no speculative interfaces elsewhere) is adopted.
+- **C — Plugin marketplace now:** Enormous machinery for a single-user product with no third-party developers; explicitly a long-term vision. Rejected until the product opens to external extensions.
+- **D — Table/service per capability:** The debt bomb both reviews attack; the whole point of the Entry model + prompt files is to make this unnecessary. Rejected — *if a per-library table appears in a migration, the architecture has failed.*
 
 ## 5. Consequences
 
 **Positive**
-- The product can grow for years without destructive rewrites; the local-first core is never disturbed by expansion.
-- Complexity is paid *just-in-time*: seams are cheap, implementations arrive with their justification.
-- Clear, short list of sanctioned seams prevents both rigidity and abstraction sprawl.
+- Years of evolution become commits to `prompts/` and new `type` strings — the two cheapest change surfaces — with few/no migrations.
+- Complexity paid just-in-time; the sanctioned-seam list prevents both rigidity and abstraction sprawl.
+- The single Entry model + retrieval function means new knowledge kinds and new retrieval consumers cost almost nothing.
 
 **Negative**
-- Judgment is required to distinguish a "known-volatile boundary worth a seam" from speculative abstraction; the sanctioned-seam list is the guide but edge cases will arise.
-- Nullable-only / forward-only migrations accumulate some schema cruft over years (unused nullable columns) — an acceptable trade for never breaking data.
-- A seam with only one implementation can *look* like premature abstraction to a reviewer; the list here justifies each.
+- Judgment needed to distinguish a known-volatile boundary worth a seam from speculative abstraction (the seam list is the guide).
+- Forward-only migrations accrue some schema cruft over years (acceptable vs. ever breaking data).
+- Prompt-file/`type` growth needs the Bench and declarative stage lists to stay legible.
 
 **Future risks**
-- The sanctioned-seam list could itself grow speculatively; adding a seam should require the same "second impl foreseeable" test and, ideally, an ADR/RFC note.
-- Forward-only migrations mean mistakes are corrected by new migrations, not rollbacks; discipline in migration authoring matters (ADR-017).
+- The seam list itself could grow speculatively; adding one requires the "second impl foreseeable" test + an ADR/RFC note.
+- `type` proliferation; guarded by the no-`misc`, ADR-gated rule (ADR-003).
 
 ## 6. Future Revisit Conditions
 
-- Add a new sanctioned seam only when a concrete second implementation becomes foreseeable; record it here.
-- Build a deferred implementation (Celery, S3, embeddings, image, etc.) when its concrete trigger fires (documented per-seam in the relevant ADR/roadmap).
-- Reconsider a plugin/marketplace architecture only if the product deliberately opens to third-party extensions (the long-term vision materializing) — a major, explicit re-decision.
+- Add a sanctioned seam only when a second implementation becomes concretely foreseeable; record it here.
+- Build a deferred impl (Celery/S3/embeddings/image/3rd critic) when its concrete or Bench trigger fires.
+- Reconsider a plugin/marketplace architecture only if the product deliberately opens to third-party extensions.

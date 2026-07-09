@@ -1,9 +1,11 @@
 # ADR-016: Provider Adapter & Vendor Neutrality
 
-- **Status:** Accepted — *ratifies the OpenAI-compatible neutral `LLMProvider` seam from `design.md` §13*
-- **Date:** 2026-07-09
+- **Status:** Accepted (unchanged in v2 — **validated as substrate**)
+- **Date:** 2026-07-09 (v1) · re-confirmed 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
 - **Related:** ADR-001, ADR-009, ADR-015
+
+> **v2 note.** Both Fable reviews list provider adapters in the **substrate to keep as-is** (`architecture-final-minimal.md` §1). No change; the decision below stands verbatim.
 
 ## 1. Context
 

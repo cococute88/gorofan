@@ -1,61 +1,65 @@
-# ADR-004: Living Story Bible
+# ADR-004: Living Story Bible & the Continuity Loop
 
-- **Status:** Accepted (with automatic canon mutation deferred — **Needs Validation**)
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — enriched with ledgers + continuity loop; human-gated writes **retained** and now **validated** by both reviews)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-002, ADR-003, ADR-006, ADR-010, ADR-011
+- **Related:** ADR-002, ADR-003, ADR-005, ADR-008, ADR-011, ADR-018
 
 ## 1. Context
 
-The product's differentiator is the **creative flywheel** (`design.md` §3.5): settings created in chat flow into the novel, and the novel's developments flow back into character memory and lore. The "Living Story Bible" is the name for the always-current, canonical body of knowledge that both chat and novel read from and (potentially) write to: **World + Lorebook/LoreEntry + Glossary + Memory + extracted facts/events/relationships**.
+v1 adopted the Living Story Bible as a read model over World/Lore/Glossary/Memory with **human-gated** canon writes, and deferred fully-automatic canon mutation as "Needs Validation." Both Fable reviews strongly endorse the *living* framing and — importantly — **converge on the human gate**: `design-review-ai-author-os.md` R4 auto-*extracts* facts on chapter acceptance but routes them through a **Review Card queue** (status=proposed); `architecture-final-minimal.md` §4 confirms ingestion output is `proposed`. So the v1 decision was directionally right and is now corroborated by two senior reviews.
 
-"Living" implies two things:
-1. It is the **single read model** for all generation context (the Analyst reads it).
-2. It **stays current** as the story progresses — new facts, relationships, and events accrue.
-
-The architectural tension is entirely in #2: *who updates the canon, and how much of that is automatic?* An LLM that autonomously extracts "facts" and writes them into the source of truth will, over a long project, pollute the canon with hallucinations, duplicates, and contradictions — and because the same canon feeds future generation, errors compound. This is the single biggest long-term-quality risk in the whole product.
+What v1 **missed** is the *richness and mechanism*. The reviews supply the Bible's real contents (multiple ledgers) and the **continuity loop** — the third of the four loops that separate "a generator" from "an Author OS": *every accepted chapter writes facts back into the Bible; retrieval feeds the right facts into the next draft; a contradiction gate catches violations.*
 
 ## 2. Decision
 
-**Adopt the Living Story Bible as the unifying read model over World + Lore + Glossary + Memory + typed knowledge Entries (ADR-003), with a strict human-gated write path.**
+**Adopt the Living Story Bible as the work-scoped subset of the Store's Entry model (ADR-003), comprising typed ledgers, kept current through a human-gated continuity loop.**
 
-1. **The Bible is a read model, not a new store.** It is a *view/assembly* over existing aggregates and the Entry tier (ADR-003), owned by the Store (ADR-002). It introduces no parallel database.
-2. **Reads are free and automatic.** The Analyst (Prompt + Memory Engines) queries the Bible every turn: keyword-triggered lore injection, memory ranking, glossary, relevant facts — within the token budget (ADR-009).
-3. **Writes to canon are human-gated by default.** AI-proposed additions/changes (extracted facts, inferred relationships, new glossary terms, chapter-derived events) enter the Bible **only** as *proposals* surfaced through the Review Card UX (ADR-011). The user accepts, edits, or rejects. Accepted proposals become canon Entries with provenance `user-approved`.
-4. **Provenance is mandatory** (ADR-003): every Entry records whether it is user-authored, AI-proposed (pending), or AI-derived-and-approved. Generation context may be configured to include only approved canon, or approved + pending with a marker — but pending proposals never silently become authoritative.
-5. **Automatic (unattended) canon mutation is explicitly deferred and marked _Needs Validation_.** The architecture *allows* a future "auto-accept high-confidence extractions" mode, but it is **not** part of the accepted design until validated against real long-project quality data.
+1. **The Bible is Store entries at `scope=work`**, not a separate store. Its ledgers are entry `type`s (`architecture-final-minimal.md` §2/§4):
+   - `fact` — canonical facts with `created_at_chapter` (contradiction checking needs timestamped facts).
+   - `knowledge` ★ — the **knowledge matrix**: who knows which secret as of which chapter. *Kills the #1 LLM long-fiction failure: characters knowing things too early.*
+   - `promise` ★ — the **promise ledger**: setups/foreshadowing with `data` = planted-chapter / due-window / status (open·paid·abandoned). Payoff discipline is what makes stories feel *authored*.
+   - `relationship` — current stage per pair + last transition (ADR-006).
+   - `summary` — multi-granularity (scene / chapter / arc / story-so-far) via `data.level` (replaces the single `Chapter.summary`, ADR-018).
+   - plus `note`, timeline/state facts, and the **tone/theme contract** (R7): a standing 2–3 line guardrail injected at prompt top as the cheapest drift-anchor.
+2. **Reads are free and automatic** via the single `retrieve()` (ADR-018): scene-relevant facts (on-stage cast, locations, due promises, knowledge state) enter the draft prompt within budget — *retrieval, not Bible-dumping* (R5).
+3. **The continuity loop (R4) is adopted, human-gated:** on chapter acceptance the Analyst (ADR-008, `scope=work`) extracts new `fact`/`knowledge`/`promise`/`relationship`/`summary` entries as **status=proposed**. They surface as Review Cards (ADR-011) — a "Bible updated: 3 new facts" toast + a veto queue. Approved → `canon`. **No silent canon mutation.**
+4. **The contradiction gate (R6) is adopted as a Writer check** (ADR-005), not a Bible feature: post-draft, the scene is checked against retrieved `fact` + `knowledge` entries; violations trigger an automatic **targeted revision**, not a user-facing error.
+5. **v1's core safety decision stands:** the model reads canon freely but writes only through review (ADR-002/011). This is now *validated*, not merely asserted.
 
 ## 3. Alternatives Considered
 
-- **A. Fully automatic living bible** — the AI continuously extracts and writes facts/relationships/events into canon after every chat turn and chapter, no human gate.
-- **B. Static bible** — the bible is only ever hand-authored; no AI extraction at all; the "flywheel" is manual copy-paste.
-- **C. Separate canonical store + derived index** — a second database/graph that mirrors and enriches the canon (e.g. a knowledge graph) kept in sync.
-- **D. Bible-as-one-document** — a single editable world document (see ADR-003 alt C).
+- **A. Fully automatic living bible** — AI writes extracted facts straight to canon, no gate.
+- **B. Static bible** — hand-authored only; no ingestion (v1 alt B).
+- **C. Separate ledger subsystem / knowledge graph** kept in sync with prose canon.
+- **D. Single `Chapter.summary`** as the only continuity memory (the current `design.md` state).
 
 ## 4. Why Rejected
 
-- **A — Fully automatic:** The compounding-hallucination risk described above. In a long novel (the explicit goal is *장편* / long-form), a small per-turn error rate integrates into a corrupted canon that then degrades every future generation. Unattended write-back to the source of truth is the highest-regret decision available; rejected for MVP and gated behind validation thereafter.
-- **B — Static/manual:** Throws away the product's core differentiator (the flywheel). Manual copy-paste is exactly the "data scattered across tools" problem the product exists to solve. Rejected.
-- **C — Separate enriched store (knowledge graph):** Real value someday, but it is a second source of truth to keep in sync, a second thing to back up, and a large complexity increase for a single user. It also front-runs ADR-006 (Relationship System), which deliberately stays lightweight. Rejected now; a *read-only projection* remains possible later without changing the canonical store.
-- **D — One document:** Same reasons as ADR-003 alt C (conflicts, poor incremental review, awkward keyword injection).
+- **A — Fully automatic:** The compounding-hallucination risk over a *장편* serialization; unattended write-back to the source of truth is the highest-regret option and would corrupt the very canon that feeds future drafts. Both reviews independently route ingestion through review. Rejected (auto-accept remains Needs Validation, §6).
+- **B — Static bible:** Guarantees staleness → contradictions by chapter 40 (`design-review` §3). Kills the continuity loop and the product's differentiator. Rejected.
+- **C — Graph subsystem:** A second source of truth to sync and back up; both reviews warn this produces worse prompts than provenanced prose (ADR-003 alt D). Rejected; a derived projection stays possible.
+- **D — Single summary:** Serialization needs summaries at multiple granularities and timestamped facts; one text field silently drops what chapter 37 established. Rejected — migrate to multi-level `summary` entries (ADR-018).
 
 ## 5. Consequences
 
 **Positive**
-- Delivers the flywheel *safely*: the canon grows richer over time without silently rotting.
-- One read model unifies chat and novel context assembly (less code, consistent behavior).
-- Provenance + review gate means canon quality is auditable and reversible — essential for a multi-year project.
+- Consistency at chapter 100 becomes *possible at all* — the knowledge matrix + fact ledger + contradiction gate are precisely the anti-contradiction machinery long fiction needs.
+- The flywheel delivered *safely*: the Bible grows richer per chapter without rotting, because writes are reviewed.
+- One store, one retrieval path unify chat and novel context; ledgers are `type`s, not tables (ADR-003).
+- Promise ledger + tone contract are cheap to store, high-leverage for "feels authored."
 
 **Negative**
-- The human gate adds friction: the user must periodically triage proposals. For a very active project this could become a chore (mitigated by batching and good Review Card UX — ADR-011).
-- "Read-only view over aggregates + entries" assembly has a runtime cost per turn; caching (ADR-009 Prompt Cache) is relied upon to keep it cheap.
+- Review-queue triage is a recurring user cost; heavy projects could accumulate proposals (mitigation: batch, mute low-signal `type`s, good Review Card UX — ADR-011).
+- Per-turn Bible retrieval has a cost; relies on the retrieval budget + caching (ADR-009/018).
+- Knowledge-matrix / timeline checks are the parts most likely to strain prose-first `data` JSON (ADR-003 §6).
 
 **Future risks**
-- If proposal volume outpaces the user's willingness to triage, pending proposals pile up and the "living" promise weakens. This is the trigger to *validate* a bounded auto-accept mode — not to abandon the gate wholesale.
-- Extraction quality is provider-dependent; a weak/local model may produce noisy proposals, raising triage burden.
+- If proposal volume outpaces triage willingness, "living" weakens → the concrete trigger to *validate* bounded auto-accept for high-precision `type`s (e.g. named-entity `fact`s).
+- Extraction quality is model-dependent; a weak/local model raises triage noise.
 
 ## 6. Future Revisit Conditions
 
-- **Validate auto-accept:** once real long-project data exists, measure AI-proposal precision. If precision on a well-defined subset (e.g. glossary terms, named-entity facts) is high enough that auto-accept doesn't degrade canon, revisit rule #5 to allow a *scoped, reversible* auto-accept with an audit log.
-- If a genuine need for graph queries over relationships/events emerges (visualization, consistency checking), revisit alt C as a **derived, disposable projection** — never as a second source of truth.
-- If per-turn Bible assembly becomes a latency problem beyond what caching solves, revisit the read-model materialization strategy.
+- **Validate bounded auto-accept** once real long-project data shows high extraction precision on a specific `type` — then allow scoped, reversible, audited auto-accept for that `type` only (coordinate ADR-010/011).
+- Promote `knowledge`/`promise`/timeline to structured tables if their checks strain (ADR-003 §6).
+- If graph queries over relationships/threads become genuinely needed, add a *derived, disposable* projection — never a second source of truth.

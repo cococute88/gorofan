@@ -1,9 +1,11 @@
 # ADR-019: Modular Authentication (Optional Auth)
 
-- **Status:** Accepted — *auth as an env-toggled module; local default is no-login single-user*
-- **Date:** 2026-07-09
+- **Status:** Accepted (unchanged in v2 — **validated as substrate**)
+- **Date:** 2026-07-09 (v1) · re-confirmed 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
 - **Related:** ADR-001, ADR-015, ADR-017
+
+> **v2 note.** Both Fable reviews list auth in the **substrate to keep as-is** (`architecture-final-minimal.md` §1). No change; the decision below stands verbatim.
 
 ## 1. Context
 

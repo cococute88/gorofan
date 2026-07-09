@@ -1,73 +1,64 @@
-# ADR-002: Store / Analyst / Writer Architecture
+# ADR-002: Store / Analyst / Writer (+ Bench) Architecture
 
-- **Status:** Accepted (with explicit rejection of the process-level and God-Object interpretations)
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2) — *now the primary structural decision, aligned with `architecture-final-minimal.md`*
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-001, ADR-003, ADR-004, ADR-005, ADR-009
+- **Related:** ADR-001, ADR-003, ADR-004, ADR-005, ADR-008, ADR-012
 
 ## 1. Context
 
-The "AI Author OS" framing proposes organizing the system around three roles:
+v1 adopted Store/Analyst/Writer as loose *logical roles* over the existing engines, and — wary of a "God Store" — insisted the Store stay plural (per-aggregate repositories) and rejected a single Entry model. `architecture-final-minimal.md` sharpens the triad into three concrete services with precise definitions, adds a fourth **Bench**, and argues that the Store should in fact be **one Entry model + one retrieve function**. This forces the Board to re-adjudicate its own God-Object caution.
 
-- **Store** — the single source of truth: persistence and retrieval of all canon (characters, world, lore, works, chapters, chat, memory).
-- **Analyst** — the read/understand side: assembling context, ranking memory, scanning lore, analyzing references, and deriving guidance for generation.
-- **Writer** — the generate side: producing prose (chat replies, chapter continuations) from assembled context.
-
-The existing `design.md` does not use this vocabulary. It uses four Engines (Prompt, Memory, Novel, Chat), a Repository layer, and a Provider Adapter. The Board must decide whether Store/Analyst/Writer is a better organizing principle, and if so, at what altitude it lives.
-
-Two failure modes must be confronted head-on (the task brief demands this honesty):
-1. **The process trap** — treating the three roles as separate services (rejected in ADR-001).
-2. **The God-Object trap** — collapsing "Store" into one omniscient object/module that every feature reaches into, and "Entry" into one universal table (see ADR-003). A God Store becomes the thing every future change must touch, which is the opposite of maintainability.
+The reviews' core claim: the whole creative system has exactly **three verbs** — *store, extract, write* — and **one honesty mechanism** — *bench*. Everything else (Story Bible Engine, Planning Engine, Serialization Engine, Relationship Planner, Foreshadow Scheduler, six DNA/libraries) is a **noun** that dissolves into an entry `type`, a prompt stage, or a check.
 
 ## 2. Decision
 
-**Adopt Store / Analyst / Writer as a conceptual (logical) decomposition layered on top of the existing engine architecture — never as separate processes, and never as three monolithic objects.**
+**Adopt Store / Analyst / Writer as three real logical services in the monolith, plus a dev-only Bench. Redefine each per `architecture-final-minimal.md`, and reconcile the God-Object concern rather than using it to reject the single Entry model.**
 
-Mapping (authoritative):
+| Service | Definition (authoritative) | Realized as | Detailed in |
+|---------|---------------------------|-------------|-------------|
+| **Store** | One prose-first **Entry** model + one `retrieve(scope, cast, location, beat, budget) → entries` function. It *is* the Story Bible, all six DNA/libraries, and all ledgers. | One Entry table (typed by `type`) + a ~100-line retrieval function generalizing the existing MemoryEngine rank/budget pattern. | ADR-003, ADR-004, ADR-018 |
+| **Analyst** | One extractor: **text in → entries out.** Same service for reference analysis (`scope=collection`), chapter ingestion (`scope=work`), and edit-diff distillation (`input=diffs`). A facet = one prompt file. | One extraction service + job queue; facets are prompt files. | ADR-008, ADR-010 |
+| **Writer** | One loop runner executing a **declarative stage list**: retrieve → assemble → generate → validate → revise → persist. Planning, drafting, critics, episode assembly, style pass are **stages, not engines**. | One loop runner + pipeline definitions (stages-as-data) + prompt files per stage. | ADR-005, ADR-020 |
+| **Bench** | Dev-only harness: golden scenes + the Writer's checks run as metrics; A/B any prompt/stage/retrieval change. | Runner script + fixtures; reuses Writer checks. | ADR-012 |
 
-| Role | What it *is* | Realized by (existing design) | Not allowed to be |
-|------|--------------|-------------------------------|-------------------|
-| **Store** | Owns persistence + retrieval of canon; enforces ownership scoping and invariants. | The **Repository layer** (one repository per aggregate root) + the Story Bible read model (ADR-004). | A single "Store" class; a generic key-value blob; a God Object. |
-| **Analyst** | Turns raw canon into *generation-ready context*: memory ranking, lore scan, budget-aware assembly, optional reference/style guidance. | **Memory Engine** + **Prompt Engine** (+ optional reference-analysis helper, ADR-008). | A hidden dependency that writes to the Store; an autonomous agent. |
-| **Writer** | Produces prose by streaming from a provider, given assembled context. | **Chat Engine** + **Novel Engine**, both calling the **Provider Adapter**. | A component that assembles its own prompts or mutates canon inline. |
-
-Binding rules:
-1. **Store is plural.** It is *not* one object. It is a family of per-aggregate repositories behind a read/write boundary. There is no `Store` God class. "Single source of truth" is a *data* guarantee (one canonical row per fact), not a *code* singleton.
-2. **Data flows one way per turn:** Store → Analyst → Writer → (proposed) canon updates that re-enter the Store **only through an explicit, reviewed path** (Review Card, ADR-011). The Writer never silently writes to canon.
-3. **Analyst never generates; Writer never assembles.** The Prompt Engine (Analyst) produces provider-neutral messages; the Adapter+Engines (Writer) consume them. This preserves determinism and testability (ADR-009).
-4. **The three roles are documentation and dependency discipline, not new packages.** Existing folders (`repositories/`, `engines/prompt`, `engines/memory`, `engines/chat`, `engines/novel`, `adapters/`) stay. This ADR renames *concepts*, not files.
+**Reconciling the God-Object concern (the crux the Board owed an honest answer to):**
+- v1 rejected a "God Store." The Board now distinguishes two things it had conflated: a **God-Object *class*** (one omniscient code object every feature imports and every change edits) vs. a **unified *data shape*** (one Entry table with a `type` discriminator + prose `content` + optional `data` JSON).
+- The reviews propose the **latter**, not the former. A single discriminated Entry *table* accessed through one small `retrieve()` function is **not** a God facade class — the alternative (10 tables, 10 editors, 10 retrieval paths) is the true maintenance bomb. The Board therefore **accepts the single Entry model** (ADR-003) and **retains only the guardrail that matters**: there is no monolithic "Store" facade *class*; there is a data model + a retrieval function + typed access, and `type` is a governed closed vocabulary.
+- The one-way discipline from v1 stands and is reinforced: **the model reads the Store freely; it writes to canon only through review** (proposed entries = Review Cards, ADR-011). Analyst emits proposed entries; the Writer never silently mutates canon.
 
 ## 3. Alternatives Considered
 
-- **A. Three services / three top-level packages** named Store, Analyst, Writer, each owning its own state.
-- **B. A single unified `Store` facade** ("everything goes through the Store") as the one entry point to data.
-- **C. Reject the triad entirely** and keep only the four-engine vocabulary from `design.md`.
-- **D. Writer-owns-everything** (an agent that reads, thinks, and writes in one loop with tool access to the DB).
+- **A. v1's loose roles over the existing engines** (Store = per-aggregate repos; Analyst = Memory+Prompt; Writer = Chat+Novel).
+- **B. Keep the many named engines** (Story Bible / Planning / Serialization / Relationship / Foreshadow / DNA libraries) as first-class modules.
+- **C. Three deployable services** (Store/Analyst/Writer as separate processes).
+- **D. Adopt the triad but reject the single Entry model** (keep v1's "Store is plural, many typed tables").
 
 ## 4. Why Rejected
 
-- **A — Services/packages with own state:** Duplicates the microservice cost of ADR-001 at package granularity and invites data ownership ambiguity (who owns Memory — Store or Analyst?). The clean answer is: **the Store owns all state; Analyst and Writer are stateless transformers.** A three-package split blurs that.
-- **B — Unified Store facade:** This is the God-Object trap. One facade over all aggregates becomes a 2000-line file that every feature imports and every change edits; it destroys the per-aggregate boundaries that make the domain legible, and it makes ownership scoping (Property 1) a single point of failure. Rejected explicitly.
-- **C — Reject the triad:** The four-engine names describe *mechanism* but not the *responsibility boundary between reading canon, understanding it, and producing prose*. The triad adds a genuinely useful invariant — **generation must not mutate canon except through review** — that the raw engine list does not make obvious. So we keep both: engines as implementation, Store/Analyst/Writer as the responsibility contract.
-- **D — Writer-owns-everything agent:** Non-deterministic, hard to test, and the fastest route to canon pollution (an LLM writing directly to the source of truth). Directly violates the human-in-the-loop principle (ADR-011).
+- **A — Loose roles / old mapping:** Superseded. The reviews give sharper, better definitions (Store = data+retrieval, Analyst = one extractor with three inputs, Writer = one loop over declarative stages) that eliminate the engine-per-capability sprawl. Rejected in favor of the concrete triad.
+- **B — Many named engines:** This is the two-year debt bomb (`architecture-final-minimal.md` §2/§3/§6): each noun is a service you operate, an editor you maintain, a migration you write. Their *capabilities* survive as entry types + prompt stages + checks. Rejected as structure.
+- **C — Separate processes:** Same microservice cost as ADR-001 with zero scaling benefit for one user; also blurs data ownership (Store owns all state; Analyst/Writer are stateless transformers). Rejected.
+- **D — Triad without single Entry model:** This was v1's position. On re-examination, the God-Object objection targets a *class*, not a *table*; the many-typed-tables alternative is more complex and less flexible (a new library needs a migration instead of a `type` string). The Board reverses its v1 caution here. Rejected in favor of the single Entry model (ADR-003).
 
 ## 5. Consequences
 
 **Positive**
-- A single, memorable rule governs the riskiest interaction in an AI-native app: *the model reads freely but writes only through review*.
-- Store stays decomposed per aggregate → local changes stay local; no God Object.
-- Analyst (Prompt+Memory) and Writer (Chat+Novel) are independently testable because they are stateless given inputs.
+- A tiny, memorable object graph: three verbs + one harness. New capability = new entry type / new prompt stage / new check — not a new service.
+- The riskiest AI operation (writing to canon) is governed by one rule: *read freely, write only via review*.
+- Store/Analyst/Writer are independently testable — Store is state, Analyst/Writer are stateless given inputs.
 
 **Negative**
-- The vocabulary overlaps with the engine names, which can confuse newcomers; the mapping table above must be kept authoritative.
-- Requires discipline to keep the "no write-back except via review" rule; a lazy shortcut (Writer calling a repository `save`) would silently break it.
+- The Writer loop-runner + declarative stages is a real (if small) piece of infrastructure to get right once; a sloppy stage contract would leak complexity back.
+- "Store = one Entry model" concentrates schema risk in one table (mitigated by the promote-a-type-to-a-table valve, ADR-003 §6).
+- The triad vocabulary coexists with substrate names (PromptEngine, chat engine); the mapping table above must stay authoritative.
 
 **Future risks**
-- If reference analysis (ADR-008) or a learning loop (ADR-010) grows, the "Analyst" role could accrete responsibilities and drift toward its own God Object. Guard: Analyst remains a set of stateless functions over explicit inputs, not a stateful service.
-- Pressure to let the Writer auto-commit canon "for convenience" will recur; it must be resisted or re-decided here.
+- The Analyst accreting stateful caches/indexes (embeddings later) could drift toward its own subsystem; keep it stateless-over-explicit-inputs (ADR-008).
+- Pressure to let the Writer auto-commit canon "for convenience" recurs; forbidden (ADR-011).
 
 ## 6. Future Revisit Conditions
 
-- If a concrete need arises for the Writer to persist *non-canon* artifacts directly (e.g. draft autosave) that don't threaten the source of truth, refine rule #2 rather than abandoning it.
-- If the Analyst's reference/learning responsibilities become stateful (caches, indexes with lifecycles), revisit whether "Analyst" deserves to become a real subsystem with its own store — and if so, re-run the God-Object analysis.
-- If profiling shows the Store→Analyst→Writer per-turn assembly is a latency bottleneck, revisit the boundary (e.g. caching in the Analyst) without collapsing the roles.
+- If one Entry `type` needs heavy deterministic structure, promote it to a dedicated table (ADR-003 §6) — the triad is unaffected.
+- If Analyst extraction becomes genuinely stateful (persistent embedding indexes), revisit whether it earns its own store, re-running the God-Object analysis.
+- If profiling shows retrieve→assemble→validate is a latency bottleneck, cache inside the Store/Analyst boundary without collapsing the roles.

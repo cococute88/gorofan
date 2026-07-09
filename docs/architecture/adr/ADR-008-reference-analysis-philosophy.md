@@ -1,62 +1,71 @@
-# ADR-008: Reference Analysis Philosophy
+# ADR-008: Reference Analysis & the Analyst (One Extractor, Three Inputs)
 
-- **Status:** Accepted — *on-demand, opt-in style extraction into reusable Entries adopted; standing reference-ingestion/corpus pipeline rejected (**Needs Validation** for any future form)*
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — **substantially reversed**: reference analysis is now a central pillar, not a peripheral feature)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-002, ADR-003, ADR-009, ADR-010, ADR-012
+- **Related:** ADR-002, ADR-003, ADR-004, ADR-009, ADR-010, ADR-018
 
 ## 1. Context
 
-"Reference Analysis" is the Analyst capability (ADR-002) of learning from **reference material** — exemplar novels, a favorite author's style, a genre's conventions, or the user's own prior work — to guide new generation ("write in this style"). It is not present in `design.md` at all; it is a net-new "AI Author OS" ambition.
+v1 treated reference analysis as a *peripheral* "write in this style" feature — on-demand style distillation into a reusable entry — and **rejected** any standing reference pipeline. That judgment was made on a thinner understanding of the product. Both Fable reviews make clear that **reference-derived DNA is the product's core creative input**: *"reference-derived DNA instead of hand-filled forms"* is named the architecture's leading strength (`design-review` §0). The Analyst's reference path (facet-pass extraction, R1) feeds *everything* downstream — Character DNA, World DNA, Style Profile, Emotion/Plot/Dialogue libraries, exemplars.
 
-The design space:
-- **Heavyweight:** ingest a corpus of reference texts, chunk + embed them, build a standing retrieval index, and continuously condition generation on retrieved exemplars (a RAG-over-references subsystem).
-- **Lightweight:** on demand, ask a model to distill a short **style guide** from a sample the user provides, store it as a reusable Entry, and inject it like any other Bible content.
+Crucially, `architecture-final-minimal.md` §4 shows the three "learning" mechanisms the reviews describe — Reference Intelligence (R1), Bible auto-ingestion (R4), and edit-diff distillation (R25) — are **the same operation**: *text in → entries out*, differing only by input and scope. That collapses to **one Analyst service**. And it stays simple: extraction is **facet prompt files**, retrieval is **keyword-first**, with embeddings deferred until the Bench proves keyword misses.
 
-For a personal, zero-cost, single-user product, corpus ingestion raises immediate concerns: storage and embedding cost, a second retrieval system, and — critically — **copyright/provenance** exposure if third-party texts are ingested wholesale and echoed into output.
+So the Board reverses v1: reference analysis is central. But two v1 guardrails are *kept and shared by the reviews*: **provenance is non-negotiable**, and **no premature embedding/vector infrastructure**.
 
 ## 2. Decision
 
-**Adopt reference analysis as an on-demand, opt-in distillation into reusable `kind:"style"` Entries. Reject any standing reference-ingestion / corpus-embedding subsystem in the base architecture.**
+**Adopt the Analyst as one extractor with three inputs. Reference analysis is a first-class, standing capability that produces provenanced Store entries via facet prompt files. Keep keyword retrieval; defer embeddings; keep copyright discipline.**
 
-1. **Style-as-Entry:** The user supplies a sample (a passage, a description of a target style). A one-shot analysis call distills it into a compact, human-readable **style Entry** (tone, pacing, diction, POV, sentence rhythm) stored in the Bible with provenance and injected via the ordinary Analyst path (ADR-009).
-2. **No corpus ingestion, no reference embedding index** in the base build. There is no background pipeline that eats books.
-3. **Human-in-the-loop:** the distilled style Entry is a Review Card proposal (ADR-011) — the user edits/accepts it. It is transparent text, not an opaque model artifact.
-4. **Copyright discipline:** the system stores *distilled guidance* (a style description the user authored/approved), not verbatim third-party corpora, and never reproduces reference text into output. This keeps the personal tool clear of storing/echoing others' copyrighted work.
-5. **RAG-over-references is a future, validated option only**, riding the same `Retriever` seam reserved for memory RAG (FUT-2) — never a bespoke second system.
+1. **One Analyst service — text in → entries out** (`architecture-final-minimal.md` §4):
+
+   | Input | Scope | Facets | Output entries |
+   |-------|-------|--------|----------------|
+   | Uploaded reference | `collection` | the §2 signal catalog | `character.*`, `world.*`, `style.*`, `emotion.*`, `plot.*` — status `canon`, provenanced |
+   | Accepted chapter | `work` | facts, knowledge, promises, relationship, summary | ledger entries — status `proposed` (Review Cards, ADR-004/011) |
+   | Accumulated edit diffs | `work`→`user` | style deltas, per-character voice fixes | `preference` entries injected into future prompts (ADR-010) |
+
+2. **A facet = one prompt file** (ADR-013). The §2 signal catalog (voice, prose style, emotion repertoire, chapter-ending taxonomy, naming morphology, contradiction pairs, 사이다/고구마 rhythm, etc.) is *"a prompt library, now explicitly that"* — not an architecture.
+3. **Provenance + confidence are mandatory** on every extracted entry (`design-review` §2, R1): source excerpt + confidence power the "why does the AI think this?" popover (ADR-014) and let low-confidence attributes be hidden rather than shown as noise.
+4. **Exemplar retrieval at generation time (R14):** for each scene, the Writer's retrieve step pulls scene-type-matched reference excerpts (`character.exemplar`, scene-typed via `data`) and injects them as *"imitate the manner, never the content."* Description + exemplar together beat either alone.
+5. **Keyword retrieval first; embeddings deferred** (shared with ADR-018): add embeddings only when keyword retrieval demonstrably misses, measured on the Bench — one shared `Retriever` seam, never a parallel reference-RAG.
+6. **Copyright/provenance discipline retained:** the Store holds *distilled, provenanced guidance* the user uploaded/owns, and the QA gate screens for verbatim leakage from exemplars into output (`design-review` R14 guardrail). No echoing of reference text into output.
+7. **Cross-reference handling stays minimal:** MVP = frequency-weighted merge with provenance; genuine conflicts keep both entries and retrieval prefers higher confidence. **R2 reconciliation engine and R3 genre-baseline-delta storage are deleted** (`architecture-final-minimal.md` §4 self-correction) — store absolutes; "what's distinctive" is a *future Analyst facet*, not a storage format.
+8. **Still rejected:** fine-tuning on references (opaque, provider-locking, non-portable — ADR-010); a bespoke second retrieval system; storing/echoing third-party corpora verbatim.
 
 ## 3. Alternatives Considered
 
-- **A. Standing reference corpus + RAG** — ingest many reference works, embed, retrieve exemplar passages per generation.
-- **B. Fine-tuning on reference style** — train/adapt a model on reference texts.
-- **C. No reference analysis at all** — rely solely on the character/style prose the user writes by hand.
-- **D. Inline few-shot from raw references** — paste raw reference passages directly into every prompt as examples.
+- **A. v1's peripheral on-demand style distillation only** (no standing reference pipeline).
+- **B. Reference RAG / vector store from day one.**
+- **C. Fine-tuning on reference corpora.**
+- **D. Full R2 reconciliation + R3 baseline-delta storage.**
 
 ## 4. Why Rejected
 
-- **A — Corpus + RAG subsystem:** A whole second retrieval system (ingestion, chunking, embeddings, vector store, sync) — heavy for one user, non-zero cost, and it front-runs the memory-RAG decision (FUT-2) with a parallel implementation. Plus corpus storage of third-party works raises copyright exposure. Rejected as base architecture; permitted later only through the *shared* Retriever seam after validation.
-- **B — Fine-tuning:** Expensive, slow, provider-locking, non-portable, and opaque/uneditable — everything the product's transparent, provider-neutral ethos opposes (see ADR-010). Rejected.
-- **C — Nothing:** Leaves a real, valuable capability (imitate a target style) entirely to manual prose. Given how cheaply a one-shot distillation delivers most of the value, doing nothing is under-ambitious. Rejected.
-- **D — Raw passages inline every prompt:** Burns token budget on every generation, risks reproducing copyrighted text into output, and bloats prompts unpredictably. A distilled style Entry captures the essence far more cheaply. Rejected.
+- **A — Peripheral only:** Under-valued the product. Reference-derived DNA is the leading strength both reviews identify; treating it as a side feature would gut the value proposition. Reversed.
+- **B — Vector RAG day one:** Premature infrastructure and non-zero cost; keyword + priority retrieval over provenanced entries performs well at personal scale, and embeddings should be Bench-gated (ADR-018). Rejected now; kept as a deferred shared seam.
+- **C — Fine-tuning:** Opaque, provider-locking, non-portable, expensive — against every founding principle (ADR-010). Rejected.
+- **D — R2/R3 machinery:** `architecture-final-minimal.md` retracts both as premature cleverness (designing storage around a speculative future analysis). Rejected — absolutes + provenance suffice; distinctiveness is a later facet.
 
 ## 5. Consequences
 
 **Positive**
-- Delivers ~most of the "write in this style" value at near-zero standing cost and complexity.
-- Style guidance is transparent, editable text (an Entry) — inspectable and reusable across works.
-- No second retrieval system, no corpus storage, minimal copyright exposure.
-- Rides existing seams (Entry model, Analyst injection, Review Card).
+- The product's core input (reference → DNA) is first-class, yet implemented as *prompt files + entries* — the cheap evolution surface (ADR-001/015).
+- One Analyst service covers reference analysis, chapter ingestion, and preference distillation — no three parallel learning systems.
+- Provenance makes DNA trustworthy and enables the trust-without-configuration UI (ADR-014); exemplar retrieval directly lifts prose quality.
+- No vector infrastructure, minimal copyright exposure.
 
 **Negative**
-- A distilled style guide is lossier than retrieving actual exemplar passages; very fine stylistic mimicry may be weaker than a full RAG approach could achieve.
-- Quality of distillation depends on the analyzing model; a weak/local model yields a vaguer style Entry.
+- Facet extraction quality is model-dependent; a weak/local analyzer yields vaguer DNA (and noisier proposals for the ledger path).
+- Keyword retrieval has a semantic-recall ceiling (shared with ADR-018).
+- Reference upload + analysis is a real pipeline (segment → classify → facet extract → aggregate → dedupe) to build, though it is prompt-and-job code, not new services.
 
 **Future risks**
-- Users may want to "train on my 10 favorite novels"; resisting the pull toward corpus ingestion (with its cost and copyright weight) will require pointing back to this ADR.
-- If reference retrieval is later validated, it must reuse the memory Retriever seam rather than spawning a parallel system — otherwise the architecture accretes two RAGs.
+- Users wanting "train on my favorite novels" will pull toward corpus ingestion/fine-tuning; this ADR is the guardrail (provenanced distillation, not corpus echo).
+- If reference retrieval is later validated, it must reuse the shared `Retriever` seam, not spawn a second RAG.
 
 ## 6. Future Revisit Conditions
 
-- **Validate reference RAG** only if: (a) style Entries prove insufficient for a real need, (b) a local/cheap embedding path exists (Zero-Cost preserved), and (c) copyright handling is clear (user-owned texts only, no echoing). Then implement via the shared `Retriever` seam.
-- If distillation quality is the bottleneck, revisit prompt/model choice for the distillation step (a Bench task, ADR-012) before adding retrieval machinery.
-- Reconsider fine-tuning only in the hypothetical future where cheap, local, portable adaptation exists — currently out of scope.
+- Adopt embeddings for reference/exemplar retrieval only when the Bench shows keyword recall limits quality *and* a local/cheap embedding path preserves Zero-Cost — via the shared seam (ADR-018).
+- Add a genre-baseline-delta *facet* (not storage format) if "what's distinctive about this author" becomes a real need (revisiting the deleted R3 as analysis, not schema).
+- Revisit reconciliation only if frequency-weighted merge + provenance proves insufficient for multi-reference collections.

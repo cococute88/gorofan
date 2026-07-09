@@ -1,9 +1,11 @@
 # ADR-009: Prompt Architecture Philosophy
 
-- **Status:** Accepted — *the block-based, budgeted, provider-neutral Prompt Engine is adopted as the product's core*
-- **Date:** 2026-07-09
+- **Status:** Accepted (revised v2 — **validated as substrate**; assembly now feeds from the Entry store and is driven by declarative stages)
+- **Date:** 2026-07-09 (v1) · revised 2026-07-09 (v2)
 - **Deciders:** Architecture Review Board
-- **Related:** ADR-002, ADR-004, ADR-013, ADR-016
+- **Related:** ADR-002, ADR-004, ADR-005, ADR-013, ADR-016, ADR-018
+
+> **v2 note.** Both Fable reviews explicitly place the block/budget PromptEngine in the **substrate to keep as-is** (`architecture-final-minimal.md` §1: *"PromptEngine (blocks/budget)"*). This ADR is therefore validated. Two alignments only: (1) the Engine's context sources are now **Store entries** returned by the single `retrieve()` function (ADR-018), not scattered per-type reads; (2) *which* blocks to assemble for a given step is chosen by the **declarative Writer stage** (ADR-005), while the Engine remains the deterministic, budgeted, provider-neutral assembler. The "no feature hand-assembles prompts" rule is unchanged and reinforced by stages-as-data.
 
 ## 1. Context
 
