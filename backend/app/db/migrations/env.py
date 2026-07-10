@@ -1,7 +1,7 @@
 """Alembic environment (async-aware, design 4.4 / 8.1.4).
 
-Uses DATABASE_URL from settings. Target metadata is the full ORM Base, so the
-baseline migration stays in lockstep with models.
+Uses DATABASE_URL from settings. Target metadata is the full ORM Base for
+autogenerating future revisions; committed revisions remain self-contained.
 """
 from __future__ import annotations
 
