@@ -69,6 +69,39 @@ def test_ai_extraction_cannot_use_captured_or_canon() -> None:
     assert proposed.status is EntryStatus.PROPOSED
 
 
+def test_terminal_and_canon_statuses_cannot_be_created_directly() -> None:
+    for status in (EntryStatus.CANON, EntryStatus.REJECTED, EntryStatus.SUPERSEDED):
+        with pytest.raises(ValidationError, match=f"directly as {status.value}"):
+            EntryCreate(
+                scope_kind=EntryScope.USER,
+                type=EntryType.NOTE,
+                status=status,
+                content="Invalid initial state",
+                provenance=_provenance(),
+            )
+
+
+def test_confidence_and_priority_bounds_are_enforced() -> None:
+    for confidence in (-0.01, 1.01):
+        with pytest.raises(ValidationError):
+            EntryCreate(
+                scope_kind=EntryScope.USER,
+                type=EntryType.NOTE,
+                content="Invalid confidence",
+                provenance=_provenance(),
+                confidence=confidence,
+            )
+    for priority in (-1, 101):
+        with pytest.raises(ValidationError):
+            EntryCreate(
+                scope_kind=EntryScope.USER,
+                type=EntryType.NOTE,
+                content="Invalid priority",
+                provenance=_provenance(),
+                priority=priority,
+            )
+
+
 def test_chat_private_and_invalid_subject_contracts_are_rejected() -> None:
     with pytest.raises(ValidationError, match="chat-private"):
         EntryCreate(

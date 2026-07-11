@@ -8,8 +8,9 @@ from app.core.errors import NotFound, ValidationAppError
 from app.db.base import Base
 from app.models.character import Character
 from app.models.entry import Entry
-from app.models.novel import Work
+from app.models.novel import Chapter, Work
 from app.models.user import User
+from app.models.world import World
 from app.schemas.entry import (
     EntryCreate,
     EntryProvenance,
@@ -62,6 +63,14 @@ def _note(*, status: EntryStatus = EntryStatus.CAPTURED, content: str = "fact") 
     )
 
 
+async def _create_canon_note(
+    service: EntryService, session: AsyncSession, user_id: str, content: str
+) -> Entry:
+    entry = await service.create(session, user_id, _note(content=content))
+    entry = await service.update_status(session, user_id, entry.id, EntryStatus.PROPOSED)
+    return await service.update_status(session, user_id, entry.id, EntryStatus.CANON)
+
+
 @pytest.mark.asyncio
 async def test_owner_boundary_and_status_transitions(entry_db) -> None:
     service = EntryService()
@@ -75,6 +84,10 @@ async def test_owner_boundary_and_status_transitions(entry_db) -> None:
             await service.get(session, other.id, entry.id)
         with pytest.raises(NotFound):
             await service.update_status(session, other.id, entry.id, EntryStatus.PROPOSED)
+
+        bypassed_canon = _note().model_copy(update={"status": EntryStatus.CANON})
+        with pytest.raises(ValidationAppError, match="directly as canon"):
+            await service.create(session, owner.id, bypassed_canon)
 
         entry = await service.update_status(session, owner.id, entry.id, EntryStatus.PROPOSED)
         assert entry.status == EntryStatus.PROPOSED.value
@@ -121,11 +134,14 @@ async def test_list_filters_and_owned_aggregate_references(entry_db) -> None:
             subject_type=EntrySubjectType.CHARACTER,
             subject_id=character.id,
             type=EntryType.CHARACTER_IDENTITY,
-            status=EntryStatus.CANON,
             content="Keeps every promise.",
             provenance=_human_provenance(),
         )
         created = await service.create(session, owner.id, dto)
+        created = await service.update_status(
+            session, owner.id, created.id, EntryStatus.PROPOSED
+        )
+        created = await service.update_status(session, owner.id, created.id, EntryStatus.CANON)
         listed = await service.list(
             session,
             owner.id,
@@ -147,14 +163,25 @@ async def test_supersession_is_atomic_owner_scoped_and_traceable(entry_db) -> No
     service = EntryService()
     async with entry_db() as session:
         owner = await _seed_owner(session, "supersede@example.com")
-        current = await service.create(
-            session, owner.id, _note(status=EntryStatus.CANON, content="The gate is locked.")
+        other = await _seed_owner(session, "supersede-other@example.com")
+        current = await _create_canon_note(
+            service, session, owner.id, "The gate is locked."
         )
         replacement = await service.create(
             session,
             owner.id,
             _note(status=EntryStatus.PROPOSED, content="The gate is open."),
         )
+        foreign_replacement = await service.create(
+            session,
+            other.id,
+            _note(status=EntryStatus.PROPOSED, content="Foreign replacement"),
+        )
+
+        with pytest.raises(NotFound):
+            await service.supersede(
+                session, owner.id, current.id, foreign_replacement.id
+            )
 
         old, new = await service.supersede(session, owner.id, current.id, replacement.id)
         assert old.status == EntryStatus.SUPERSEDED.value
@@ -166,3 +193,128 @@ async def test_supersession_is_atomic_owner_scoped_and_traceable(entry_db) -> No
         persisted_old = await session.get(Entry, old.id)
         assert persisted_old is not None
         assert persisted_old.superseded_by_entry_id == new.id
+
+
+@pytest.mark.asyncio
+async def test_subject_collection_and_provenance_ownership_boundaries(entry_db) -> None:
+    service = EntryService()
+    async with entry_db() as session:
+        owner = await _seed_owner(session, "subject-owner@example.com")
+        other = await _seed_owner(session, "subject-other@example.com")
+        work = Work(user_id=owner.id, title="Owned work")
+        world = World(user_id=owner.id, name="Owned world")
+        first = Character(user_id=owner.id, name="First")
+        second = Character(user_id=owner.id, name="Second")
+        foreign = Character(user_id=other.id, name="Foreign")
+        foreign_work = Work(user_id=other.id, title="Foreign work")
+        session.add_all([work, world, first, second, foreign, foreign_work])
+        await session.flush()
+        chapter = Chapter(work_id=work.id, user_id=owner.id, index=1)
+        foreign_chapter = Chapter(work_id=foreign_work.id, user_id=other.id, index=1)
+        session.add_all([chapter, foreign_chapter])
+        await session.commit()
+
+        summary = await service.create(
+            session,
+            owner.id,
+            EntryCreate(
+                scope_kind=EntryScope.WORK,
+                scope_id=work.id,
+                subject_type=EntrySubjectType.CHAPTER,
+                subject_id=chapter.id,
+                type=EntryType.STORY_SUMMARY,
+                content="Chapter summary",
+                provenance=_human_provenance(),
+            ),
+        )
+        assert summary.subject_id == chapter.id
+
+        work_fact = await service.create(
+            session,
+            owner.id,
+            EntryCreate(
+                scope_kind=EntryScope.WORK,
+                scope_id=work.id,
+                subject_type=EntrySubjectType.WORK,
+                subject_id=work.id,
+                type=EntryType.STORY_FACT,
+                content="The work begins in winter.",
+                provenance=_human_provenance(),
+            ),
+        )
+        assert work_fact.subject_id == work.id
+
+        world_fact = await service.create(
+            session,
+            owner.id,
+            EntryCreate(
+                scope_kind=EntryScope.WORLD,
+                scope_id=world.id,
+                type=EntryType.WORLD_FACT,
+                content="Magic has a cost.",
+                provenance=_human_provenance(),
+            ),
+        )
+        assert world_fact.scope_id == world.id
+
+        relationship = await service.create(
+            session,
+            owner.id,
+            EntryCreate(
+                scope_kind=EntryScope.WORK,
+                scope_id=work.id,
+                subject_type=EntrySubjectType.CHARACTER_PAIR,
+                subject_data={"character_ids": [second.id, first.id]},
+                type=EntryType.RELATIONSHIP_STATE,
+                content="They distrust each other.",
+                provenance=_human_provenance(),
+            ),
+        )
+        expected_pair = sorted([first.id, second.id])
+        assert relationship.subject_data["character_ids"] == expected_pair
+        assert relationship.subject_id == "|".join(expected_pair)
+
+        with pytest.raises(ValidationAppError, match="owned active record"):
+            await service.create(
+                session,
+                owner.id,
+                EntryCreate(
+                    scope_kind=EntryScope.WORK,
+                    scope_id=work.id,
+                    subject_type=EntrySubjectType.CHARACTER_PAIR,
+                    subject_data={"character_ids": [first.id, foreign.id]},
+                    type=EntryType.RELATIONSHIP_STATE,
+                    content="Cross-owner pair",
+                    provenance=_human_provenance(),
+                ),
+            )
+
+        with pytest.raises(ValidationAppError, match="collection scope is unavailable"):
+            await service.create(
+                session,
+                owner.id,
+                EntryCreate(
+                    scope_kind=EntryScope.COLLECTION,
+                    scope_id="collection-id",
+                    type=EntryType.STYLE_PREFERENCE,
+                    content="Collection style",
+                    provenance=_human_provenance(),
+                ),
+            )
+
+        with pytest.raises(ValidationAppError, match="owned active record"):
+            await service.create(
+                session,
+                owner.id,
+                EntryCreate(
+                    scope_kind=EntryScope.USER,
+                    type=EntryType.NOTE,
+                    content="Foreign provenance",
+                    provenance=EntryProvenance(
+                        source_kind=ProvenanceSourceKind.CHAPTER,
+                        source_id=foreign_chapter.id,
+                        capture_method=ProvenanceCaptureMethod.HUMAN_AUTHORED,
+                        producer="integration-test",
+                    ),
+                ),
+            )

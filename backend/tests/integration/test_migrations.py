@@ -228,11 +228,27 @@ def test_migration_round_trip_uses_isolated_sqlite_db(tmp_path, monkeypatch) -> 
             "status",
             "type",
         ]
+        assert entry_indexes["ix_entries_owner_type"]["column_names"] == [
+            "user_id",
+            "type",
+        ]
         assert entry_indexes["ix_entries_owner_subject"]["column_names"] == [
             "user_id",
             "subject_type",
             "subject_id",
         ]
+        entry_checks = {
+            constraint["name"] for constraint in inspector.get_check_constraints("entries")
+        }
+        assert {
+            "ck_entries_scope_kind",
+            "ck_entries_type",
+            "ck_entries_status",
+            "ck_entries_content_nonempty",
+            "ck_entries_confidence",
+            "ck_entries_priority",
+            "ck_entries_not_self_superseded",
+        }.issubset(entry_checks)
         entry_foreign_keys = _foreign_key_map(inspector, "entries")
         assert entry_foreign_keys[("user_id",)]["referred_table"] == "users"
         assert entry_foreign_keys[("user_id",)]["options"]["ondelete"] == "CASCADE"

@@ -128,6 +128,12 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_index(
+        "ix_entries_owner_type",
+        "entries",
+        ["user_id", "type"],
+        unique=False,
+    )
+    op.create_index(
         "ix_entries_owner_status_type",
         "entries",
         ["user_id", "status", "type"],

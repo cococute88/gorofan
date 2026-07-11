@@ -179,7 +179,11 @@ class EntryCreate(BaseModel):
                 raise ValueError("AI-extracted entries must start proposed; captured cannot bypass review")
             if self.confidence is None:
                 raise ValueError("AI-extracted entries require confidence")
-        if self.status in {EntryStatus.REJECTED, EntryStatus.SUPERSEDED}:
+        if self.status in {
+            EntryStatus.CANON,
+            EntryStatus.REJECTED,
+            EntryStatus.SUPERSEDED,
+        }:
             raise ValueError(f"entries cannot be created directly as {self.status.value}")
         return self
 

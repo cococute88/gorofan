@@ -25,6 +25,7 @@ from app.schemas.entry import (
     EntryStatus,
     EntrySubjectType,
     EntryType,
+    ProvenanceCaptureMethod,
     ProvenanceSourceKind,
 )
 
@@ -43,6 +44,7 @@ class EntryService:
 
     async def create(self, session: AsyncSession, user_id: str, dto: EntryCreate) -> Entry:
         await self._assert_active_owner(session, user_id)
+        self._validate_creation_state(dto)
         await self._validate_scope(session, user_id, dto.scope_kind, dto.scope_id)
         subject_id, subject_data = await self._validate_and_normalize_subject(
             session,
@@ -62,8 +64,6 @@ class EntryService:
         values["subject_id"] = subject_id
         values["subject_data"] = subject_data
         entry = Entry(user_id=user_id, **values)
-        if dto.status is EntryStatus.CANON:
-            entry.accepted_at = utcnow()
         await self.repo.add(session, entry)
         await session.commit()
         await session.refresh(entry)
@@ -101,7 +101,7 @@ class EntryService:
         entry_id: str,
         new_status: EntryStatus,
     ) -> Entry:
-        entry = await self.get(session, user_id, entry_id)
+        entry = await self._get_for_update(session, user_id, entry_id)
         current = EntryStatus(entry.status)
         if new_status not in ALLOWED_STATUS_TRANSITIONS[current]:
             raise ValidationAppError(
@@ -129,8 +129,11 @@ class EntryService:
         if current_entry_id == replacement_entry_id:
             raise ValidationAppError("An Entry cannot supersede itself")
 
-        current = await self.get(session, user_id, current_entry_id)
-        replacement = await self.get(session, user_id, replacement_entry_id)
+        locked: dict[str, Entry] = {}
+        for entry_id in sorted((current_entry_id, replacement_entry_id)):
+            locked[entry_id] = await self._get_for_update(session, user_id, entry_id)
+        current = locked[current_entry_id]
+        replacement = locked[replacement_entry_id]
         if current.status != EntryStatus.CANON.value:
             raise ValidationAppError("Only canon Entry can be superseded")
         if replacement.status != EntryStatus.PROPOSED.value:
@@ -158,6 +161,31 @@ class EntryService:
         user = await session.get(User, user_id)
         if user is None or not user.is_active:
             raise NotFound("User not found")
+
+    @staticmethod
+    def _validate_creation_state(dto: EntryCreate) -> None:
+        """Defend the write boundary even if internal code bypasses DTO revalidation."""
+        if dto.status in {
+            EntryStatus.CANON,
+            EntryStatus.REJECTED,
+            EntryStatus.SUPERSEDED,
+        }:
+            raise ValidationAppError(
+                f"Entry cannot be created directly as {dto.status.value}"
+            )
+        if dto.provenance.capture_method is ProvenanceCaptureMethod.AI_EXTRACTED:
+            if dto.status is not EntryStatus.PROPOSED:
+                raise ValidationAppError("AI-extracted Entry must start proposed")
+            if dto.confidence is None:
+                raise ValidationAppError("AI-extracted Entry requires confidence")
+
+    async def _get_for_update(
+        self, session: AsyncSession, user_id: str, entry_id: str
+    ) -> Entry:
+        entry = await self.repo.get_for_update(session, entry_id, user_id=user_id)
+        if entry is None:
+            raise NotFound("Entry not found", {"id": entry_id})
+        return entry
 
     async def _validate_scope(
         self,

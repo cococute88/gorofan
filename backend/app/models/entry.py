@@ -66,6 +66,7 @@ class Entry(BaseModel):
             name="ck_entries_not_self_superseded",
         ),
         Index("ix_entries_owner_scope", "user_id", "scope_kind", "scope_id"),
+        Index("ix_entries_owner_type", "user_id", "type"),
         Index("ix_entries_owner_status_type", "user_id", "status", "type"),
         Index("ix_entries_owner_subject", "user_id", "subject_type", "subject_id"),
         Index("ix_entries_owner_updated", "user_id", "updated_at"),

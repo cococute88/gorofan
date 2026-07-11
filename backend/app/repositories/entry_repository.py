@@ -17,6 +17,21 @@ class EntryRepository:
         stmt = select(Entry).where(Entry.id == entry_id, Entry.user_id == user_id)
         return (await session.execute(stmt)).scalars().first()
 
+    async def get_for_update(
+        self, session: AsyncSession, entry_id: str, *, user_id: str
+    ) -> Entry | None:
+        """Lock one owner-scoped Entry for a lifecycle mutation.
+
+        PostgreSQL emits ``FOR UPDATE``; SQLite safely ignores the clause and
+        retains its single-writer behavior.
+        """
+        stmt = (
+            select(Entry)
+            .where(Entry.id == entry_id, Entry.user_id == user_id)
+            .with_for_update()
+        )
+        return (await session.execute(stmt)).scalars().first()
+
     async def list(
         self,
         session: AsyncSession,
