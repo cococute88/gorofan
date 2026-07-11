@@ -4,11 +4,11 @@
 - **Date:** 2026-07-10
 - **Author:** Chief Software Architect
 - **Project:** AI Native Creative Workspace (`ai-creative-workspace` / "gorofan") — "나만의 로판AI + 하트픽션"
-- **Conforms to:** RFC-001, RFC-002, RFC-003, RFC-004, RFC-005, RFC-006; ADR-007, ADR-003, ADR-005, ADR-008, ADR-011, ADR-018
+- **Conforms to:** RFC-001, RFC-002, RFC-008, RFC-004, RFC-005, RFC-006; ADR-007, ADR-003, ADR-005, ADR-008, ADR-011, ADR-018
 - **Supersedes:** nothing
 - **RFC layer:** Component — the character-identity reference the DNA-organization, retrieval, character-chat, and Writer RFCs build on
 
-> **Reading order.** RFC-001 is the system-level reference; RFC-002 defines the Entry Store; RFC-003 the Analyst; RFC-004 the Writer; RFC-005 the Story Bible; RFC-006 the Relationship model. Read all six first. This RFC defines **Character DNA** — the enduring identity of a character, the canonical source of *"who this character is."* It explains *why it exists*, *what it owns and does not own*, *how it relates to the Story Bible*, and *how it supports both novel generation and character chat*. It does **not** define DNA fields, dialogue rules, learning algorithms, retrieval, or prompts — each is named and deferred.
+> **Reading order.** RFC-001 is the system-level reference; RFC-002 defines the Entry Store; RFC-008 the Analyst; RFC-004 the Writer; RFC-005 the Story Bible; RFC-006 the Relationship model. Read all six first. This RFC defines **Character DNA** — the enduring identity of a character, the canonical source of *"who this character is."* It explains *why it exists*, *what it owns and does not own*, *how it relates to the Story Bible*, and *how it supports both novel generation and character chat*. It does **not** define DNA fields, dialogue rules, learning algorithms, retrieval, or prompts — each is named and deferred.
 >
 > **Source of truth.** The RFC documents take precedence over this one, in order (RFC-001, then RFC-002…RFC-006); behind them the ADR set (`docs/architecture/adr/`) is authoritative, and the two reviews (`docs/design-review-ai-author-os.md`, `docs/architecture-final-minimal.md`) supply rationale only. Where anything here appears to conflict with an RFC or an ADR, **those win** and this document is in error.
 >
@@ -22,7 +22,7 @@ This RFC defines **Character DNA** — the **enduring identity of a character**:
 
 A character is the product's most reused creative asset. The same figure may be spoken to in character chat and written about across hundreds of episodes, and in both they must remain **recognizably themselves** — the same voice, the same values, the same contradictions — regardless of what is happening to them at any moment. Character DNA is the knowledge that holds that identity steady.
 
-Character DNA is **not a new subsystem**. Like all creative knowledge, it lives as prose-first, provenanced, typed Entries in the one Store — the `character.*` family (RFC-002 §5; ADR-007 §2). Its distinctive commitments are *prose-and-exemplar-first* representation and *the five layers as organization, not schema* (ADR-007 §2). This RFC explains:
+Character DNA is **not a new subsystem**. Like all creative knowledge, it lives as prose-first, provenanced, typed Entries in the one Store — the `character.*` family (RFC-002; ADR-007 §2). Its distinctive commitments are *prose-and-exemplar-first* representation and *the five layers as organization, not schema* (ADR-007 §2). This RFC explains:
 
 - **why Character DNA exists** — why long-form character consistency cannot rely on prompt memory alone, and why identity is more than personality labels;
 - **what it owns** — the enduring identity of a character;
@@ -56,7 +56,7 @@ Character DNA is therefore **identity-as-prose-and-exemplars**, not a personalit
 
 ## 3. Character DNA Responsibilities
 
-Character DNA's ownership is the **enduring identity of a character**, held as canonical knowledge. This section defines *responsibilities* — high-level, **no schemas, no fields** (those are Defined in the corresponding RFC). Each responsibility below is a *facet of identity*, carried within `character.*` Entries in the Store as prose and exemplars (RFC-002 §5; ADR-007 §2) — not a field this RFC defines.
+Character DNA's ownership is the **enduring identity of a character**, held as canonical knowledge. This section defines *responsibilities* — high-level, **no schemas, no fields** (those are Defined in the corresponding RFC). Each responsibility below is a *facet of identity*, carried within `character.*` Entries in the Store as prose and exemplars (RFC-002; ADR-007 §2) — not a field this RFC defines.
 
 - **Identity.** The character's core self — who they fundamentally are, the stable center everything else hangs on (ADR-007 §2). This is the most enduring facet and the least likely to change.
 - **Voice.** How the character speaks — their distinctive verbal manner, rhythm, and register — carried above all in **example dialogue (exemplars)**, which outrank abstract description (ADR-007 §2, §4; §7 here).
@@ -77,9 +77,9 @@ Character DNA's non-ownership is as binding as its ownership; ambiguity here re-
 - **Relationship state.** DNA does not own how two characters currently stand with one another. That is *shared, evolving narrative state* owned by the Relationship model — it belongs to neither character individually (RFC-006 §4, §7). A character's *enduring relational disposition* (how they tend to relate at all) is identity and may live in DNA; the *specific, moving state of a pairing* is not DNA (§6-Identity-vs-State). *The relationship model is Defined in the corresponding RFC (the Relationship System RFC).*
 - **Story events.** DNA does not record what happens to a character. The facts, knowledge-state, and promises of the ongoing story are the **Story Bible's** work-scoped canon (RFC-005 §3). DNA is who the character *is*; the Bible is what has *happened* (§6, §8).
 - **Dialogue generation.** DNA does not write dialogue. It holds the *voice* a character speaks in; generating the actual lines is the **Writer's** job (in novels) and the chat engine's (in chat) (RFC-004 §3; §7 here). DNA supplies the manner; it does not author the utterance. *Dialogue rules are Defined in the corresponding RFC.*
-- **Knowledge extraction.** DNA does not extract itself. It is auto-populated by the **Analyst** from references and refined from accepted material and user corrections — all as proposals (RFC-003 §3; ADR-007 §2). DNA *receives* proposed identity knowledge; it does not produce it.
+- **Knowledge extraction.** DNA does not extract itself. It is auto-populated by the **Analyst** from references and refined from accepted material and user corrections — all as proposals (RFC-008 §3; ADR-007 §2). DNA *receives* proposed identity knowledge; it does not produce it.
 - **Narrative planning.** DNA does not plan the story or the arc. Placing scenes and planning transitions is a **Writer stage** that *reads* DNA — not a DNA-owned planner (RFC-004 §3).
-- **Prompt execution.** DNA does not assemble or run prompts, and it does not own the retrieval that selects it for a prompt — that single capability belongs to the **Store** (RFC-002 §6.1, §8). It is *read from*; it does not do the reading. *Retrieval and prompt assembly are Defined in the corresponding RFCs.*
+- **Prompt execution.** DNA does not assemble or run prompts, and it does not own the retrieval that selects it for a prompt — that single capability belongs to the **Store** (RFC-002). It is *read from*; it does not do the reading. *Retrieval and prompt assembly are Defined in the corresponding RFCs.*
 
 The one-way discipline that governs the whole system governs DNA too: **the model reads identity canon freely and writes it only through review** (RFC-001 §2.6; ADR-007 §2; ADR-011).
 
@@ -138,7 +138,7 @@ Character DNA and the Story Bible are both canonical knowledge in the one Store,
 
 - **DNA is identity; the Bible is the work's events.** DNA answers *who a character is*; the Bible answers *what has happened in this story* (§6; RFC-005 §3). A character's guardedness is DNA; the specific betrayal in chapter 12 that hardened them is a Bible fact. The two are complementary, not competing.
 - **DNA is (often) portable; the Bible is work-bound.** Character DNA is enduring identity that can precede a work, be reused across works, and serve character chat independent of any novel — conceptually collection-scoped, reusable knowledge (ADR-008 §2). The Story Bible is strictly *one work's* accumulating canon, at work scope (RFC-005 §3, §8). DNA is not owned by any single work's Bible; a work *draws on* the character's identity, but the identity outlives the work.
-- **Both are Entries in the one Store; neither is a separate store.** DNA (`character.*`) and the Bible's ledgers are all typed Entries riding the same model, retrieval, editor, and review gate (RFC-002 §5, §9.1; RFC-005 §8). There is no "DNA store" and no "Bible store"; there is one Store holding both kinds of knowledge, distinguished by type and scope. If a per-character-DNA table ever appeared, the architecture would have failed (RFC-001 §8.5).
+- **Both are Entries in the one Store; neither is a separate store.** DNA (`character.*`) and the Bible's ledgers are all typed Entries riding the same model, retrieval, editor, and review gate (RFC-002; RFC-005 §8). There is no "DNA store" and no "Bible store"; there is one Store holding both kinds of knowledge, distinguished by type and scope. If a per-character-DNA table ever appeared, the architecture would have failed (RFC-001 §8.5).
 - **A work reads DNA and Bible together; DNA does not replace the Bible.** When drafting or chatting, the system retrieves both the character's identity (DNA) and the relevant story canon (Bible) — identity keeps the character themselves, canon keeps them consistent with events (RFC-005 §9; §10 here). DNA supplies the *who*; the Bible supplies the *what-so-far*; retrieval brings the right slice of each. **This RFC does not redefine the Bible — RFC-005 does.**
 
 ---
@@ -147,8 +147,8 @@ Character DNA and the Story Bible are both canonical knowledge in the one Store,
 
 Character chat is one of the product's two core capabilities (RFC-001 §1.1), and it **consumes** Character DNA while remaining an independent capability. *This RFC does not define the chat architecture; it describes only how chat relates to DNA.*
 
-- **Chat is powered by DNA.** Conversing with a character *is*, in large part, generating from that character's identity — their voice (exemplars first), values, and contradictions (ADR-007 §2, §4). Chat retrieves DNA the same way any consumer does, through the Store's one retrieval function (RFC-002 §8). DNA is what makes the chatted character recognizably the same person the novel writes.
-- **Chat consumes DNA; it does not own it.** Character DNA is shared identity knowledge in the Store, not chat-private state. Chat's own conversational memory stays chat-private and is not extended toward this shared identity; where chat produces something worth keeping — a line the author bookmarks as definitive voice — it flows into the shared Store as a proposed `character.exemplar` through the normal gate, never by widening chat memory into a second DNA store (RFC-002 §5; ADR-018 §6; ADR-007 §4). Chat is a reader of DNA and, through review, a proposer to it.
+- **Chat is powered by DNA.** Conversing with a character *is*, in large part, generating from that character's identity — their voice (exemplars first), values, and contradictions (ADR-007 §2, §4). Chat retrieves DNA the same way any consumer does, through the Store's one retrieval function (RFC-002). DNA is what makes the chatted character recognizably the same person the novel writes.
+- **Chat consumes DNA; it does not own it.** Character DNA is shared identity knowledge in the Store, not chat-private state. Chat's own conversational memory stays chat-private and is not extended toward this shared identity; where chat produces something worth keeping — a line the author bookmarks as definitive voice — it flows into the shared Store as a proposed `character.exemplar` through the normal gate, never by widening chat memory into a second DNA store (RFC-002; ADR-018 §6; ADR-007 §4). Chat is a reader of DNA and, through review, a proposer to it.
 - **One identity serves both chat and novel.** Because DNA is shared, a character voiced in chat and written in the novel draw on *one* identity, so they cannot diverge into two versions of the same person (RFC-001 §1.1; §6 here). This unity is the direct payoff of placing identity in the shared Store rather than inside either capability — and chat remains a fully independent product surface built *on* that shared identity, not folded into the Writer.
 
 The relationship in one line: **chat speaks a character by consuming their shared DNA; it holds no private copy, and it may propose new exemplars back through review.**
@@ -172,11 +172,11 @@ The relationship in one line: **the Writer drafts and checks against DNA and pro
 
 Character DNA is designed to grow richer over time without architectural change — and, distinctively, to improve through **user-approved examples** (ADR-007 §2, §4).
 
-- **DNA grows by accumulating identity knowledge, not by changing structure.** A richer character is more and better `character.*` Entries — more exemplars, a sharper contradiction pair, a fuller never-says list — flowing in as proposals and approved into canon (ADR-007 §2–§3). The underlying model stays fixed; the evolution surface is *typed prose data and Analyst facets*, the cheapest things in the system to change (RFC-001 §2.4, §7; RFC-002 §9.1).
+- **DNA grows by accumulating identity knowledge, not by changing structure.** A richer character is more and better `character.*` Entries — more exemplars, a sharper contradiction pair, a fuller never-says list — flowing in as proposals and approved into canon (ADR-007 §2–§3). The underlying model stays fixed; the evolution surface is *typed prose data and Analyst facets*, the cheapest things in the system to change (RFC-001 §2.4, §7; RFC-002).
 - **User-approved examples are the primary refinement path.** The most powerful way DNA improves is the author correcting a line to read as the character truly should, or bookmarking a definitive chat line — stored as a canonical `character.exemplar` with provenance *user* (ADR-007 §2, §4). Because exemplars outrank descriptions, a few corrected lines shift the character's rendered voice more than any amount of description editing — which is exactly why the architecture prefers this to inferring attribute changes from edits (ADR-007 §4-A). *This is a storage-and-review path, not a learning algorithm; learning algorithms are Defined in the corresponding RFC (the Learning Capture & Distillation RFC).*
 - **Auto-population from references means no empty forms.** New characters arrive already rich, extracted from references by the Analyst with provenance, rather than as blank trait forms the author must fill (ADR-007 §5; ADR-008 §2). Evolution starts from a populated, trustworthy base.
-- **A new identity facet is a new `character.*` type, never a new store.** If a genuinely new dimension of identity proves worth tracking, it is a new `character.*` Entry type plus an Analyst facet — absorbed by the Store, retrieval, editor, and gate (RFC-002 §9.1; RFC-003 §9; ADR-007 §2). It is never a new DNA subsystem or table (RFC-001 §8.5).
-- **Deferred structure waits for a Bench-verified trigger.** A small structured `data` field is added to a `character.*` type **only** if the Bench shows it measurably beats prose-plus-exemplars — never a trait ontology, never numeric axes (ADR-007 §5, §6). Speculative structure is forbidden (RFC-002 §10.3). *The promotion path is Defined in the corresponding RFC.*
+- **A new identity facet is a new `character.*` type, never a new store.** If a genuinely new dimension of identity proves worth tracking, it is a new `character.*` Entry type plus an Analyst facet — absorbed by the Store, retrieval, editor, and gate (RFC-002; RFC-008 §9; ADR-007 §2). It is never a new DNA subsystem or table (RFC-001 §8.5).
+- **Deferred structure waits for a Bench-verified trigger.** A small structured `data` field is added to a `character.*` type **only** if the Bench shows it measurably beats prose-plus-exemplars — never a trait ontology, never numeric axes (ADR-007 §5, §6). Speculative structure is forbidden (RFC-002). *The promotion path is Defined in the corresponding RFC.*
 
 ---
 
@@ -201,7 +201,7 @@ The guards:
 The guards:
 
 - **Declared precedence resolves conflicts predictably.** Conflicting inputs resolve by a declared precedence order (user > bible > tags > collection DNA > genre baseline) rather than silent averaging that would blur the character (ADR-007 §2, §6). *The precedence order and any conflict escalation are Defined in the corresponding RFCs.*
-- **Provenance keeps every piece traceable.** Because each Entry carries where it came from, a fragmented identity can be inspected and adjudicated rather than being an anonymous muddle (RFC-002 §3.2; ADR-007 §2).
+- **Provenance keeps every piece traceable.** Because each Entry carries where it came from, a fragmented identity can be inspected and adjudicated rather than being an anonymous muddle (RFC-002; ADR-007 §2).
 - **The five layers keep rendering coherent.** Organizing identity as Core/Behavioral/Voice/Relational/Arc gives a stable rendering order that assembles the pieces into a coherent whole, rather than a flat bag of contradictory statements (ADR-007 §2). *The layer organization is Defined in the corresponding RFC.*
 - **A conflict Review Card is the Bench-gated escalation.** If silent precedence resolution is shown to hurt, surfacing genuine conflicts to the human is the sanctioned next step — added on evidence, not speculatively (ADR-007 §2, §6).
 
@@ -211,7 +211,7 @@ Characters genuinely change over an arc, and DNA must be able to reflect real gr
 
 - **Only enduring, arc-level change updates DNA — and only through review.** When a character *permanently* changes — a value shifts, a wound heals, a mask comes off for good — that is an arc-level growth reflected in DNA via a gated proposal that revises or supersedes identity Entries (ADR-007 §2, the Arc layer; RFC-005 §5). Growth anchors exist precisely to make this legible: what changed, relative to what stayed (§3).
 - **Temporary state never updates DNA.** A momentary emotion, a single scene's vulnerability, is Current Emotional State — working knowledge that is consumed and discarded, never canonized (§6; RFC-005 §6). The test is durability: *has this character permanently become someone different, or do they merely feel something right now?* Only the former touches DNA.
-- **Growth is superseded, not erased.** When identity is revised, the prior identity is superseded and retained — preserving who the character *was* before they grew (RFC-002 §4). The arc is legible in the history, not overwritten.
+- **Growth is superseded, not erased.** When identity is revised, the prior identity is superseded and retained — preserving who the character *was* before they grew (RFC-002). The arc is legible in the history, not overwritten.
 
 ### 12.4 What should never change?
 
@@ -219,7 +219,7 @@ Characters genuinely change over an arc, and DNA must be able to reflect real gr
 
 - **Core is the slowest layer, and the through-line of any arc.** Growth is layered on via arc and behavioral change; the core self and the defining contradiction are the recognizable constant an arc moves *relative to*, not the thing an arc erases (ADR-007 §2; §5 here). A character can soften without ceasing to be themselves.
 - **Every change to identity is human-gated.** There is no silent path to rewriting who a character is; core changes, like all DNA changes, pass through review (ADR-007 §2; RFC-005 §5). The human is the final judge of "is this still the same person?"
-- **History is never destroyed.** Because identity is superseded rather than deleted, even a profound change leaves the original self on record — so "what should never change" is always recoverable even when growth is intended (RFC-002 §4).
+- **History is never destroyed.** Because identity is superseded rather than deleted, even a profound change leaves the original self on record — so "what should never change" is always recoverable even when growth is intended (RFC-002).
 
 ---
 
@@ -241,7 +241,7 @@ Wherever this document needed such a detail, it wrote **"Defined in the correspo
 
 ## 14. Dependencies
 
-RFC-007 depends on **RFC-001**, **RFC-002**, **RFC-003**, **RFC-004**, **RFC-005**, and **RFC-006** and must conform to them; where they conflict, they govern (RFC-001 §10; and the dependency notes of the prior RFCs). The following areas of the system **depend on Character DNA** defined here — they organize it, consume it, or govern its review, and none may override the enduring-identity, identity-not-state, canon-only-through-review boundaries established above:
+RFC-007 depends on **RFC-001**, **RFC-002**, **RFC-008**, **RFC-004**, **RFC-005**, and **RFC-006** and must conform to them; where they conflict, they govern (RFC-001 §10; and the dependency notes of the prior RFCs). The following areas of the system **depend on Character DNA** defined here — they organize it, consume it, or govern its review, and none may override the enduring-identity, identity-not-state, canon-only-through-review boundaries established above:
 
 | Depends on Character DNA | Depends on it for |
 |---|---|
@@ -266,19 +266,19 @@ RFC-007 depends on **RFC-001**, **RFC-002**, **RFC-003**, **RFC-004**, **RFC-005
 
 | RFC-007 Section | Primary sources |
 |---|---|
-| §1 Purpose | RFC-001 §1.1; RFC-002 §5; ADR-007 §2 |
+| §1 Purpose | RFC-001 §1.1; RFC-002; ADR-007 §2 |
 | §2 Why Character DNA Exists | RFC-005 §2.1; RFC-006 §2.1; ADR-007 §1–§4; ADR-005 §3; `architecture-final-minimal.md` §2 |
-| §3 Responsibilities | ADR-007 §2–§3; RFC-002 §5; ADR-008 §2 |
-| §4 Does NOT Own | RFC-001 §2.6, §4; RFC-002 §6.1, §8; RFC-003 §3; RFC-004 §3; RFC-005 §3; RFC-006 §4, §7; ADR-007 §2; ADR-011 |
+| §3 Responsibilities | ADR-007 §2–§3; RFC-002; ADR-008 §2 |
+| §4 Does NOT Own | RFC-001 §2.6, §4; RFC-002; RFC-008 §3; RFC-004 §3; RFC-005 §3; RFC-006 §4, §7; ADR-007 §2; ADR-011 |
 | §5 Identity Philosophy | ADR-007 §2; RFC-001 §1.1; RFC-005 §6 |
-| §6 Identity vs State | ADR-007 §2; RFC-005 §3, §6; RFC-006 §7; RFC-002 §3.4 |
+| §6 Identity vs State | ADR-007 §2; RFC-005 §3, §6; RFC-006 §7; RFC-002 |
 | §7 Voice Philosophy | ADR-007 §2–§4; ADR-005 §3; RFC-004 §7 |
-| §8 Relationship with Story Bible | RFC-005 §3, §8, §9; RFC-002 §5, §9.1; ADR-008 §2; RFC-001 §8.5 |
-| §9 Relationship with Character Chat | RFC-001 §1.1; RFC-002 §5, §8; ADR-018 §6; ADR-007 §2, §4 |
+| §8 Relationship with Story Bible | RFC-005 §3, §8, §9; RFC-002; ADR-008 §2; RFC-001 §8.5 |
+| §9 Relationship with Character Chat | RFC-001 §1.1; RFC-002; ADR-018 §6; ADR-007 §2, §4 |
 | §10 Relationship with Writer | RFC-004 §4, §6, §7; ADR-005 §3; ADR-007 §2, §4; RFC-005 §5 |
-| §11 Evolution Strategy | RFC-001 §2.4, §7; RFC-002 §9.1, §10.3; RFC-003 §9; ADR-007 §2–§6; ADR-008 §2 |
-| §12 Architectural Risks | ADR-007 §2–§6; ADR-005 §3; RFC-002 §3.2, §4; RFC-004 §7; RFC-005 §5–§6 |
+| §11 Evolution Strategy | RFC-001 §2.4, §7; RFC-002; RFC-008 §9; ADR-007 §2–§6; ADR-008 §2 |
+| §12 Architectural Risks | ADR-007 §2–§6; ADR-005 §3; RFC-002; RFC-004 §7; RFC-005 §5–§6 |
 | §13 Out of Scope | RFC-001 §9 (RFC boundary conventions) |
-| §14 Dependencies | RFC-001 §10; RFC-002 §12; RFC-006 §14 |
+| §14 Dependencies | RFC-001 §10; RFC-002; RFC-006 §14 |
 
 *End of RFC-007.*

@@ -1,20 +1,14 @@
-# RFC-008: Retrieval & Context Assembly
+# Retrieval & Context Assembly — Historical Background
 
-- **Status:** Draft
-- **Date:** 2026-07-10
-- **Author:** Chief Software Architect
-- **Project:** AI Native Creative Workspace (`ai-creative-workspace` / "gorofan") — "나만의 로판AI + 하트픽션"
-- **Conforms to:** RFC-001, RFC-002, RFC-003, RFC-004, RFC-005, RFC-006, RFC-007; ADR-018, ADR-009, ADR-002, ADR-004, ADR-016, ADR-012
-- **Supersedes:** nothing
-- **RFC layer:** Component — the retrieval-and-assembly reference the Writer, chat, prompt-architecture, and Bench RFCs build on
+- **Status:** Historical / Superseded
+- **Formerly:** RFC-008 Retrieval & Context Assembly
+- **Preserved:** 2026-07-11 during PR #7 self-review
+- **Authoritative contracts:** [RFC-003 Store-wide Retrieval](rfc/RFC-003-Store-Retrieval-Contract.md) and [RFC-009 Prompt System](rfc/RFC-009-Prompt-System.md)
 
-> **Reading order.** RFC-001 is the system-level reference; RFC-002 defines the Entry Store (and, at §8, the high-level retrieval philosophy); RFC-003 the Analyst; RFC-004 the Writer; RFC-005 the Story Bible; RFC-006 the Relationship model; RFC-007 Character DNA. Read them first. This RFC defines two adjacent-but-separate responsibilities: **Retrieval** — selecting the *minimum necessary* knowledge for a writing or chat task — and **Context Assembly** — turning retrieved knowledge into *LLM-ready context*. It explains *why each exists*, *why they are separate*, and *what each owns and does not own*. It does **not** define ranking, embeddings, vector storage, caching, prompts, or any algorithm — each is named and deferred.
->
-> **Source of truth.** The RFC documents take precedence over this one, in order (RFC-001, then RFC-002…RFC-007); behind them the ADR set (`docs/architecture/adr/`) is authoritative, and the two reviews (`docs/design-review-ai-author-os.md`, `docs/architecture-final-minimal.md`) supply rationale only. Where anything here appears to conflict with an RFC or an ADR, **those win** and this document is in error.
->
-> **This RFC is implementation-neutral.** It is the conceptual charter of Retrieval and Context Assembly. Whenever an implementation detail is needed, this document writes **"Defined in the corresponding RFC"** (naming the topic) and stops. It defines no algorithms.
+> This file preserves the pre-renumbering RFC-008 draft so PR #7 does not delete an existing architecture document wholesale. It is rationale and historical background, not a numbered RFC and not an implementation contract. Its original numeric cross-references describe the pre-PR series and are intentionally non-authoritative; use the current document map in [Architecture Guide](README.md).
 
 ---
+
 
 ## 1. Purpose
 
