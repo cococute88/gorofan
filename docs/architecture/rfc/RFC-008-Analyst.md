@@ -1,4 +1,4 @@
-# RFC-003: Analyst
+# RFC-008: Analyst
 
 - **Status:** Draft
 - **Date:** 2026-07-10
@@ -235,7 +235,7 @@ Wherever this document needed such a detail, it wrote **"Defined in a later RFC"
 
 ## 12. Dependencies
 
-RFC-003 depends on **RFC-001** and **RFC-002** and must conform to them; where they conflict, they govern (RFC-001 §10; RFC-002 §12). The following areas of the system **depend on the Analyst** defined here — they consume its proposals, its provenance, or its facet output, and none may override the one-extractor, proposals-not-canon, stateless-transformer boundaries established above:
+RFC-008 depends on **RFC-001** and **RFC-002** and must conform to them; where they conflict, they govern (RFC-001 §10; RFC-002 §12). The following areas of the system **depend on the Analyst** defined here — they consume its proposals, its provenance, or its facet output, and none may override the one-extractor, proposals-not-canon, stateless-transformer boundaries established above:
 
 | Depends on the Analyst | Depends on it for |
 |---|---|
@@ -254,7 +254,7 @@ RFC-003 depends on **RFC-001** and **RFC-002** and must conform to them; where t
 
 ## Appendix A — Traceability
 
-| RFC-003 Section | Primary sources |
+| RFC-008 Section | Primary sources |
 |---|---|
 | §1 Purpose | RFC-001 §3.2; RFC-002 §1; ADR-002 §2; ADR-008 §2 |
 | §2 Why the Analyst Exists / ONE Analyst | RFC-001 §2.3, §2.4, §7.3, §8.5; ADR-002 §2; ADR-008 §1–§2; `architecture-final-minimal.md` §4 |
@@ -269,4 +269,4 @@ RFC-003 depends on **RFC-001** and **RFC-002** and must conform to them; where t
 | §11 Out of Scope | RFC-001 §9 (RFC boundary conventions) |
 | §12 Dependencies | RFC-001 §10; RFC-002 §12 |
 
-*End of RFC-003.*
+*End of RFC-008.*

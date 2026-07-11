@@ -4,13 +4,13 @@
 - **Date:** 2026-07-10
 - **Author:** Chief Software Architect
 - **Project:** AI Native Creative Workspace (`ai-creative-workspace` / "gorofan") — "나만의 로판AI + 하트픽션"
-- **Conforms to:** RFC-001, RFC-002, RFC-003; ADR-002, ADR-005, ADR-020, ADR-004, ADR-009, ADR-011, ADR-012, ADR-013
+- **Conforms to:** RFC-001, RFC-002, RFC-008; ADR-002, ADR-005, ADR-020, ADR-004, ADR-009, ADR-011, ADR-012, ADR-013
 - **Supersedes:** nothing
 - **RFC layer:** Component — the orchestration reference the pipeline, validation, retrieval-consumer, and review RFCs build on
 
-> **Reading order.** RFC-001 is the system-level reference, RFC-002 defines the Entry Store, and RFC-003 defines the Analyst; read all three first. This RFC opens the **Writer** — the third of RFC-001's three verbs (RFC-001 §3.3) — and defines *why the Writer exists*, *what it owns and does not own*, and *how narrative generation fits the overall architecture*. It does **not** define prompts, stages, generation algorithms, validation rules, retrieval, or streaming — each is named and deferred.
+> **Reading order.** RFC-001 is the system-level reference, RFC-002 defines the Entry Store, and RFC-008 defines the Analyst; read all three first. This RFC opens the **Writer** — the third of RFC-001's three verbs (RFC-001 §3.3) — and defines *why the Writer exists*, *what it owns and does not own*, and *how narrative generation fits the overall architecture*. It does **not** define prompts, stages, generation algorithms, validation rules, retrieval, or streaming — each is named and deferred.
 >
-> **Source of truth.** RFC-001, RFC-002, and RFC-003 take precedence over this document; behind them the ADR set (`docs/architecture/adr/`) is authoritative, and the two reviews (`docs/design-review-ai-author-os.md`, `docs/architecture-final-minimal.md`) supply rationale only. Where anything here appears to conflict with RFC-001/002/003 or an ADR, **those win** and this document is in error.
+> **Source of truth.** RFC-001, RFC-002, and RFC-008 take precedence over this document; behind them the ADR set (`docs/architecture/adr/`) is authoritative, and the two reviews (`docs/design-review-ai-author-os.md`, `docs/architecture-final-minimal.md`) supply rationale only. Where anything here appears to conflict with RFC-001/002/003 or an ADR, **those win** and this document is in error.
 >
 > **This RFC is implementation-neutral.** It is the conceptual charter of the Writer. Whenever an implementation detail is needed, this document writes **"Defined in the corresponding RFC"** (naming the topic) and stops. It defines no stages.
 
@@ -20,7 +20,7 @@
 
 This RFC defines the **Writer** — the system's one mechanism for transforming **knowledge into narrative**.
 
-RFC-001 establishes three verbs — **Store, Analyst, Writer** (RFC-001 §2.3, §3). RFC-002 defined where knowledge lives (the Entry Store); RFC-003 defined how knowledge enters (the Analyst). This RFC defines the verb that *uses* that knowledge to produce the product's reason for existing: **Korean web-novel-class prose** — 로판 and Heart-Fiction-grade long-form fiction (RFC-001 §1.1).
+RFC-001 establishes three verbs — **Store, Analyst, Writer** (RFC-001 §2.3, §3). RFC-002 defined where knowledge lives (the Entry Store); RFC-008 defined how knowledge enters (the Analyst). This RFC defines the verb that *uses* that knowledge to produce the product's reason for existing: **Korean web-novel-class prose** — 로판 and Heart-Fiction-grade long-form fiction (RFC-001 §1.1).
 
 The Writer is the **orchestration layer** of the AI Author OS. It does not merely "call a model to continue the chapter"; it **owns the complete writing lifecycle** — assembling the right knowledge into context, generating a draft, validating that draft against ground truth, revising where it fails, composing scenes into a deliverable episode, and handing the result to persistence. It is the one place where the system's knowledge, its craft, and its quality loops come together into narrative.
 
@@ -80,9 +80,9 @@ In one breath: the Writer **orchestrates** the lifecycle — assemble, generate,
 The Writer's non-ownership is as binding as its ownership; ambiguity here re-creates the engine sprawl the architecture exists to prevent (RFC-001 §4). The Writer *reads the Store and emits proposals like everyone else* (RFC-001 §3.3).
 
 - **Knowledge storage.** The Writer holds **no persisted knowledge of its own**. All creative knowledge lives in the Store; the Writer consumes it and never becomes a second home for it (RFC-002 §6.1; RFC-001 §4.3). It reads the Store; it does not own the Store.
-- **Knowledge extraction.** The Writer does not turn text into knowledge; that is the Analyst (RFC-003 §3). When accepted output yields new facts or promises, the Writer's ingestion step **invokes the Analyst** to extract them — it does not extract them itself (ADR-005 §7; RFC-003 §5).
+- **Knowledge extraction.** The Writer does not turn text into knowledge; that is the Analyst (RFC-008 §3). When accepted output yields new facts or promises, the Writer's ingestion step **invokes the Analyst** to extract them — it does not extract them itself (ADR-005 §7; RFC-008 §5).
 - **Human review — the canon decision.** The Writer **never writes canon silently.** Anything it wants to add to the source of truth surfaces as a *proposed* Entry for human review, exactly like an Analyst proposal (RFC-001 §2.6, §8.2; RFC-002 §3.4; ADR-005 §7). The Writer proposes; the human disposes. *The review interaction is Defined in the corresponding RFC.*
-- **Reference analysis.** The Writer does not read uploaded references or distill preferences; those are Analyst input paths (RFC-003 §5). The Writer *consumes* the reference-derived knowledge (e.g. exemplars) that the Analyst produced and a human approved — it does not produce it.
+- **Reference analysis.** The Writer does not read uploaded references or distill preferences; those are Analyst input paths (RFC-008 §5). The Writer *consumes* the reference-derived knowledge (e.g. exemplars) that the Analyst produced and a human approved — it does not produce it.
 - **Relationship management.** The Writer does not own the evolving state between characters as a subsystem. A relationship is knowledge in the Store, planned for in a stage, and checked — an Entry type plus prompt clauses, not a Writer-owned engine (RFC-001 §7.2; ADR-020 §2; `architecture-final-minimal.md` §3). *The relationship model is Defined in the corresponding RFC.*
 - **Retrieval, and the craft content it runs.** The Writer does not own the **retrieval function** that selects knowledge (that is the Store's one capability — RFC-002 §8), nor the **content** of its own craft: planning heuristics, critique criteria, serialization cadence, and style behavior all live in **prompt files and cheap assertions**, not in the runner's code (RFC-001 §4.3, §8.3; ADR-005 §1–§3; ADR-020 §4). The runner is written once; the craft is tuned weekly.
 - **Transactional persistence policy and quality gating over the user.** The Writer does not own the transaction/concurrency policy — that stays in the service layer, post-loop (ADR-005 §6) — and it owns no authority to block the user's own output; measuring quality is the Bench, out-of-band (RFC-001 §2.7, §4.4). *Persistence policy is Defined in the corresponding RFC; the Bench is Defined in the corresponding RFC.*
@@ -246,7 +246,7 @@ Wherever this document needed such a detail, it wrote **"Defined in the correspo
 
 ## 12. Dependencies
 
-RFC-004 depends on **RFC-001**, **RFC-002**, and **RFC-003** and must conform to them; where they conflict, they govern (RFC-001 §10; RFC-002 §12; RFC-003 §12). The following areas of the system **depend on the Writer** defined here — they detail its lifecycle, consume its output, or measure its loops, and none may override the one-orchestrator, reads-Store, proposals-not-canon, quality-in-loops boundaries established above:
+RFC-004 depends on **RFC-001**, **RFC-002**, and **RFC-008** and must conform to them; where they conflict, they govern (RFC-001 §10; RFC-002 §12; RFC-008 §12). The following areas of the system **depend on the Writer** defined here — they detail its lifecycle, consume its output, or measure its loops, and none may override the one-orchestrator, reads-Store, proposals-not-canon, quality-in-loops boundaries established above:
 
 | Depends on the Writer | Depends on it for |
 |---|---|
@@ -260,7 +260,7 @@ RFC-004 depends on **RFC-001**, **RFC-002**, and **RFC-003** and must conform to
 | **The Bench RFC** | Measuring the Writer's loops and A/B-testing every stage or prompt change out-of-band. |
 | **The UI & Information Architecture RFC** | Surfacing the writing lifecycle — synopsis, episode list, streaming draft, "polish ready" — to the author. |
 
-> The forward references above are named by topic rather than by number, because the Writer's orchestration boundary, its reads-Store/proposals-not-canon discipline, and its quality-in-loops principle are what those RFCs build on regardless of final numbering. Their **dependence on the one-orchestrator model, the consume-don't-own-knowledge rule, and the review-before-canon gate is fixed**; where a successor and this RFC appear to conflict on those, this RFC — and behind it RFC-001, RFC-002, RFC-003, and the ADR set — governs.
+> The forward references above are named by topic rather than by number, because the Writer's orchestration boundary, its reads-Store/proposals-not-canon discipline, and its quality-in-loops principle are what those RFCs build on regardless of final numbering. Their **dependence on the one-orchestrator model, the consume-don't-own-knowledge rule, and the review-before-canon gate is fixed**; where a successor and this RFC appear to conflict on those, this RFC — and behind it RFC-001, RFC-002, RFC-008, and the ADR set — governs.
 
 ---
 
@@ -268,10 +268,10 @@ RFC-004 depends on **RFC-001**, **RFC-002**, and **RFC-003** and must conform to
 
 | RFC-004 Section | Primary sources |
 |---|---|
-| §1 Purpose | RFC-001 §1.1, §3.3; RFC-002 §1; RFC-003 §1; ADR-005 §2 |
+| §1 Purpose | RFC-001 §1.1, §3.3; RFC-002 §1; RFC-008 §1; ADR-005 §2 |
 | §2 Why the Writer Exists / ONE Writer | RFC-001 §2.3, §2.4, §7.2, §8.5; ADR-002 §2; ADR-005 §1–§2; ADR-020 §1; `architecture-final-minimal.md` §3, §6 |
 | §3 Responsibilities | RFC-001 §3.3, §4.3; ADR-005 §2–§6; ADR-020 §2 |
-| §4 Does NOT Own | RFC-001 §2.6, §4.3, §8.2, §8.3, §8.7; RFC-002 §6.1, §3.4, §8; RFC-003 §3, §5; ADR-005 §6–§7 |
+| §4 Does NOT Own | RFC-001 §2.6, §4.3, §8.2, §8.3, §8.7; RFC-002 §6.1, §3.4, §8; RFC-008 §3, §5; ADR-005 §6–§7 |
 | §5 Writing Lifecycle | RFC-001 §2.6, §5; ADR-005 §2–§7; ADR-020 §2 |
 | §6 Context Philosophy | RFC-002 §1, §5, §6.1, §8; RFC-001 §2.3, §2.8, §4.3; ADR-018 §2; ADR-005 §7 |
 | §7 Quality Philosophy | RFC-001 §1.2, §2.8, §2.9, §8.9; ADR-005 §1–§4; ADR-020 §1–§2; ADR-012 |
@@ -279,6 +279,6 @@ RFC-004 depends on **RFC-001**, **RFC-002**, and **RFC-003** and must conform to
 | §9 Evolution Strategy | RFC-001 §2.4, §7.2, §7.4; RFC-002 §9.1; ADR-005 §2–§3, §6; ADR-020 §4, §6; ADR-013 |
 | §10 Architectural Risks | ADR-005 §3, §5–§6; ADR-002 §5–§6; ADR-020 §5–§6; RFC-001 §1.2, §2.1, §4, §7.4; RFC-002 §8 |
 | §11 Out of Scope | RFC-001 §9 (RFC boundary conventions) |
-| §12 Dependencies | RFC-001 §10; RFC-002 §12; RFC-003 §12 |
+| §12 Dependencies | RFC-001 §10; RFC-002 §12; RFC-008 §12 |
 
 *End of RFC-004.*

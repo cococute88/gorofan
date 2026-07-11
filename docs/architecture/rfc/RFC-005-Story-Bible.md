@@ -4,13 +4,13 @@
 - **Date:** 2026-07-10
 - **Author:** Chief Software Architect
 - **Project:** AI Native Creative Workspace (`ai-creative-workspace` / "gorofan") — "나만의 로판AI + 하트픽션"
-- **Conforms to:** RFC-001, RFC-002, RFC-003, RFC-004; ADR-004, ADR-002, ADR-003, ADR-008, ADR-011, ADR-018
+- **Conforms to:** RFC-001, RFC-002, RFC-008, RFC-004; ADR-004, ADR-002, ADR-003, ADR-008, ADR-011, ADR-018
 - **Supersedes:** nothing
 - **RFC layer:** Component — the canonical-knowledge reference the continuity, retrieval, review, and relationship RFCs build on
 
-> **Reading order.** RFC-001 is the system-level reference; RFC-002 defines the Entry Store; RFC-003 defines the Analyst; RFC-004 defines the Writer. Read all four first. This RFC defines the **Story Bible** — the canonical knowledge source for a *single work* — and explains *why it exists*, *what it owns and does not own*, *how it relates to the Store and the Writer*, and *how it evolves across a novel*. It does **not** define Entry structures, retrieval, validation logic, prompts, or UI — each is named and deferred.
+> **Reading order.** RFC-001 is the system-level reference; RFC-002 defines the Entry Store; RFC-008 defines the Analyst; RFC-004 defines the Writer. Read all four first. This RFC defines the **Story Bible** — the canonical knowledge source for a *single work* — and explains *why it exists*, *what it owns and does not own*, *how it relates to the Store and the Writer*, and *how it evolves across a novel*. It does **not** define Entry structures, retrieval, validation logic, prompts, or UI — each is named and deferred.
 >
-> **Source of truth.** The RFC documents take precedence over this one, in order (RFC-001, then RFC-002, RFC-003, RFC-004); behind them the ADR set (`docs/architecture/adr/`) is authoritative, and the two reviews (`docs/design-review-ai-author-os.md`, `docs/architecture-final-minimal.md`) supply rationale only. Where anything here appears to conflict with an RFC or an ADR, **those win** and this document is in error.
+> **Source of truth.** The RFC documents take precedence over this one, in order (RFC-001, then RFC-002, RFC-008, RFC-004); behind them the ADR set (`docs/architecture/adr/`) is authoritative, and the two reviews (`docs/design-review-ai-author-os.md`, `docs/architecture-final-minimal.md`) supply rationale only. Where anything here appears to conflict with an RFC or an ADR, **those win** and this document is in error.
 >
 > **This RFC is implementation-neutral.** It is the conceptual charter of the Story Bible. Whenever an implementation detail is needed, this document writes **"Defined in the corresponding RFC"** (naming the topic) and stops. It defines no Entry structures.
 
@@ -76,12 +76,12 @@ Across all of these, one responsibility is constant: the Bible holds this knowle
 
 The Story Bible's non-ownership is as binding as its ownership; ambiguity here re-creates the engine sprawl the architecture exists to prevent (RFC-001 §4). The Bible is **knowledge kept**, not work done.
 
-- **Knowledge extraction.** The Bible does not turn text into knowledge. New facts, promises, and relationship movement are extracted by the **Analyst** on chapter acceptance (RFC-003 §3; ADR-004 §3). The Bible *receives* proposed knowledge; it does not produce it.
+- **Knowledge extraction.** The Bible does not turn text into knowledge. New facts, promises, and relationship movement are extracted by the **Analyst** on chapter acceptance (RFC-008 §3; ADR-004 §3). The Bible *receives* proposed knowledge; it does not produce it.
 - **Narrative generation.** The Bible does not write prose. Generating draft fiction is the **Writer's** job (RFC-004 §3). The Bible supplies the truth the prose must respect; it does not author the prose.
 - **Prompt execution.** The Bible does not assemble or run prompts, and it does not own the retrieval that selects its knowledge for a prompt — that single capability belongs to the **Store** (RFC-002 §6.1, §8). The Bible is *read from*; it does not do the reading. *Retrieval and prompt assembly are Defined in the corresponding RFCs.*
 - **The contradiction check.** Catching a draft that violates canon is a **Writer check**, not a Bible feature (ADR-004 §4). The Bible provides the ground truth; the Writer runs the check against it. *Validation is Defined in the corresponding RFC.*
 - **Human editing UI.** The Bible does not own the interface through which a human reviews proposals or browses canon. The Review Card queue and the Bible browser are UI surfaces defined elsewhere (ADR-011; ADR-014). The Bible owns the *knowledge and its status*, not the screen. *The review and browse UI are Defined in the corresponding RFCs.*
-- **Reference analysis.** The Bible is *work*-scoped canon; the distillation of uploaded references into collection-scoped knowledge is an **Analyst** input path, not a Bible responsibility (RFC-003 §5; ADR-008 §2). The Bible holds what one novel has established, not what its source references teach.
+- **Reference analysis.** The Bible is *work*-scoped canon; the distillation of uploaded references into collection-scoped knowledge is an **Analyst** input path, not a Bible responsibility (RFC-008 §5; ADR-008 §2). The Bible holds what one novel has established, not what its source references teach.
 
 The one-way discipline that governs the whole system governs the Bible too: **the model reads canon freely and writes canon only through review** (RFC-001 §2.6; ADR-002 §2; ADR-004 §5).
 
@@ -103,7 +103,7 @@ The Story Bible's defining rule is *how knowledge becomes canonical*. Nothing en
 
 - **The Bible never mutates itself.** No accepted chapter, no extraction, no Writer output writes canon on its own. Every change to the Bible's truth passes through a human accepting a proposal (ADR-004 §3, §5). This is not optional chrome; it is the **only** write path into the work's source of truth (RFC-001 §2.6, §8.2).
 - **Why the gate is architectural.** The Bible is the very canon that feeds future drafts. Unattended write-back — letting the AI commit its own extracted facts straight to canon — is *the highest-regret option in the whole system*: a single hallucinated fact, written silently to the source of truth, corrupts every subsequent draft that retrieves it (ADR-004 §4-A). The compounding-hallucination risk over a long serialization is precisely why both reviews independently route ingestion through review (ADR-004 §1, §4-A). The gate exists because the cost of a wrong canon entry is not one bad chapter but a rotting foundation.
-- **Reading is free; writing is gated.** The asymmetry is the point: the Writer and the checks read canon freely and automatically, but *contributing* to canon is always mediated by a human decision (RFC-001 §8.7; ADR-004 §2, §5). This is the same gate every producer in the system passes — the Analyst and the Writer both emit *proposed* knowledge, never canon (RFC-003 §4; RFC-004 §4).
+- **Reading is free; writing is gated.** The asymmetry is the point: the Writer and the checks read canon freely and automatically, but *contributing* to canon is always mediated by a human decision (RFC-001 §8.7; ADR-004 §2, §5). This is the same gate every producer in the system passes — the Analyst and the Writer both emit *proposed* knowledge, never canon (RFC-008 §4; RFC-004 §4).
 - **Bounded auto-accept remains deferred, not adopted.** The architecture names a *possible future* where a specific high-precision knowledge type might be auto-accepted under scoped, reversible, audited conditions — but only after real long-project data proves the precision, and never as a default (ADR-004 §4-A, §6). Until that trigger fires, **no silent canon mutation** stands as an absolute. *The conditions for any bounded auto-accept are Defined in the corresponding RFCs.*
 
 ---
@@ -124,7 +124,7 @@ The boundary that matters: **working knowledge may become proposed knowledge (by
 
 The Story Bible is **living**: it grows with the work rather than being authored once at the start.
 
-- **The Bible grows through the continuity loop.** Each time the author accepts a chapter as canonical story, that chapter becomes a source (RFC-003 §5): the Analyst extracts the new facts, knowledge-state, promises, relationship movement, and summaries it established, as *proposed* Entries (ADR-004 §3). The human reviews them; approved knowledge joins canon; and that freshly-approved knowledge is immediately available to retrieval for the next draft — which the Writer then checks against it (RFC-001 §5; ADR-004 §1). Accepted chapter → proposal → review → canon → retrieved into the next draft → checked: this closed loop is the Bible's life (RFC-001 §5.8).
+- **The Bible grows through the continuity loop.** Each time the author accepts a chapter as canonical story, that chapter becomes a source (RFC-008 §5): the Analyst extracts the new facts, knowledge-state, promises, relationship movement, and summaries it established, as *proposed* Entries (ADR-004 §3). The human reviews them; approved knowledge joins canon; and that freshly-approved knowledge is immediately available to retrieval for the next draft — which the Writer then checks against it (RFC-001 §5; ADR-004 §1). Accepted chapter → proposal → review → canon → retrieved into the next draft → checked: this closed loop is the Bible's life (RFC-001 §5.8).
 - **Living, but never rotting.** The reason a living Bible does not degrade into contradiction is precisely the gate (§5): growth is continuous, but every increment is reviewed before it becomes truth (ADR-004 §1, §5). A static bible guarantees staleness; an *ungated* living bible guarantees corruption; the **gated** living bible is the only option that stays both current and coherent (ADR-004 §4-A, §4-B).
 - **The flywheel that separates an Author OS from a generator.** The continuity loop is one of the four closed loops where quality compounds (RFC-001 §2.8, §5). It is what lets the Bible get *richer* per chapter — more facts, more paid promises, more relationship history — while staying trustworthy, which is the difference between a system that remembers its own story and a generator that forgets (ADR-004 §1, §5).
 - **Evolution is knowledge changing, not schema changing.** As the story moves, knowledge is added, refined, and superseded — but this is movement *within* the Entry model (new and superseded Entries), not change to any structure (RFC-002 §4). The Bible evolves as fast as the novel does while the system underneath it stays still (§9). *Supersession mechanics are Defined in the corresponding RFC.*
@@ -161,9 +161,9 @@ The relationship in one line: **the Writer draws truth from the Bible and propos
 
 The Story Bible is designed so that a novel can grow for hundreds of chapters without any architectural change — the same promise the whole system makes (RFC-001 §7).
 
-- **A new kind of canonical knowledge is a new `type`, never a new ledger table.** When a work needs to track a new kind of truth (a new category of world fact, a new craft signal, a new thread dimension), that is a new Entry `type` string in RFC-002's governed vocabulary plus an Analyst facet that proposes it — absorbed automatically by the Store, retrieval, the editor, and the review queue (RFC-002 §9.1; RFC-003 §9). It is **never** a new Bible ledger, table, or subsystem (ADR-004 §2; RFC-001 §8.5).
+- **A new kind of canonical knowledge is a new `type`, never a new ledger table.** When a work needs to track a new kind of truth (a new category of world fact, a new craft signal, a new thread dimension), that is a new Entry `type` string in RFC-002's governed vocabulary plus an Analyst facet that proposes it — absorbed automatically by the Store, retrieval, the editor, and the review queue (RFC-002 §9.1; RFC-008 §9). It is **never** a new Bible ledger, table, or subsystem (ADR-004 §2; RFC-001 §8.5).
 - **The Bible grows in content, not in structure.** Day to day, the Bible grows the way §7 describes — new and superseded Entries flowing through the continuity loop — while the underlying model stays fixed (RFC-002 §4; ADR-004 §1). The evolution surface is *typed data and Analyst facets*, the two cheapest things in the system to change (RFC-001 §2.4, §7).
-- **Richer continuity is a richer Analyst facet, not a Bible feature.** Sharper fact extraction, better promise tracking, or a new relationship dimension is a new or improved **Analyst facet** producing the same proposed-Entry shape into the same gate (RFC-003 §9; ADR-004 §2). The Bible does not gain code; the extraction that fills it gains a prompt.
+- **Richer continuity is a richer Analyst facet, not a Bible feature.** Sharper fact extraction, better promise tracking, or a new relationship dimension is a new or improved **Analyst facet** producing the same proposed-Entry shape into the same gate (RFC-008 §9; ADR-004 §2). The Bible does not gain code; the extraction that fills it gains a prompt.
 - **Deferred structure waits for a real, visible trigger.** The parts of the Bible most likely to strain prose-first storage — the knowledge matrix, the promise ledger, the timeline, whose checks do arithmetic and graph-like lookups — are the named candidates for the *one sanctioned escape valve*: promoting a `type` to its own structured table **only** when its deterministic checks start doing "parsing gymnastics" (RFC-002 §9.4, §10.3; ADR-003 §6; ADR-004 §5–§6). This is cheap precisely because everything routes through one Store, and it is the only place the Bible's structure grows later. Speculative promotion is forbidden (RFC-002 §10.3). *The promotion path is Defined in the corresponding RFC.*
 
 ---
@@ -222,7 +222,7 @@ Wherever this document needed such a detail, it wrote **"Defined in the correspo
 
 ## 13. Dependencies
 
-RFC-005 depends on **RFC-001**, **RFC-002**, **RFC-003**, and **RFC-004** and must conform to them; where they conflict, they govern (RFC-001 §10; RFC-002 §12; RFC-003 §12; RFC-004 §12). The following areas of the system **depend on the Story Bible** defined here — they detail its continuity, consume its canon, or govern its review, and none may override the canon-only-through-review, view-over-the-Store, consumed-not-serving boundaries established above:
+RFC-005 depends on **RFC-001**, **RFC-002**, **RFC-008**, and **RFC-004** and must conform to them; where they conflict, they govern (RFC-001 §10; RFC-002 §12; RFC-008 §12; RFC-004 §12). The following areas of the system **depend on the Story Bible** defined here — they detail its continuity, consume its canon, or govern its review, and none may override the canon-only-through-review, view-over-the-Store, consumed-not-serving boundaries established above:
 
 | Depends on the Story Bible | Depends on it for |
 |---|---|
@@ -236,7 +236,7 @@ RFC-005 depends on **RFC-001**, **RFC-002**, **RFC-003**, and **RFC-004** and mu
 | **The Bench RFC** | Measuring extraction precision and contradiction-catch quality that keep the living Bible trustworthy. |
 | **The UI & Information Architecture RFC** | Surfacing canon (the Bible browser) and proposals (the Review queue) to the author. |
 
-> The forward references above are named by title rather than by number, because the Story Bible's canon-only-through-review gate, its view-over-the-Store nature, and its consumed-by-the-Writer discipline are what those RFCs build on regardless of final numbering. Their **dependence on the human-gated canon, the one-Store model, and the living-but-not-rotting loop is fixed**; where a successor and this RFC appear to conflict on those, this RFC — and behind it RFC-001, RFC-002, RFC-003, RFC-004, and the ADR set — governs.
+> The forward references above are named by title rather than by number, because the Story Bible's canon-only-through-review gate, its view-over-the-Store nature, and its consumed-by-the-Writer discipline are what those RFCs build on regardless of final numbering. Their **dependence on the human-gated canon, the one-Store model, and the living-but-not-rotting loop is fixed**; where a successor and this RFC appear to conflict on those, this RFC — and behind it RFC-001, RFC-002, RFC-008, RFC-004, and the ADR set — governs.
 
 ---
 
@@ -247,15 +247,15 @@ RFC-005 depends on **RFC-001**, **RFC-002**, **RFC-003**, and **RFC-004** and mu
 | §1 Purpose | RFC-002 §1, §5; ADR-004 §2; RFC-001 §1.1 |
 | §2 Why the Story Bible Exists | RFC-001 §1.2, §5; ADR-004 §1, §4–§5; ADR-018 §4 |
 | §3 Responsibilities | ADR-004 §2; RFC-002 §5; ADR-018 §4; ADR-006 |
-| §4 Does NOT Own | RFC-001 §2.6, §4; RFC-002 §6.1, §8; RFC-003 §3, §5; RFC-004 §3; ADR-004 §3–§4; ADR-008 §2; ADR-011; ADR-014 |
-| §5 Canon Philosophy | RFC-001 §2.6, §8.2, §8.7; ADR-004 §3–§5; RFC-002 §3.4; RFC-003 §4; RFC-004 §4 |
+| §4 Does NOT Own | RFC-001 §2.6, §4; RFC-002 §6.1, §8; RFC-008 §3, §5; RFC-004 §3; ADR-004 §3–§4; ADR-008 §2; ADR-011; ADR-014 |
+| §5 Canon Philosophy | RFC-001 §2.6, §8.2, §8.7; ADR-004 §3–§5; RFC-002 §3.4; RFC-008 §4; RFC-004 §4 |
 | §6 Canon vs Working Knowledge | RFC-002 §3.4, §4; ADR-004 §2–§3; RFC-004 §5–§6 |
-| §7 Living Bible Philosophy | RFC-001 §2.8, §5, §5.8; ADR-004 §1, §4–§5; RFC-003 §5; RFC-002 §4 |
+| §7 Living Bible Philosophy | RFC-001 §2.8, §5, §5.8; ADR-004 §1, §4–§5; RFC-008 §5; RFC-002 §4 |
 | §8 Relationship to Entry Store | RFC-002 §1, §2.3, §3, §5, §6, §8, §9.1; ADR-004 §2; RFC-001 §7.1, §8.5 |
 | §9 Relationship to Writer | RFC-004 §3, §4, §6, §7; RFC-002 §6.1, §8; ADR-004 §2, §4 |
-| §10 Evolution Strategy | RFC-001 §2.4, §7, §8.5; RFC-002 §9.1, §9.4, §10.3; RFC-003 §9; ADR-003 §6; ADR-004 §2, §6 |
+| §10 Evolution Strategy | RFC-001 §2.4, §7, §8.5; RFC-002 §9.1, §9.4, §10.3; RFC-008 §9; ADR-003 §6; ADR-004 §2, §6 |
 | §11 Architectural Risks | ADR-004 §2, §5–§6; RFC-002 §3.3, §4, §8, §10.3; ADR-008 §7; ADR-018 §4, §6; RFC-004 §7 |
 | §12 Out of Scope | RFC-001 §9 (RFC boundary conventions) |
-| §13 Dependencies | RFC-001 §10; RFC-002 §12; RFC-003 §12; RFC-004 §12 |
+| §13 Dependencies | RFC-001 §10; RFC-002 §12; RFC-008 §12; RFC-004 §12 |
 
 *End of RFC-005.*

@@ -4,11 +4,11 @@
 - **Date:** 2026-07-10
 - **Author:** Chief Software Architect
 - **Project:** AI Native Creative Workspace (`ai-creative-workspace` / "gorofan") — "나만의 로판AI + 하트픽션"
-- **Conforms to:** RFC-001, RFC-002, RFC-003, RFC-004, RFC-005, RFC-006, RFC-007, RFC-008, RFC-009, RFC-010, RFC-011; ADR-014, ADR-018, ADR-007, ADR-008, ADR-002
+- **Conforms to:** RFC-001, RFC-002, RFC-008, RFC-004, RFC-005, RFC-006, RFC-007, RFC-003, RFC-009, RFC-010, RFC-011; ADR-014, ADR-018, ADR-007, ADR-008, ADR-002
 - **Supersedes:** nothing
 - **RFC layer:** Component — the character-chat reference the DNA, relationship, retrieval, review, and UI RFCs relate to as a peer capability
 
-> **Reading order.** RFC-001 is the system-level reference; RFC-002 the Entry Store; RFC-003 the Analyst; RFC-004 the Writer; RFC-005 the Story Bible; RFC-006 the Relationship model; RFC-007 Character DNA; RFC-008 Retrieval & Context Assembly; RFC-009 the Prompt System; RFC-010 the Bench; RFC-011 Human Review. Read them first. This RFC defines **Character Chat** as an **independent product capability** — *not* a sub-feature of novel writing — that nonetheless **shares the same knowledge foundation** as novel authoring. It explains *why Character Chat exists*, *what it owns and does not own*, and *how it shares knowledge with the rest of the system*. It does **not** define dialogue prompts, conversation memory, models, or algorithms — each is named and deferred.
+> **Reading order.** RFC-001 is the system-level reference; RFC-002 the Entry Store; RFC-008 the Analyst; RFC-004 the Writer; RFC-005 the Story Bible; RFC-006 the Relationship model; RFC-007 Character DNA; RFC-003 Store-wide Retrieval; RFC-009 the Prompt System; RFC-010 the Bench; RFC-011 Human Review. Read them first. This RFC defines **Character Chat** as an **independent product capability** — *not* a sub-feature of novel writing — that nonetheless **shares the same knowledge foundation** as novel authoring. It explains *why Character Chat exists*, *what it owns and does not own*, and *how it shares knowledge with the rest of the system*. It does **not** define dialogue prompts, conversation memory, models, or algorithms — each is named and deferred.
 >
 > **Source of truth.** The RFC documents take precedence over this one, in order (RFC-001, then RFC-002…RFC-011); behind them the ADR set (`docs/architecture/adr/`) is authoritative, and the two reviews (`docs/design-review-ai-author-os.md`, `docs/architecture-final-minimal.md`) supply rationale only. Where anything here appears to conflict with an RFC or an ADR, **those win** and this document is in error.
 >
@@ -92,7 +92,7 @@ Across all of these, Character Chat **consumes shared knowledge and produces con
 Character Chat's non-ownership is as binding as its ownership; ambiguity here would let chat fork the shared foundation or open a second write-path to canon (RFC-001 §4). Chat is a **consumer of shared knowledge and a producer of conversation** — nothing more.
 
 - **The Story Bible.** Chat does not own the work's canonical knowledge. The **Story Bible** is a shared foundation chat reads from; chat holds no canon of its own and is not a second source of story truth (RFC-005 §3, §8; §6 here).
-- **Knowledge extraction.** Chat does not turn text into knowledge. Extraction is the **Analyst's** job; even a bookmarked chat line becomes knowledge only by being proposed and reviewed, not extracted by chat itself (RFC-003 §3; §10 here).
+- **Knowledge extraction.** Chat does not turn text into knowledge. Extraction is the **Analyst's** job; even a bookmarked chat line becomes knowledge only by being proposed and reviewed, not extracted by chat itself (RFC-008 §3; §10 here).
 - **Narrative generation.** Chat does not write novel prose, and it does not use the Writer's pipeline to do so (§9; RFC-004 §3). Producing serialized fiction is the **Writer's** exclusive job; chat produces conversation, a different thing.
 - **Canon management.** Chat does not create, edit, or manage canon. The `proposed → canon` transition is owned by **Human Review** (RFC-011 §5); chat has no path to write canon (§11.4). Chat's private conversation memory is explicitly *not* canon and is not folded into the Entry Store (ADR-018 §6).
 - **Review.** Chat does not approve anything into canon. When chat contributes knowledge (a bookmarked exemplar), it emits a **proposal** that Human Review disposes of — chat never approves its own contribution (§10; RFC-011 §5). 
@@ -105,7 +105,7 @@ The discipline: **chat consumes DNA, relationships, and canon, and produces conv
 
 Character Chat is, in large part, *generating from a character's shared DNA* — but it **consumes DNA without owning it** (RFC-007 §9).
 
-- **Chat is powered by shared DNA.** Conversing as a character means drawing on that character's enduring identity — voice (exemplars first), values, contradictions — which lives in shared `character.*` Entries (RFC-007 §2, §9). Chat retrieves DNA the same way any consumer does, through the Store's one retrieval function (RFC-002 §8; RFC-008 §10). DNA is what makes the chatted character recognizably the same person the novel writes (RFC-007 §9).
+- **Chat is powered by shared DNA.** Conversing as a character means drawing on that character's enduring identity — voice (exemplars first), values, contradictions — which lives in shared `character.*` Entries (RFC-007 §2, §9). Chat retrieves DNA the same way any consumer does, through the Store's one retrieval function (RFC-002 §8; RFC-003). DNA is what makes the chatted character recognizably the same person the novel writes (RFC-007 §9).
 - **Chat consumes; it does not own.** DNA is shared identity knowledge in the Store, not chat-private state. Chat holds no copy of a character's identity; if it did, chat's character and the novel's character would drift apart (§3.3; RFC-007 §9). Chat reads the one shared identity and applies it in dialogue (§4).
 - **One identity serves both capabilities.** Because DNA is shared, a character voiced in chat and written in the novel draw on *one* identity and cannot diverge into two versions of the same person (RFC-001 §1.1; RFC-007 §9). **This RFC does not redefine Character DNA — RFC-007 does.**
 
@@ -115,7 +115,7 @@ Character Chat is, in large part, *generating from a character's shared DNA* —
 
 Character Chat **uses canonical knowledge** from the Story Bible where the conversation calls for it — as a reader, never an owner (RFC-005 §8, §9).
 
-- **Chat reads the Bible's canon.** When a conversation touches the story's established facts, the current state of things, or what a character knows, chat retrieves the relevant canonical knowledge — the same work-scoped canon the novel draws on (RFC-005 §3; RFC-008 §10). This keeps a character's conversation consistent with what has actually happened in the story, not just with their static identity.
+- **Chat reads the Bible's canon.** When a conversation touches the story's established facts, the current state of things, or what a character knows, chat retrieves the relevant canonical knowledge — the same work-scoped canon the novel draws on (RFC-005 §3; RFC-003). This keeps a character's conversation consistent with what has actually happened in the story, not just with their static identity.
 - **Chat honors the same knowledge boundaries.** A character in chat should not know what the Bible's knowledge-state says they cannot yet know; canon — including the knowledge matrix — is shared ground truth for chat as much as for the novel (RFC-005 §3; ADR-004 §2). Chat consumes canon through the same retrieval path; it applies no privileged access.
 - **Chat never mutates the Bible.** Chat reads canon freely and writes it never; anything a conversation reveals that is worth keeping enters as a *proposal* through review, exactly like any other knowledge (RFC-005 §5; RFC-011 §5; §10 here). **This RFC does not redefine the Story Bible — RFC-005 does.**
 
@@ -125,7 +125,7 @@ Character Chat **uses canonical knowledge** from the Story Bible where the conve
 
 Character Chat **shares Relationship state with Novel Authoring** — the clearest case of why the shared foundation matters (RFC-006 §7, §9).
 
-- **Chat reflects the shared pairing state.** A character in chat should behave consistently with where the relationship stands — the same current stage and history the novel uses — which lives in shared `relationship` Entries owned by neither capability (RFC-006 §7, §9). Chat retrieves that state through the one retrieval function and reflects it in dialogue (RFC-006 §9; RFC-008 §10).
+- **Chat reflects the shared pairing state.** A character in chat should behave consistently with where the relationship stands — the same current stage and history the novel uses — which lives in shared `relationship` Entries owned by neither capability (RFC-006 §7, §9). Chat retrieves that state through the one retrieval function and reflects it in dialogue (RFC-006 §9; RFC-003).
 - **Why chat and novel share it.** Relationship state is *shared narrative state* precisely because it must be one thing across everything that uses it: a pairing's progression established in the novel is visible in chat, and a warmth expressed in chat is consistent with the novel's canon — because both read the *same* state (RFC-006 §7, §9; RFC-001 §1.1). If chat kept its own relationship state, the pairing would stand in two different places at once — the divergence the shared model exists to prevent (§3.3; §11.1).
 - **Chat consumes; it does not own, and contributes only through review.** Chat holds no relationship state of its own; where a conversation moves a relationship in a way worth keeping, that movement is a *proposal* through review, never a silent write (RFC-006 §8; RFC-011 §5). **This RFC does not redefine the Relationship model — RFC-006 does.**
 
@@ -136,7 +136,7 @@ Character Chat **shares Relationship state with Novel Authoring** — the cleare
 Character Chat **does not use the Writer pipeline** — and this boundary is a defining feature of chat's independence, not a limitation (RFC-004 §3; §3.1 here).
 
 - **The Writer is the novel-authoring loop; chat is a different generation path.** The Writer is one loop runner executing declarative stages — plan, draft, validate, revise, compose episodes — for serialized fiction (RFC-004 §1, §3; ADR-005 §2). Chat's activity is real-time conversation, which has a fundamentally different shape: turn-by-turn interaction, not a bounded draft→validate→revise loop over scenes. Chat therefore has its **own generation path** (the substrate chat engine), not the Writer's pipeline (RFC-001 §3; architecture-final-minimal.md §1). *Chat's generation path is Defined in the corresponding RFC.*
-- **But chat and the Writer share the *substrate* beneath generation.** Not using the Writer does not mean chat reinvents infrastructure: chat uses the *same* retrieval function, the *same* deterministic prompt composition, and the *same* provider adapter as the novel (RFC-008 §10; RFC-009 §9; ADR-016). The shared layer is the *knowledge-and-assembly substrate*; the *not-shared* layer is the generation orchestration — the Writer's loop is the novel's, chat's engine is chat's. This is exactly why a character stays consistent across both even though the generation paths differ: same knowledge, same assembly, different orchestration (RFC-008 §10).
+- **But chat and the Writer share the *substrate* beneath generation.** Not using the Writer does not mean chat reinvents infrastructure: chat uses the same Store-wide retrieval contract (RFC-003), deterministic prompt composition (RFC-009; ADR-009), and provider adapter (ADR-016). The shared layer is the knowledge-and-assembly substrate; the generation orchestration remains different.
 - **Chat does not borrow the Writer's canon discipline by accident — it inherits the same gate.** Like the Writer, chat contributes to canon only through review (§10; RFC-011 §5). The two capabilities are peers under one architecture: independent generation, shared knowledge, same write-gate. **This RFC does not redefine the Writer — RFC-004 does.**
 
 The one-line boundary: **chat and the novel share the knowledge-and-assembly substrate and the review gate, but chat has its own generation path — it does not run the Writer's pipeline.**
@@ -161,8 +161,8 @@ Character Chat is designed to **evolve independently while continuing to share t
 
 - **Chat evolves as a capability without touching the shared foundation.** Improvements to the conversational experience — richer interaction, better in-conversation continuity — are changes to chat's own path, made without altering the Entry Store, DNA, Relationship, or Bible it consumes (§3.1). Because knowledge is shared and chat only reads it, chat can advance on its own schedule.
 - **Chat improves for free as the shared foundation improves.** When DNA grows richer, a relationship deepens, or the Bible accumulates, chat's characters become richer *automatically* — no chat-specific change required — because chat consumes the same knowledge the novel does (§3.2; RFC-007 §9; RFC-006 §9). The shared foundation is a rising tide for both capabilities.
-- **New chat knowledge needs is a new `type` and a retrieval clause, not a new store.** If chat should draw on a new kind of knowledge, that is a new Entry `type` (owned by RFC-002) plus a retrieval request — never a chat-owned knowledge store (RFC-002 §9.1; RFC-008 §11). Chat grows by consuming more of the shared foundation, not by forking it.
-- **Chat uses the same evolving substrate.** Chat inherits improvements to retrieval, prompt composition, and provider support because it uses the same substrate as the novel (RFC-008 §11; RFC-009 §11; ADR-016 §6). Its prompts, like all prompts, are versioned and Bench-measured (RFC-009 §7; RFC-010). *Chat's prompt bodies and generation path are Defined in the corresponding RFCs.*
+- **New chat knowledge needs is a new `type` and a retrieval clause, not a new store.** If chat should draw on a new kind of knowledge, that is a new Entry `type` (owned by RFC-002) plus a retrieval request — never a chat-owned knowledge store (RFC-002 §9.1; RFC-003). Chat grows by consuming more of the shared foundation, not by forking it.
+- **Chat uses the same evolving substrate.** Chat inherits improvements to retrieval, prompt composition, and provider support because it uses the same substrate as the novel (RFC-003; RFC-009 §11; ADR-016 §6). Its prompts, like all prompts, are versioned and Bench-measured (RFC-009 §7; RFC-010). *Chat's prompt bodies and generation path are Defined in the corresponding RFCs.*
 - **The chat information architecture is a deliberate, deferred question.** Whether chat is a peer top-level tab or nests within character surfaces is flagged as Needs-Validation and resolved by real usage — a conscious amendment, never silent drift (ADR-014 §5). *The IA is Defined in the corresponding RFC (the UI & Information Architecture RFC).*
 
 ---
@@ -223,7 +223,7 @@ Character Chat sits at the *consuming* edge of the shared foundation, so its dep
 | **RFC-007 Character DNA** | The shared identity chat generates a character from. |
 | **RFC-006 Relationship** | The shared pairing state chat reflects in dialogue. |
 | **RFC-005 Story Bible** | The shared canonical knowledge chat keeps a character consistent with. |
-| **RFC-008 Retrieval & Context Assembly** | The one retrieval function and assembler chat uses (same as the novel). |
+| **RFC-003 Store-wide Retrieval** | The one shared Entry selection and PromptBlock handoff contract used by chat and novel. |
 | **RFC-009 Prompt System** | The versioned, standardized composition path chat's prompts use. |
 | **RFC-011 Human Review** | The single gate through which a bookmarked line becomes canonical DNA. |
 | **The Provider Adapter RFC** | The neutral provider layer chat's generation calls render through. |
@@ -249,13 +249,13 @@ Character Chat sits at the *consuming* edge of the shared foundation, so its dep
 | §2 Why Character Chat Exists | RFC-001 §1.1; ADR-014 §3, §4-B, §5; design-review R22 |
 | §3 Independent Capability, Shared Knowledge | RFC-001 §1.1; RFC-002 §1, §2.3; RFC-005 §3, §8; RFC-006 §7, §9; RFC-007 §1, §9; ADR-018 §6 |
 | §4 Responsibilities | RFC-001 §1.1; RFC-007 §9; RFC-006 §9; ADR-018 §6; ADR-014 §3 |
-| §5 What Character Chat Does NOT Own | RFC-001 §4; RFC-005 §3, §8; RFC-003 §3; RFC-004 §3; RFC-011 §5; ADR-018 §6 |
-| §6 Relationship with Character DNA | RFC-007 §2, §7, §9; RFC-002 §8; RFC-008 §10; RFC-001 §1.1 |
-| §7 Relationship with Story Bible | RFC-005 §3, §5, §8; ADR-004 §2; RFC-008 §10; RFC-011 §5 |
-| §8 Relationship with Relationship State | RFC-006 §7, §8, §9; RFC-008 §10; RFC-001 §1.1; RFC-011 §5 |
-| §9 Relationship with Writer | RFC-004 §1, §3; ADR-005 §2; RFC-001 §3; RFC-008 §10; RFC-009 §9; ADR-016; RFC-011 §5; `architecture-final-minimal.md` §1 |
+| §5 What Character Chat Does NOT Own | RFC-001 §4; RFC-005 §3, §8; RFC-008 §3; RFC-004 §3; RFC-011 §5; ADR-018 §6 |
+| §6 Relationship with Character DNA | RFC-007 §2, §7, §9; RFC-002 §8; RFC-003; RFC-001 §1.1 |
+| §7 Relationship with Story Bible | RFC-005 §3, §5, §8; ADR-004 §2; RFC-003; RFC-011 §5 |
+| §8 Relationship with Relationship State | RFC-006 §7, §8, §9; RFC-003; RFC-001 §1.1; RFC-011 §5 |
+| §9 Relationship with Writer | RFC-004 §1, §3; ADR-005 §2; RFC-001 §3; RFC-003; RFC-009 §9; ADR-016; RFC-011 §5; `architecture-final-minimal.md` §1 |
 | §10 Voice Calibration | design-review R22; ADR-007 §4; ADR-014 §1, §3; RFC-007 §7, §11; RFC-011 §5; RFC-002 §5; ADR-018 §6 |
-| §11 Evolution Strategy | RFC-001 §7; RFC-007 §9; RFC-006 §9; RFC-002 §9.1; RFC-008 §11; RFC-009 §7, §11; RFC-010; ADR-014 §5; ADR-016 §6 |
+| §11 Evolution Strategy | RFC-001 §7; RFC-007 §9; RFC-006 §9; RFC-002 §9.1; RFC-003; RFC-009 §7, §11; RFC-010; ADR-014 §5; ADR-016 §6 |
 | §12 Architectural Risks | RFC-006 §9; RFC-007 §9; ADR-018 §6; RFC-005 §3, §5–§6; RFC-011 §2.1, §3, §5, §11–§12; ADR-007 §4; RFC-001 §2.6 |
 | §13 Out of Scope | RFC-001 §9 (RFC boundary conventions) |
 | §14 Dependencies | RFC-001 §10; and prior RFC dependency notes |

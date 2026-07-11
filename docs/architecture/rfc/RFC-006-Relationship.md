@@ -4,13 +4,13 @@
 - **Date:** 2026-07-10
 - **Author:** Chief Software Architect
 - **Project:** AI Native Creative Workspace (`ai-creative-workspace` / "gorofan") — "나만의 로판AI + 하트픽션"
-- **Conforms to:** RFC-001, RFC-002, RFC-003, RFC-004, RFC-005; ADR-006, ADR-003, ADR-004, ADR-005, ADR-020
+- **Conforms to:** RFC-001, RFC-002, RFC-008, RFC-004, RFC-005; ADR-006, ADR-003, ADR-004, ADR-005, ADR-020
 - **Supersedes:** nothing
 - **RFC layer:** Component — the relationship-state reference the continuity, Writer-planning, character-chat, and retrieval RFCs build on
 
-> **Reading order.** RFC-001 is the system-level reference; RFC-002 defines the Entry Store; RFC-003 the Analyst; RFC-004 the Writer; RFC-005 the Story Bible. Read all five first. This RFC defines the **Relationship** model — how characters relate to one another across the lifetime of a work — and explains *why it exists*, *what it owns and does not own*, *how it integrates with the Story Bible*, and *how it supports both novel generation and character chat*. It does **not** define relationship attributes, dialogue rules, retrieval, prompts, or algorithms — each is named and deferred.
+> **Reading order.** RFC-001 is the system-level reference; RFC-002 defines the Entry Store; RFC-008 the Analyst; RFC-004 the Writer; RFC-005 the Story Bible. Read all five first. This RFC defines the **Relationship** model — how characters relate to one another across the lifetime of a work — and explains *why it exists*, *what it owns and does not own*, *how it integrates with the Story Bible*, and *how it supports both novel generation and character chat*. It does **not** define relationship attributes, dialogue rules, retrieval, prompts, or algorithms — each is named and deferred.
 >
-> **Source of truth.** The RFC documents take precedence over this one, in order (RFC-001, then RFC-002, RFC-003, RFC-004, RFC-005); behind them the ADR set (`docs/architecture/adr/`) is authoritative, and the two reviews (`docs/design-review-ai-author-os.md`, `docs/architecture-final-minimal.md`) supply rationale only. Where anything here appears to conflict with an RFC or an ADR, **those win** and this document is in error.
+> **Source of truth.** The RFC documents take precedence over this one, in order (RFC-001, then RFC-002, RFC-008, RFC-004, RFC-005); behind them the ADR set (`docs/architecture/adr/`) is authoritative, and the two reviews (`docs/design-review-ai-author-os.md`, `docs/architecture-final-minimal.md`) supply rationale only. Where anything here appears to conflict with an RFC or an ADR, **those win** and this document is in error.
 >
 > **This RFC is implementation-neutral.** It is the conceptual charter of the Relationship model. Whenever an implementation detail is needed, this document writes **"Defined in the corresponding RFC"** (naming the topic) and stops. It defines no attributes and no schemas.
 
@@ -74,7 +74,7 @@ Across all of these, one responsibility is constant: the model holds relationshi
 The Relationship model's non-ownership is as binding as its ownership; ambiguity here re-creates the engine sprawl the architecture exists to prevent (RFC-001 §4). Relationship is **state held**, not work done.
 
 - **Dialogue generation.** Relationship state does not write dialogue. Producing the lines two characters say is the **Writer's** job (in novels) and the chat engine's (in character chat) (RFC-004 §3). Relationship supplies the state the dialogue should reflect; it does not author the dialogue. *Dialogue rules are Defined in the corresponding RFC.*
-- **Knowledge extraction.** Relationship state does not extract itself from prose. New relationship movement is inferred by the **Analyst** on chapter acceptance and emitted as proposals (RFC-003 §3; ADR-006 §1). The model *receives* proposed relationship knowledge; it does not produce it.
+- **Knowledge extraction.** Relationship state does not extract itself from prose. New relationship movement is inferred by the **Analyst** on chapter acceptance and emitted as proposals (RFC-008 §3; ADR-006 §1). The model *receives* proposed relationship knowledge; it does not produce it.
 - **Narrative planning.** Relationship state does not plan the arc. Placing scenes to justify each stage transition is a **Writer planning stage** that *reads* relationship state — not a Relationship-owned planner (ADR-006 §2; RFC-004 §3). The reviews are explicit: the "Relationship Planner" is deleted as a component; planning is a Writer stage over relationship Entries (`architecture-final-minimal.md` §3, §6).
 - **Prompt execution.** Relationship state does not assemble or run prompts, and it does not own the retrieval that selects it for a prompt — that single capability belongs to the **Store** (RFC-002 §6.1, §8). It is *read from*; it does not do the reading. *Retrieval and prompt assembly are Defined in the corresponding RFCs.*
 - **Human editing.** Relationship state does not own the interface through which a human reviews or edits it. Approving proposed relationship movement is the Review Card queue; browsing or visualizing it is a Bible surface — both defined elsewhere (ADR-011; ADR-006 §4; ADR-014). The model owns the *state and its status*, not the screen. *The review and visualization surfaces are Defined in the corresponding RFCs.*
@@ -185,8 +185,8 @@ The relationship in one line: **the Writer plans, drafts, and checks against rel
 
 The Relationship model is designed to grow with a work — and with the product — without architectural change (RFC-001 §7).
 
-- **A richer relationship dimension is a richer `relationship` Entry, not a new store.** Tracking a new facet of a pairing is carried within the existing `relationship` Entry type and its prose, or — if a new *kind* of knowledge is genuinely needed — a new Entry `type` in the governed vocabulary plus an Analyst facet that proposes it (RFC-002 §9.1; RFC-003 §9; ADR-006 §2). It is **never** a new relationship subsystem or table (RFC-001 §8.5; ADR-006 §5).
-- **Richer relationship understanding is a richer Analyst facet and Writer stage.** Better inference of relationship movement is an improved Analyst facet; better arc planning or a sharper regression check is an improved Writer stage or assertion — prompt files, tuned weekly and Bench-measured, not new components (RFC-003 §9; RFC-004 §9; ADR-006 §2–§3). The relationship model gains no code; the extraction, planning, and checking that use it gain prompts.
+- **A richer relationship dimension is a richer `relationship` Entry, not a new store.** Tracking a new facet of a pairing is carried within the existing `relationship` Entry type and its prose, or — if a new *kind* of knowledge is genuinely needed — a new Entry `type` in the governed vocabulary plus an Analyst facet that proposes it (RFC-002 §9.1; RFC-008 §9; ADR-006 §2). It is **never** a new relationship subsystem or table (RFC-001 §8.5; ADR-006 §5).
+- **Richer relationship understanding is a richer Analyst facet and Writer stage.** Better inference of relationship movement is an improved Analyst facet; better arc planning or a sharper regression check is an improved Writer stage or assertion — prompt files, tuned weekly and Bench-measured, not new components (RFC-008 §9; RFC-004 §9; ADR-006 §2–§3). The relationship model gains no code; the extraction, planning, and checking that use it gain prompts.
 - **Scope grows from the primary couple outward, on demand.** The launch scope is the primary couple; extending to full relationship graphs across a large cast is deferred until a real work demands it (ADR-006 §4, §6). Growth in scope is a matter of more Entries, not more architecture.
 - **Visualization and graph queries are a deferred, disposable projection.** If a large cast with intricate webs ever justifies visual overviews or graph queries, the answer is a **derived, read-only projection** computed from `relationship` Entries — built only when the maintainer actually has enough relationships to pay off, and never a second source of truth (ADR-006 §4, §6). *The projection is Defined in the corresponding RFC.*
 - **Deferred structure waits for a real, visible trigger.** If stage-transition math ever starts doing "parsing gymnastics" against prose-first storage, `relationship` is a candidate for the one sanctioned escape valve — promoting a `type` to a structured table, only when the strain is demonstrable (RFC-002 §10.3; ADR-003 §6; ADR-006 §6). Speculative promotion is forbidden (RFC-002 §10.3).
@@ -253,7 +253,7 @@ Wherever this document needed such a detail, it wrote **"Defined in the correspo
 
 ## 14. Dependencies
 
-RFC-006 depends on **RFC-001**, **RFC-002**, **RFC-003**, **RFC-004**, and **RFC-005** and must conform to them; where they conflict, they govern (RFC-001 §10; and the dependency notes of RFC-002 §12, RFC-003 §12, RFC-004 §12, RFC-005 §13). The following areas of the system **depend on the Relationship model** defined here — they detail its state, consume it, or govern its review, and none may override the shared-narrative-state, knowledge-not-subsystem, canon-only-through-review boundaries established above:
+RFC-006 depends on **RFC-001**, **RFC-002**, **RFC-008**, **RFC-004**, and **RFC-005** and must conform to them; where they conflict, they govern (RFC-001 §10; and the dependency notes of RFC-002 §12, RFC-008 §12, RFC-004 §12, RFC-005 §13). The following areas of the system **depend on the Relationship model** defined here — they detail its state, consume it, or govern its review, and none may override the shared-narrative-state, knowledge-not-subsystem, canon-only-through-review boundaries established above:
 
 | Depends on the Relationship model | Depends on it for |
 |---|---|
@@ -279,14 +279,14 @@ RFC-006 depends on **RFC-001**, **RFC-002**, **RFC-003**, **RFC-004**, and **RFC
 | §1 Purpose | RFC-001 §1.1; RFC-002 §5; RFC-005 §3; ADR-006 §1–§2 |
 | §2 Why Relationship Exists | ADR-006 §1–§2, §4; `architecture-final-minimal.md` §3; RFC-005 §2.1; RFC-001 §8.5; ADR-003 §4-D |
 | §3 Responsibilities | ADR-006 §2; RFC-002 §5; RFC-005 §3 |
-| §4 Does NOT Own | RFC-001 §2.6, §4; RFC-002 §6.1, §8; RFC-003 §3; RFC-004 §3, §7; ADR-006 §2–§4, §6; ADR-004 §5; ADR-011 |
+| §4 Does NOT Own | RFC-001 §2.6, §4; RFC-002 §6.1, §8; RFC-008 §3; RFC-004 §3, §7; ADR-006 §2–§4, §6; ADR-004 §5; ADR-011 |
 | §5 Relationship Lifecycle | ADR-006 §1–§2, §4-D; RFC-005 §5, §7; RFC-002 §4 |
 | §6 Relationship Philosophy | ADR-006 §2, §4-B, §4-D; RFC-005 §2.2, §5, §7 |
 | §7 Relationship as Shared Narrative State | ADR-006 §2, §4-B; RFC-002 §2.3, §5; RFC-004 §4, §6; RFC-005 §3, §6; RFC-001 §1.1 |
 | §8 Relationship and Story Bible | RFC-005 §3, §5, §7, §8, §11; RFC-002 §4, §9.1; ADR-004 §3; ADR-006 §1–§2; RFC-001 §8.5 |
 | §9 Relationship and Character Chat | RFC-001 §1.1; RFC-002 §5, §8; ADR-018 §6; ADR-006 §2 |
 | §10 Relationship and Writer | RFC-004 §3, §4, §6, §7; ADR-006 §2–§3; RFC-005 §7; `architecture-final-minimal.md` §3 |
-| §11 Evolution Strategy | RFC-001 §7; RFC-002 §9.1, §10.3; RFC-003 §9; RFC-004 §9; ADR-006 §2–§6; ADR-003 §6 |
+| §11 Evolution Strategy | RFC-001 §7; RFC-002 §9.1, §10.3; RFC-008 §9; RFC-004 §9; ADR-006 §2–§6; ADR-003 §6 |
 | §12 Architectural Risks | ADR-006 §2–§6; RFC-002 §3.3, §4, §8, §10.3; RFC-005 §5, §11; ADR-008 §7; ADR-018 §4; RFC-004 §7 |
 | §13 Out of Scope | RFC-001 §9 (RFC boundary conventions) |
 | §14 Dependencies | RFC-001 §10; RFC-002 §12; RFC-005 §13 |

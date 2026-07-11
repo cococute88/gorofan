@@ -4,11 +4,11 @@
 - **Date:** 2026-07-10
 - **Author:** Chief Software Architect
 - **Project:** AI Native Creative Workspace (`ai-creative-workspace` / "gorofan") — "나만의 로판AI + 하트픽션"
-- **Conforms to:** RFC-001, RFC-002, RFC-003, RFC-004, RFC-005, RFC-006, RFC-007, RFC-008, RFC-009; ADR-012, ADR-005, ADR-008, ADR-009, ADR-013, ADR-001
+- **Conforms to:** RFC-001, RFC-002, RFC-008, RFC-004, RFC-005, RFC-006, RFC-007, RFC-003, RFC-009; ADR-012, ADR-005, ADR-008, ADR-009, ADR-013, ADR-001
 - **Supersedes:** nothing
 - **RFC layer:** Component — the evaluation-harness reference the Prompt System, Writer, retrieval, and Analyst RFCs rely on to ship changes safely
 
-> **Reading order.** RFC-001 is the system-level reference; RFC-002 the Entry Store; RFC-003 the Analyst; RFC-004 the Writer; RFC-005 the Story Bible; RFC-006 the Relationship model; RFC-007 Character DNA; RFC-008 Retrieval & Context Assembly; RFC-009 the Prompt System. Read them first. This RFC defines the **Bench** — the architectural quality-evaluation environment that measures changes in AI behavior *before those changes reach users*. It explains *why the Bench exists* and *what it owns and does not own*. It is a **development capability, not a runtime feature.** It does **not** define scoring methods, models, datasets, automation, or CI — each is named and deferred.
+> **Reading order.** RFC-001 is the system-level reference; RFC-002 the Entry Store; RFC-008 the Analyst; RFC-004 the Writer; RFC-005 the Story Bible; RFC-006 the Relationship model; RFC-007 Character DNA; RFC-003 Store-wide Retrieval; RFC-009 the Prompt System. Read them first. This RFC defines the **Bench** — the architectural quality-evaluation environment that measures changes in AI behavior *before those changes reach users*. It explains *why the Bench exists* and *what it owns and does not own*. It is a **development capability, not a runtime feature.** It does **not** define scoring methods, models, datasets, automation, or CI — each is named and deferred.
 >
 > **Source of truth.** The RFC documents take precedence over this one, in order (RFC-001, then RFC-002…RFC-009); behind them the ADR set (`docs/architecture/adr/`) is authoritative, and the two reviews (`docs/design-review-ai-author-os.md`, `docs/architecture-final-minimal.md`) supply rationale only. Where anything here appears to conflict with an RFC or an ADR, **those win** and this document is in error.
 >
@@ -50,7 +50,7 @@ The Bench's ownership is **out-of-band, repeatable measurement of creative chang
 - **Regression evaluation.** The Bench owns running a change against the golden set and detecting whether it *regressed* any quality signal relative to the prior version — the core safety function that catches a silent break before it ships (ADR-012 §2, §5). *The metrics are the checks the Writer already runs, reused out-of-band (§8, §9); this RFC defines no scoring method.*
 - **Prompt comparison.** The Bench owns the A/B comparison — old version vs. new — that answers "which is better?" per golden scene, and emits a concise diff report the maintainer acts on (ADR-012 §3–§4). Comparison, not an absolute grade, is the Bench's characteristic output.
 - **Quality history.** The Bench owns a record of how the measured signals move over time, so quality trends — and the effect of each change — are visible rather than lost (ADR-012 §2; §7 here). This history is what lets the maintainer see compounding versus oscillation.
-- **Repeatability.** The Bench owns that the *same* change measured against the *same* golden set yields the *same* comparison — the reproducibility without which no measurement is trustworthy (§5; RFC-008 §7). Repeatability is a first-class responsibility, not an incidental property.
+- **Repeatability.** The Bench owns that the *same* change measured against the *same* golden set yields the *same* comparison — the reproducibility without which no measurement is trustworthy (§5; RFC-003). Repeatability is a first-class responsibility, not an incidental property.
 
 Across all of these, the Bench **imports the real code paths so it tests what ships, but runs strictly out-of-band** — it measures the product without being part of it (RFC-001 §4.4; ADR-012 §5).
 
@@ -62,7 +62,7 @@ The Bench's non-ownership is as binding as its ownership, and unusually strict: 
 
 - **Runtime generation.** The Bench does not generate for users. Producing draft prose is the **Writer's** job on the live path; the Bench merely *invokes* the real generation code out-of-band, against frozen fixtures, to measure it (RFC-004 §3; ADR-012 §5). There is **no per-generation live scoring** — the Bench never rides along on a user's generation (ADR-012 §5).
 - **Knowledge storage.** The Bench holds no persisted creative knowledge. All knowledge lives in the **Store** (RFC-002 §6.1). The Bench's frozen snapshots are *fixtures* — inert copies for repeatable measurement — not a knowledge store, and they never flow into canon (§6; ADR-012 §2).
-- **Retrieval.** The Bench does not perform retrieval as a capability; it *exercises* the real retrieval path to measure it. Selecting knowledge is the Store's one function (RFC-002 §8; RFC-008 §4). The Bench is a designated *arbiter* of retrieval changes, not an owner of retrieval (§10; ADR-018 §6).
+- **Retrieval.** The Bench does not perform retrieval as a capability; it *exercises* the real retrieval path to measure it. Selecting knowledge is the Store's one function (RFC-002 §8; RFC-003). The Bench is a designated *arbiter* of retrieval changes, not an owner of retrieval (§10; ADR-018 §6).
 - **Prompt editing.** The Bench does not author or edit prompts. Prompt bodies are versioned files owned by the **Prompt System** and edited by the maintainer (RFC-009 §3, §6). The Bench *measures* a prompt change; it never makes one (§8; ADR-012 §5).
 - **Human review.** The Bench does not decide what becomes canon, and — critically — it does not gate the user's own output. The **review gate** governs knowledge (RFC-002 §3.4; RFC-005 §5), and the **user is the final judge** of their own creative work (RFC-001 §2.7). The Bench has **no authority to block or flag a user's generation** — automated gates over the user's output are explicitly rejected as paternalistic in a personal tool (ADR-012 §4-C, §5).
 - **Any user-facing surface.** The Bench has **zero UI** and no in-product presence — no dashboards, no live scores, no runtime coupling (ADR-012 §5). It is invisible to the running product.
@@ -76,7 +76,7 @@ The discipline: **the Bench measures the change process out-of-band and reports;
 The Bench rests on one commitment: **identical inputs must always produce comparable outputs.** Measurement is only meaningful if the thing being measured is held still except for the change under test.
 
 - **Comparison demands a fixed baseline.** The Bench answers "is the new version better than the old?" — a *comparative* question — and a comparison is only valid when everything except the change under test is identical: the same golden scenes, the same frozen knowledge snapshot, the same code paths (ADR-012 §2–§3). The golden set exists precisely to be that fixed baseline (§6).
-- **Comparability depends on deterministic context.** The Bench can attribute a quality difference to a change *only* if assembling the context for a frozen fixture is deterministic — same inputs, same assembled context (RFC-008 §7). If assembly varied run-to-run, every comparison would be confounded and no result attributable (RFC-008 §7; RFC-009 §10). Deterministic context is therefore the precondition the Bench's whole value rests on, which is why RFC-008 makes it a first-class guarantee.
+- **Comparability depends on deterministic retrieval and context.** RFC-003 makes Entry selection reproducible for a frozen snapshot; ADR-009 makes final assembly reproducible for fixed blocks and inputs. If either varied run-to-run, every comparison would be confounded.
 - **Repeatability over any single verdict.** Because a comparison must be reproducible to be trusted, the Bench prizes *repeatable* measurement over a one-off score (§3; ADR-012 §5). The same change, re-measured, must yield the same conclusion — otherwise the maintainer cannot rely on it to merge or revert.
 - **Measurements are directional, and honestly so.** The Bench converts vibes into numbers, but the numbers are **directional, not authoritative**: a 20–30-scene set has limited coverage, and a model-based pairwise judgment is itself imperfect and provider-dependent (ADR-012 §5-Negative; §12 here). The philosophy is not "the Bench is the truth" but "the Bench makes change *comparable* enough to catch regressions and inform decisions" — a measurement to reason with, not an oracle to obey.
 
@@ -153,11 +153,11 @@ The one-line boundary: **the Writer defines and runs the checks live; the Bench 
 
 ## 10. Relationship with Retrieval
 
-The Bench is the **designated arbiter** of retrieval and context-assembly changes (ADR-018 §6; RFC-008 §11–§12).
+The Bench is the **designated arbiter** of retrieval and context-assembly changes (ADR-018 §6; RFC-003).
 
-- **Retrieval changes are Bench-gated.** Retuning ranking weights, or adopting embeddings over keyword retrieval, ships **only** when the Bench shows it helps — the Bench is the explicit trigger for both (RFC-008 §11–§12; ADR-018 §6). Retrieval quality, being silent when it fails, must be settled by measurement, not intuition (RFC-008 §12.4).
-- **Retrieval quality is measured through its downstream effect.** The Bench does not grade retrieval in isolation; it measures whether the *output* improved when retrieval changed — the same built-in checks pass more often when the right knowledge was retrieved (RFC-008 §12.4; ADR-012 §3). Retrieval is evaluated by what it enables the Writer to produce.
-- **This depends on frozen snapshots and deterministic assembly.** A retrieval change can be attributed only because the golden fixtures freeze the knowledge and assembly is deterministic (RFC-008 §7; §5, §6 here). The Bench's ability to arbitrate retrieval rests directly on those two guarantees. **This RFC does not redefine retrieval or assembly — RFC-008 does.**
+- **Retrieval changes are Bench-gated.** Retuning ranking weights, or adopting embeddings over keyword retrieval, ships **only** when the Bench shows it helps — the Bench is the explicit trigger for both (RFC-003; ADR-018 §6). Retrieval quality, being silent when it fails, must be settled by measurement, not intuition (RFC-003).
+- **Retrieval quality is measured through its downstream effect.** The Bench does not grade retrieval in isolation; it measures whether the *output* improved when retrieval changed — the same built-in checks pass more often when the right knowledge was retrieved (RFC-003; ADR-012 §3). Retrieval is evaluated by what it enables the Writer to produce.
+- **This depends on frozen snapshots and deterministic selection.** A retrieval change can be attributed only because golden fixtures freeze the knowledge, RFC-003 fixes deterministic selection, and ADR-009 fixes deterministic assembly. **This RFC exercises those contracts; it does not redefine them.**
 
 The one-line boundary: **the Bench is where every retrieval and assembly change earns its way in — measured on frozen scenes, judged by output quality.**
 
@@ -226,14 +226,14 @@ Wherever this document needed such a detail, it wrote **"Defined in the correspo
 
 ## 14. Dependencies
 
-RFC-010 depends on **RFC-001**, **RFC-004**, **RFC-008**, and **RFC-009** and must conform to them (and to the other completed RFCs); where they conflict, they govern (RFC-001 §10; and the dependency notes of the prior RFCs). The Bench is a development capability that *guards* the rest of the system rather than being consumed at runtime; the following areas **depend on the Bench** as the gate that lets their changes ship safely, and none may override the dev-only, out-of-band, never-gates-user-output, measured-not-intuited boundaries established above:
+RFC-010 depends on **RFC-001**, **RFC-004**, **RFC-003**, and **RFC-009** and must conform to them (and to the other completed RFCs); where they conflict, they govern (RFC-001 §10; and the dependency notes of the prior RFCs). The Bench is a development capability that *guards* the rest of the system rather than being consumed at runtime; the following areas **depend on the Bench** as the gate that lets their changes ship safely, and none may override the dev-only, out-of-band, never-gates-user-output, measured-not-intuited boundaries established above:
 
 | Depends on the Bench | Depends on it for |
 |---|---|
 | **The Prompt System RFC (RFC-009)** | Gating every prompt-body change with an A/B measurement before it merges. |
 | **The Writer Pipeline & Scene/Episode RFC** | Deciding whether a new stage or an additional critic earns its cost; the Writer's checks double as Bench metrics. |
 | **The Analyst-facet RFC** | Measuring whether a new or changed extraction facet improves quality before it ships. |
-| **The Retrieval & Context Assembly RFC (RFC-008)** | Arbitrating ranking-weight changes and the keyword-vs-embedding decision on frozen scenes. |
+| **The Store-wide Retrieval RFC (RFC-003)** | Arbitrating ranking-weight changes and the keyword-vs-embedding decision on frozen scenes. |
 | **The Living Story Bible & Continuity Loop RFC** | Measuring extraction precision and contradiction-catch quality that keep the living Bible trustworthy. |
 | **The Relationship System RFC** | Measuring relationship-inference precision and regression-catch quality. |
 | **The Character / World DNA Organization RFC** | Measuring character fidelity and voice-attribution quality; gating any structured DNA field. |
@@ -249,14 +249,14 @@ RFC-010 depends on **RFC-001**, **RFC-004**, **RFC-008**, and **RFC-009** and mu
 |---|---|
 | §1 Purpose | RFC-001 §2.4, §3.4, §4.4, §7; RFC-009 §2; ADR-012 §1–§2, §5; `architecture-final-minimal.md` §7 |
 | §2 Why the Bench Exists | ADR-012 §1–§2, §5; RFC-001 §2.4; ADR-013 §4; RFC-009 §10; `architecture-final-minimal.md` §7 |
-| §3 Responsibilities | ADR-012 §2–§5; RFC-001 §4.4; RFC-008 §7 |
-| §4 Does NOT Own | RFC-001 §2.7, §4.4; RFC-002 §6.1, §8, §3.4; RFC-004 §3; RFC-005 §5; RFC-008 §4; RFC-009 §3, §6; ADR-012 §4-B, §4-C, §5 |
-| §5 Evaluation Philosophy | ADR-012 §2–§3, §5; RFC-008 §7; RFC-009 §10 |
+| §3 Responsibilities | ADR-012 §2–§5; RFC-001 §4.4; RFC-003 |
+| §4 Does NOT Own | RFC-001 §2.7, §4.4; RFC-002 §6.1, §8, §3.4; RFC-004 §3; RFC-005 §5; RFC-003; RFC-009 §3, §6; ADR-012 §4-B, §4-C, §5 |
+| §5 Evaluation Philosophy | ADR-012 §2–§3, §5; RFC-003; RFC-009 §10 |
 | §6 Golden Dataset Philosophy | ADR-012 §2, §4-D, §5-Negative; RFC-002 §6.1; ADR-001 |
-| §7 Benchmark Drift | ADR-012 §5-Negative, §6; ADR-005 §6; ADR-018 §6; RFC-009 §6–§7; RFC-008 §7 |
+| §7 Benchmark Drift | ADR-012 §5-Negative, §6; ADR-005 §6; ADR-018 §6; RFC-009 §6–§7; RFC-003 |
 | §8 Relationship with Prompt System | RFC-009 §3, §7, §10; ADR-012 §2; ADR-013 §4 |
 | §9 Relationship with Writer | ADR-012 §1, §3, §5–§6; RFC-004 §7; ADR-005 §3, §6; RFC-001 §4.4 |
-| §10 Relationship with Retrieval | RFC-008 §7, §11–§12; ADR-018 §6; ADR-012 §3 |
+| §10 Relationship with Retrieval | RFC-003–§12; ADR-018 §6; ADR-012 §3 |
 | §11 Evolution Strategy | ADR-012 §3, §4-B–§4-D, §5–§6; ADR-005 §6; ADR-018 §6; RFC-001 §7.4; ADR-014 |
 | §12 Architectural Risks | ADR-012 §2, §4-B, §5-Negative, §6; RFC-001 §2.7; ADR-013; §7 here |
 | §13 Out of Scope | RFC-001 §9 (RFC boundary conventions) |
