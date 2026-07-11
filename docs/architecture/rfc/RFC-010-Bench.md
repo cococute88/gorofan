@@ -61,10 +61,10 @@ Across all of these, the Bench **imports the real code paths so it tests what sh
 The Bench's non-ownership is as binding as its ownership, and unusually strict: the Bench touches only the *change process*, never the live data path (RFC-001 §4.4; ADR-012 §5). It is dev-only.
 
 - **Runtime generation.** The Bench does not generate for users. Producing draft prose is the **Writer's** job on the live path; the Bench merely *invokes* the real generation code out-of-band, against frozen fixtures, to measure it (RFC-004 §3; ADR-012 §5). There is **no per-generation live scoring** — the Bench never rides along on a user's generation (ADR-012 §5).
-- **Knowledge storage.** The Bench holds no persisted creative knowledge. All knowledge lives in the **Store** (RFC-002 §6.1). The Bench's frozen snapshots are *fixtures* — inert copies for repeatable measurement — not a knowledge store, and they never flow into canon (§6; ADR-012 §2).
-- **Retrieval.** The Bench does not perform retrieval as a capability; it *exercises* the real retrieval path to measure it. Selecting knowledge is the Store's one function (RFC-002 §8; RFC-003). The Bench is a designated *arbiter* of retrieval changes, not an owner of retrieval (§10; ADR-018 §6).
+- **Knowledge storage.** The Bench holds no persisted creative knowledge. All knowledge lives in the **Store** (RFC-002). The Bench's frozen snapshots are *fixtures* — inert copies for repeatable measurement — not a knowledge store, and they never flow into canon (§6; ADR-012 §2).
+- **Retrieval.** The Bench does not perform retrieval as a capability; it *exercises* the real retrieval path to measure it. Selecting knowledge is the Store's one function (RFC-002; RFC-003). The Bench is a designated *arbiter* of retrieval changes, not an owner of retrieval (§10; ADR-018 §6).
 - **Prompt editing.** The Bench does not author or edit prompts. Prompt bodies are versioned files owned by the **Prompt System** and edited by the maintainer (RFC-009 §3, §6). The Bench *measures* a prompt change; it never makes one (§8; ADR-012 §5).
-- **Human review.** The Bench does not decide what becomes canon, and — critically — it does not gate the user's own output. The **review gate** governs knowledge (RFC-002 §3.4; RFC-005 §5), and the **user is the final judge** of their own creative work (RFC-001 §2.7). The Bench has **no authority to block or flag a user's generation** — automated gates over the user's output are explicitly rejected as paternalistic in a personal tool (ADR-012 §4-C, §5).
+- **Human review.** The Bench does not decide what becomes canon, and — critically — it does not gate the user's own output. The **review gate** governs knowledge (RFC-002; RFC-005 §5), and the **user is the final judge** of their own creative work (RFC-001 §2.7). The Bench has **no authority to block or flag a user's generation** — automated gates over the user's output are explicitly rejected as paternalistic in a personal tool (ADR-012 §4-C, §5).
 - **Any user-facing surface.** The Bench has **zero UI** and no in-product presence — no dashboards, no live scores, no runtime coupling (ADR-012 §5). It is invisible to the running product.
 
 The discipline: **the Bench measures the change process out-of-band and reports; it never generates for users, stores knowledge, selects it, edits prompts, or gates output.**
@@ -91,7 +91,7 @@ The golden scenes are the Bench's fixed ground. This section explains their *rol
 - **Golden scenes are the stable baseline change is measured against.** Each is a frozen scenario — a scene setup plus a frozen knowledge snapshot — chosen to be *representative* of the work the product must do well (ADR-012 §2). Freezing them is what makes a comparison across two prompt versions valid: the inputs do not move, so any output difference is attributable to the change (§5).
 - **Coverage spans the scene types that matter.** The set deliberately covers the range of dramatic situations — confession, banter, action, reveal, quiet interiority — because a change can help one scene type and hurt another, and a narrow set would hide that (ADR-012 §2). Breadth of *type*, not volume, is the design goal.
 - **The set is small and curated, on purpose.** A handful of well-chosen scenarios, not a vast corpus — because the Bench's value is cheap, directional regression-catching, not a full evaluation platform (ADR-012 §4-D). A large dataset would be a second product's worth of machinery, against the simplicity the whole architecture defends (ADR-001; ADR-012 §4-D).
-- **Frozen fixtures are inert, never canon.** A golden snapshot is a copy held still for measurement; it is not part of the Store, never flows into a work's canon, and is not subject to the review gate (§4; RFC-002 §6.1). The golden set lives entirely in the development world.
+- **Frozen fixtures are inert, never canon.** A golden snapshot is a copy held still for measurement; it is not part of the Store, never flows into a work's canon, and is not subject to the review gate (§4; RFC-002). The golden set lives entirely in the development world.
 - **A small fixed set has a known cost: over-fitting.** Because the set is small, prompts can be tuned to please the fixtures rather than to generalize (ADR-012 §5-Negative). This is the tension the next section confronts head-on: the golden set must *evolve* to stay honest, without destroying the comparability that makes it useful.
 
 ---
@@ -250,9 +250,9 @@ RFC-010 depends on **RFC-001**, **RFC-004**, **RFC-003**, and **RFC-009** and mu
 | §1 Purpose | RFC-001 §2.4, §3.4, §4.4, §7; RFC-009 §2; ADR-012 §1–§2, §5; `architecture-final-minimal.md` §7 |
 | §2 Why the Bench Exists | ADR-012 §1–§2, §5; RFC-001 §2.4; ADR-013 §4; RFC-009 §10; `architecture-final-minimal.md` §7 |
 | §3 Responsibilities | ADR-012 §2–§5; RFC-001 §4.4; RFC-003 |
-| §4 Does NOT Own | RFC-001 §2.7, §4.4; RFC-002 §6.1, §8, §3.4; RFC-004 §3; RFC-005 §5; RFC-003; RFC-009 §3, §6; ADR-012 §4-B, §4-C, §5 |
+| §4 Does NOT Own | RFC-001 §2.7, §4.4; RFC-002; RFC-004 §3; RFC-005 §5; RFC-003; RFC-009 §3, §6; ADR-012 §4-B, §4-C, §5 |
 | §5 Evaluation Philosophy | ADR-012 §2–§3, §5; RFC-003; RFC-009 §10 |
-| §6 Golden Dataset Philosophy | ADR-012 §2, §4-D, §5-Negative; RFC-002 §6.1; ADR-001 |
+| §6 Golden Dataset Philosophy | ADR-012 §2, §4-D, §5-Negative; RFC-002; ADR-001 |
 | §7 Benchmark Drift | ADR-012 §5-Negative, §6; ADR-005 §6; ADR-018 §6; RFC-009 §6–§7; RFC-003 |
 | §8 Relationship with Prompt System | RFC-009 §3, §7, §10; ADR-012 §2; ADR-013 §4 |
 | §9 Relationship with Writer | ADR-012 §1, §3, §5–§6; RFC-004 §7; ADR-005 §3, §6; RFC-001 §4.4 |

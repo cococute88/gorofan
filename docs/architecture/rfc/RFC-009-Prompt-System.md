@@ -62,11 +62,11 @@ Across all of these, the Prompt System owns **the form and lifecycle of prompts*
 
 The Prompt System's non-ownership is as binding as its ownership; ambiguity here re-creates the sprawl the architecture exists to prevent (RFC-001 §4). The Prompt System owns *prompts*, not knowledge, truth, or output.
 
-- **Knowledge storage.** The Prompt System holds no persisted creative knowledge. All knowledge lives in the **Store** (RFC-002 §6.1). Prompts *carry* knowledge into the model, but the knowledge belongs to the Store; a prompt body contains authored instruction, not stored truth (ADR-013 §3).
-- **Retrieval.** The Prompt System does not select which knowledge enters a prompt. Selection is **Retrieval**, the Store's one capability (RFC-002 §8; RFC-003). The Prompt System composes with whatever context assembly hands it; it does not choose that context.
+- **Knowledge storage.** The Prompt System holds no persisted creative knowledge. All knowledge lives in the **Store** (RFC-002). Prompts *carry* knowledge into the model, but the knowledge belongs to the Store; a prompt body contains authored instruction, not stored truth (ADR-013 §3).
+- **Retrieval.** The Prompt System does not select which knowledge enters a prompt. Selection is **Retrieval**, the Store's one capability (RFC-002; RFC-003). The Prompt System composes with whatever context assembly hands it; it does not choose that context.
 - **Knowledge extraction.** The Prompt System does not turn text into knowledge. Extraction is the **Analyst's** job (RFC-008 §3). The Analyst's facets are prompt bodies the Prompt System versions — but *running* extraction, and owning its output, belongs to the Analyst.
 - **Narrative generation.** The Prompt System does not generate prose. Producing draft fiction is the **Writer's** job, and calling the model is the provider adapter's (RFC-004 §3; ADR-016 §2). The Prompt System produces the *prompt*; it does not produce the *completion*.
-- **Human review.** The Prompt System does not decide what becomes canon. The **review gate** governs knowledge (RFC-002 §3.4; RFC-005 §5); prompt *bodies* are governed by code review and the Bench (ADR-013 §1), a separate discipline from the knowledge-canon gate. A prompt never writes canon.
+- **Human review.** The Prompt System does not decide what becomes canon. The **review gate** governs knowledge (RFC-002; RFC-005 §5); prompt *bodies* are governed by code review and the Bench (ADR-013 §1), a separate discipline from the knowledge-canon gate. A prompt never writes canon.
 
 The discipline: **the Prompt System composes and versions prompts; it never stores knowledge, selects it, extracts it, generates from it, or canonizes it.**
 
@@ -157,10 +157,10 @@ The one-line boundary: **the Writer chooses and sequences prompt bodies; the Pro
 
 ## 10. Relationship with Bench
 
-Prompt changes must **always be measurable** — this is the non-negotiable companion to putting creative behavior in constantly-changing files (RFC-001 §2.9; ADR-012).
+Prompt changes must **always be measurable** — this is the non-negotiable companion to putting creative behavior in constantly-changing files (RFC-001 §8.9; ADR-012).
 
 - **Because behavior lives in prompts, behavior will change constantly.** The architecture deliberately concentrates creative logic in prompt files precisely so it can be tuned weekly (RFC-001 §2.4; ADR-013 §4). But constant change without measurement means week-6 "improvements" that silently break voice or continuity, discovered only when a reader hits them (`architecture-final-minimal.md` §7). The Bench exists to make that impossible.
-- **Every prompt change is Bench-gated before it ships.** A prompt edit is A/B-compared against the current version on the golden scenarios, using the checks already built as metrics, before it is merged (ADR-012; ADR-013 §1, §4). This converts "did this prompt help or hurt?" from a vibe into a measurement (RFC-001 §2.9). No prompt body ships on intuition.
+- **Every prompt change is Bench-gated before it ships.** A prompt edit is A/B-compared against the current version on the golden scenarios, using the checks already built as metrics, before it is merged (ADR-012; ADR-013 §1, §4). This converts "did this prompt help or hurt?" from a vibe into a measurement (RFC-001 §8.9). No prompt body ships on intuition.
 - **Measurability depends on deterministic composition.** The Bench can only attribute a quality change to a prompt change if composition is deterministic given fixed inputs (ADR-009). The Prompt System's deterministic, file-based, single-source composition is therefore the precondition that makes prompt evaluation meaningful. RFC-003 supplies the separately deterministic retrieved Entry set. **This RFC does not redefine the Bench — the corresponding RFC does.**
 
 The one-line boundary: **the Prompt System makes prompts changeable and versioned; the Bench makes every change measurable — neither is safe without the other.**
@@ -254,13 +254,13 @@ RFC-009 depends on **RFC-001**, **RFC-002**, **RFC-008**, **RFC-004**, and **RFC
 | §1 Purpose | RFC-001 §2.4, §8.3; ADR-013 §2; ADR-009 §1; RFC-003 |
 | §2 Why the Prompt System Exists | RFC-001 §2.4, §8.3; ADR-009 §1–§2, §4-A, §5; ADR-013 §5 |
 | §3 Responsibilities | ADR-009 §2–§4; ADR-013 §1–§3; ADR-005 §2; ADR-008 §2; ADR-016 §2; RFC-003 |
-| §4 Does NOT Own | RFC-001 §4; RFC-002 §6.1, §8, §3.4; RFC-008 §3; RFC-004 §3; RFC-005 §5; RFC-003; ADR-013 §3; ADR-016 §2 |
+| §4 Does NOT Own | RFC-001 §4; RFC-002; RFC-008 §3; RFC-004 §3; RFC-005 §5; RFC-003; ADR-013 §3; ADR-016 §2 |
 | §5 Prompt Composition Philosophy | ADR-009 §2–§3; ADR-013 §1, §3; ADR-005 §2; ADR-008 §2; RFC-003 |
 | §6 Prompt as Architecture | RFC-001 §2.4, §2.1; ADR-013 §1–§5; ADR-009 §1, §7 |
 | §7 Prompt Versioning Philosophy | ADR-013 §1–§5; RFC-001 §2.4, §7; ADR-012; ADR-009 §7 |
 | §8 Relationship with Retrieval | RFC-003–§8, §11; ADR-009 §4, §v2-note; ADR-016 §2 |
 | §9 Relationship with Writer | RFC-004 §3–§4, §9; ADR-005 §2; ADR-013 §1; RFC-008 §8; RFC-001 §2.4 |
-| §10 Relationship with Bench | RFC-001 §2.9; ADR-012; ADR-013 §1, §4; `architecture-final-minimal.md` §7; RFC-003 |
+| §10 Relationship with Bench | RFC-001 §8.9; ADR-012; ADR-013 §1, §4; `architecture-final-minimal.md` §7; RFC-003 |
 | §11 Evolution Strategy | RFC-001 §7, §7.2, §7.4; ADR-005 §2; ADR-008 §2; ADR-013 §1, §3, §6; ADR-009 §4-C, §5, §6; ADR-016 §6; RFC-003 |
 | §12 Architectural Risks | ADR-009 §2–§3, §5–§6; ADR-013 §2, §5; ADR-012; RFC-003; RFC-001 §7.4 |
 | §13 Out of Scope | RFC-001 §9 (RFC boundary conventions) |

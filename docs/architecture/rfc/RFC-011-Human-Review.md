@@ -47,7 +47,7 @@ Human approval is not a courtesy or a convenience feature; it is the **one-way d
 
 - **The human is the final judge of quality.** The product's whole stance is that the system proposes and the human disposes; there are no automated gates over the user's own creative truth (RFC-001 §2.7). Review is where that authority lives.
 - **It is the *only* write path into canon.** The gate is architectural, not optional chrome — bypassing it is forbidden, and a feature that quietly wrote canon without review would silently break the architecture's core safety rule (ADR-011 §2, §6; ADR-002 §2).
-- **It makes canon trustworthy over years.** Because every canonical fact was seen and approved by a human, and the disposition is recorded, canon stays trustworthy across a multi-year project rather than accumulating unvetted machine assertions (ADR-011 §5; RFC-002 §3.2).
+- **It makes canon trustworthy over years.** Because every canonical fact was seen and approved by a human, and the disposition is recorded, canon stays trustworthy across a multi-year project rather than accumulating unvetted machine assertions (ADR-011 §5; RFC-002).
 
 ---
 
@@ -57,7 +57,7 @@ This is one of the core principles of the AI Author OS, stated here as a dedicat
 
 ### 3.1 Why proposals are cheap
 
-A proposal changes *nothing* the system acts on. A proposed Entry is not ground truth: it is not retrieved as canon, the Writer's checks do not trust it, and it influences no generation until a human approves it (RFC-002 §6; RFC-005 §6). Because proposing is consequence-free until approval, the system can afford to propose **generously** — the Analyst can extract every candidate fact from an accepted chapter, the Writer can surface every newly-observed promise, without any risk that a wrong guess corrupts anything (RFC-008 §3; RFC-004 §4). Proposals are cheap precisely because they are *inert*: abundant, low-stakes, reversible-by-default because they were never real. Generating them liberally is a feature, not a hazard.
+A proposal changes *nothing* the system acts on. A proposed Entry is not ground truth: it is not retrieved as canon, the Writer's checks do not trust it, and it influences no generation until a human approves it (RFC-002; RFC-005 §6). Because proposing is consequence-free until approval, the system can afford to propose **generously** — the Analyst can extract every candidate fact from an accepted chapter, the Writer can surface every newly-observed promise, without any risk that a wrong guess corrupts anything (RFC-008 §3; RFC-004 §4). Proposals are cheap precisely because they are *inert*: abundant, low-stakes, reversible-by-default because they were never real. Generating them liberally is a feature, not a hazard.
 
 ### 3.2 Why canon is expensive
 
@@ -75,7 +75,7 @@ The principle in one line: **propose abundantly because proposals are inert; can
 
 ### 4.1 Why every AI proposal uses one interaction model
 
-Many decisions across the architecture depend on the same primitive — *AI proposes, human disposes* — and they could each have invented their own approval affordance: one for Bible ingestion, one for world-fact creation, one for DNA conflicts, one for relationship movement (ADR-011 §1). The Review Card exists so they don't. **Every** AI-proposed change to canon is the same kind of thing — an Entry with `status=proposed` (RFC-002 §3.4; ADR-011 §2) — so it is reviewed through **one** pattern: one queue, one shape, one set of actions, rendered by the one editor that already renders the Bible and DNA (ADR-011 §2; ADR-014 §2). One interaction model instead of many editors, for concrete reasons:
+Many decisions across the architecture depend on the same primitive — *AI proposes, human disposes* — and they could each have invented their own approval affordance: one for Bible ingestion, one for world-fact creation, one for DNA conflicts, one for relationship movement (ADR-011 §1). The Review Card exists so they don't. **Every** AI-proposed change to canon is the same kind of thing — an Entry with `status=proposed` (RFC-002; ADR-011 §2) — so it is reviewed through **one** pattern: one queue, one shape, one set of actions, rendered by the one editor that already renders the Bible and DNA (ADR-011 §2; ADR-014 §2). One interaction model instead of many editors, for concrete reasons:
 
 - **Per-feature approval affordances guarantee inconsistency and gaps.** If each feature invents its own approval, behavior diverges, code duplicates, and — worst — some feature quietly writes canon without review, silently breaking the architecture's core rule (ADR-011 §4-D). A single pattern is both simpler and safer.
 - **One learnable interaction governs the riskiest operation.** Because canon mutation is the highest-stakes action, it should be governed by one consistent, learnable gesture the user masters once and trusts everywhere (ADR-011 §5). Uniformity is a safety property here, not just tidiness.
@@ -96,10 +96,10 @@ The Review Card's defining properties are UX-level architectural decisions (not 
 
 Human Review's ownership is **the gate: the sole authority that turns a proposal into canon.** This section defines *responsibilities* — high-level, **no UI, no algorithms** (those are Defined in the corresponding RFC).
 
-- **Approval.** Accepting a proposal, transitioning it from `proposed` to `canon` — the single act that admits knowledge to the source of truth (ADR-011 §2; RFC-002 §3.4). This is the gate's core function.
+- **Approval.** Accepting a proposal, transitioning it from `proposed` to `canon` — the single act that admits knowledge to the source of truth (ADR-011 §2; RFC-002). This is the gate's core function.
 - **Editing.** Correcting a proposal before accepting it — accepting an edited proposal writes the *corrected* version as canon, carrying provenance that a human approved it (ADR-011 §3). The human is not limited to yes/no; they refine before conferring trust.
-- **Rejection.** Declining a proposal, transitioning it to `rejected` — retained for provenance and audit, not silently discarded (ADR-011 §2, §4; RFC-002 §4). Rejection is a first-class, recorded outcome.
-- **Trust.** Conferring trust on knowledge. Provenance and confidence *inform* the decision — the "why does the AI think this?" is visible — but the human is the authority that decides what the system will treat as true (ADR-011 §2; RFC-002 §3.2–§3.3; ADR-014 §1 pattern 5). Trust is granted by a person, not computed.
+- **Rejection.** Declining a proposal, transitioning it to `rejected` — retained for provenance and audit, not silently discarded (ADR-011 §2, §4; RFC-002). Rejection is a first-class, recorded outcome.
+- **Trust.** Conferring trust on knowledge. Provenance and confidence *inform* the decision — the "why does the AI think this?" is visible — but the human is the authority that decides what the system will treat as true (ADR-011 §2; RFC-002; ADR-014 §1 pattern 5). Trust is granted by a person, not computed.
 - **Canon creation.** Owning the `proposed → canon` transition as the **one and only** path that creates canonical knowledge (RFC-001 §2.6; ADR-011 §6). No other route writes canon; this responsibility is exclusive and exhaustive.
 
 Across all of these, Human Review owns the **decision and its disposition**, recorded and reversible (ADR-011 §4). It decides *what becomes true*; it does not extract, generate, retrieve, or persist (§6).
@@ -113,8 +113,8 @@ Human Review's non-ownership is as binding as its ownership; ambiguity here re-c
 - **Knowledge extraction.** Human Review does not turn text into knowledge or generate proposals. Producing candidate knowledge is the **Analyst's** job (and the Writer's ingestion step) (RFC-008 §3; RFC-004 §4). Review *disposes* of proposals; it does not *create* them.
 - **Narrative generation.** Human Review does not write prose. Generating draft fiction is the **Writer's** job (RFC-004 §3). Review governs knowledge-canon, not creative output — and notably does **not** gate the user's own writing (§12; RFC-001 §2.7).
 - **Prompt execution.** Human Review does not compose or run prompts. Composition is the **Prompt System's** job (RFC-009 §3). Review is a human decision point, not a generation step.
-- **Retrieval.** Human Review does not select knowledge for prompts. Retrieval is the **Store's** one capability (RFC-002 §8; RFC-003). Review determines *what is eligible* to be retrieved (by making it canon); it does not perform retrieval.
-- **Storage.** Human Review does not own persistence. All knowledge — proposed, canon, or rejected — is persisted by the **Store** (RFC-002 §6.1). Review changes an Entry's *status*; the Store owns the model, the persistence, and the record. Review is the *decision*; the Store is the *ledger*.
+- **Retrieval.** Human Review does not select knowledge for prompts. Retrieval is the **Store's** one capability (RFC-002; RFC-003). Review determines *what is eligible* to be retrieved (by making it canon); it does not perform retrieval.
+- **Storage.** Human Review does not own persistence. All knowledge — proposed, canon, or rejected — is persisted by the **Store** (RFC-002). Review changes an Entry's *status*; the Store owns the model, the persistence, and the record. Review is the *decision*; the Store is the *ledger*.
 
 The discipline: **Human Review decides what becomes canon and records the disposition; it never extracts, generates, composes, retrieves, or persists — and it never gates the user's own creative output.**
 
@@ -124,7 +124,7 @@ The discipline: **Human Review decides what becomes canon and records the dispos
 
 The Review Card is the **universal interaction pattern** for canon mutation, and its philosophy is *one pattern, not many editors* (ADR-011 §2; ADR-014 §1).
 
-- **One pattern because every proposal is one kind of thing.** A proposed fact, a proposed promise, a proposed relationship movement, a proposed piece of DNA — all are Entries with `status=proposed`, so all are reviewed identically: what is proposed, its provenance and confidence, and accept / edit-then-accept / reject (ADR-011 §2; RFC-002 §3.4). The uniformity is not cosmetic; it follows directly from the one-Entry-model decision (RFC-002 §2.3). Because knowledge is one representation, its review is one pattern.
+- **One pattern because every proposal is one kind of thing.** A proposed fact, a proposed promise, a proposed relationship movement, a proposed piece of DNA — all are Entries with `status=proposed`, so all are reviewed identically: what is proposed, its provenance and confidence, and accept / edit-then-accept / reject (ADR-011 §2; RFC-002). The uniformity is not cosmetic; it follows directly from the one-Entry-model decision (RFC-002). Because knowledge is one representation, its review is one pattern.
 - **One queue, one editor.** All proposals flow into one review queue rendered by the *same* component that renders the Bible and DNA — one component to build and maintain instead of one per proposal kind (ADR-011 §2; ADR-014 §5). This is the direct UI payoff of the unified knowledge model: less surface, uniform behavior, no gaps.
 - **The pattern embodies the cheap/expensive asymmetry.** Its non-blocking, batchable, low-friction shape keeps *proposing* cheap and unobtrusive, while making *accepting* a distinct, deliberate, recorded act — the interaction is the principle of §3 made tangible (ADR-011 §2; §3 here).
 - **The pattern is a UX-level architecture, not a screen.** Its properties — uniform shape, three actions, non-blocking, editable, reversible, progressive-disclosure — are architectural decisions; the visual layout, components, and interactions that realize them are not defined here (ADR-011 §2). *The UI is Defined in the corresponding RFC (the UI & Information Architecture RFC).*
@@ -171,7 +171,7 @@ The one-line boundary: **the Writer proposes newly-observed knowledge through th
 
 Human Review and the Review Card are designed to absorb every future proposal kind without architectural change (RFC-001 §7).
 
-- **A new proposal kind is a new Entry `type`, absorbed by the one queue.** When a new kind of knowledge becomes proposable, it is a new `type` in the governed vocabulary (owned by RFC-002) that flows into the *same* review queue, rendered by the *same* editor, disposed by the *same* three actions — no new approval affordance, no new review path (RFC-002 §9.1; ADR-011 §2; ADR-014 §5). The gate scales by absorbing types, not by growing surfaces.
+- **A new proposal kind is a new Entry `type`, absorbed by the one queue.** When a new kind of knowledge becomes proposable, it is a new `type` in the governed vocabulary (owned by RFC-002) that flows into the *same* review queue, rendered by the *same* editor, disposed by the *same* three actions — no new approval affordance, no new review path (RFC-002; ADR-011 §2; ADR-014 §5). The gate scales by absorbing types, not by growing surfaces.
 - **The pattern stays uniform as the product grows.** Because every proposal is an Entry with `status=proposed`, the Review Card never forks per feature; new capabilities inherit review for free (ADR-011 §2, §v2-note). This is the direct evolutionary payoff of the one-knowledge-model, one-pattern design.
 - **Per-kind *policy* may evolve, gated by evidence.** The concrete, evidence-triggered evolution is **bounded auto-accept for narrow, high-precision proposal kinds** — accept-by-default with easy revert, *only* for kinds real usage proves highly precise, and *only* to relieve triage fatigue (§12; ADR-011 §6; ADR-004 §6). This is a per-kind policy on top of the gate, never a removal of it, and it is validated on evidence — never adopted speculatively (RFC-001 §7.4). *Any such policy is Defined in the corresponding RFCs (coordinating the Living Story Bible and Learning Capture RFCs).*
 - **Advanced review surfaces are additive, never the default.** If power users want bulk operations, an optional advanced bulk-review view may be added *in addition to* — never replacing — the card default (ADR-011 §6). The low-friction single-Card path stays the default. *Such surfaces are Defined in the corresponding RFC.*
@@ -255,15 +255,15 @@ RFC-011 depends on **RFC-001**, **RFC-002**, **RFC-008**, **RFC-004**, and **RFC
 |---|---|
 | §1 Purpose | RFC-001 §2.6, §2.7; RFC-005 §5; ADR-011 §2; ADR-004 §4-A |
 | §2 Why Human Review Exists | RFC-001 §2.6, §2.7, §8.2, §8.7; RFC-005 §5; ADR-002 §2; ADR-004 §4-A; ADR-011 §4-A, §5–§6; RFC-008 §4; RFC-004 §4 |
-| §3 Proposal is Cheap, Canon is Expensive | RFC-002 §6; RFC-005 §5–§6; RFC-008 §3; RFC-004 §4; ADR-004 §4-A; ADR-011 §2, §4-A |
-| §4 Why the Review Card Exists | ADR-011 §1–§5, §v2-note; ADR-014 §1–§2, §4; RFC-002 §3.4 |
-| §5 Human Review Responsibilities | ADR-011 §2–§4, §6; RFC-002 §3.2–§3.4, §4; RFC-001 §2.6; ADR-014 §1 |
-| §6 What Human Review Does NOT Own | RFC-001 §4, §2.7; RFC-002 §6.1, §8; RFC-008 §3; RFC-004 §3; RFC-003; RFC-009 §3 |
-| §7 Review Card Philosophy | ADR-011 §2; ADR-014 §1, §5; RFC-002 §2.3, §3.4; §3 here |
+| §3 Proposal is Cheap, Canon is Expensive | RFC-002; RFC-005 §5–§6; RFC-008 §3; RFC-004 §4; ADR-004 §4-A; ADR-011 §2, §4-A |
+| §4 Why the Review Card Exists | ADR-011 §1–§5, §v2-note; ADR-014 §1–§2, §4; RFC-002 |
+| §5 Human Review Responsibilities | ADR-011 §2–§4, §6; RFC-002; RFC-001 §2.6; ADR-014 §1 |
+| §6 What Human Review Does NOT Own | RFC-001 §4, §2.7; RFC-002; RFC-008 §3; RFC-004 §3; RFC-003; RFC-009 §3 |
+| §7 Review Card Philosophy | ADR-011 §2; ADR-014 §1, §5; RFC-002; §3 here |
 | §8 Relationship with Story Bible | RFC-005 §2.2, §5, §7; ADR-004 §3; ADR-011 §5 |
 | §9 Relationship with Analyst | RFC-008 §3–§4, §6, §9; ADR-011 §2; ADR-014 §1 |
 | §10 Relationship with Writer | RFC-004 §3–§4, §6–§7; ADR-005 §7; RFC-001 §2.7; RFC-005 §5 |
-| §11 Evolution Strategy | RFC-001 §7, §7.4; RFC-002 §9.1; ADR-011 §2, §6, §v2-note; ADR-004 §6; ADR-014 §5 |
+| §11 Evolution Strategy | RFC-001 §7, §7.4; RFC-002; ADR-011 §2, §6, §v2-note; ADR-004 §6; ADR-014 §5 |
 | §12 Architectural Risks | ADR-011 §4-A, §4-D, §5–§6; ADR-004 §6; RFC-001 §2.6, §2.7, §8.2; RFC-008 §4; RFC-004 §4; RFC-005 §5 |
 | §13 Out of Scope | RFC-001 §9 (RFC boundary conventions) |
 | §14 Dependencies | RFC-001 §10; RFC-005 §13 |

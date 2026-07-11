@@ -108,7 +108,7 @@ The Analyst is **one extractor** with a single shape: *text in → proposed know
 
 - **Owns:** turning text into candidate knowledge entries.
 - **Does not:** decide what becomes canon (that is human review), store its own long-lived state, or write prose for the reader.
-- *Analyst behavior and facets defined in RFC-005. Learning-capture defined in RFC-009.*
+- *Analyst behavior and facets defined in RFC-008. Learning-capture remains a future topic RFC.*
 
 ### 3.3 Writer — one loop over declarative stages
 
@@ -116,7 +116,7 @@ The Writer is **one loop runner** executing a declarative list of stages: retrie
 
 - **Owns:** producing draft prose and running the draft→validate→revise loop.
 - **Does not:** write to canon silently, own knowledge, or decide product-wide policy — it reads the Store and emits proposals like everyone else.
-- *Pipeline, stages, and scene/episode units defined in RFC-006.*
+- *Pipeline, stages, and scene/episode units defined in RFC-004.*
 
 ### 3.4 Bench — the honesty mechanism
 
@@ -166,7 +166,7 @@ This section is the contract. Each component's ownership is exclusive, and its e
 
 ### 4.5 The substrate (boundary note)
 
-The substrate (provider adapters, prompt-assembly engine, auth, chat engine, chapter editor, jobs) is **shared infrastructure** the three services use. It owns *mechanism*; it owns **no creative policy**. The mapping between the three-verb vocabulary and the substrate's own names (e.g. the prompt-assembly engine) must remain explicit and is maintained in the component RFCs, not blurred (ADR-002). *Substrate seams — provider adapter, persistence, auth — defined in RFC-013, RFC-014, RFC-015.*
+The substrate (provider adapters, prompt-assembly engine, auth, chat engine, chapter editor, jobs) is **shared infrastructure** the three services use. It owns *mechanism*; it owns **no creative policy**. The mapping between the three-verb vocabulary and the substrate's own names (e.g. the prompt-assembly engine) must remain explicit and is maintained in the component RFCs, not blurred (ADR-002). *Provider adapter, persistence, and auth remain future topic RFCs; no number is reserved until each file exists.*
 
 ---
 
@@ -191,7 +191,7 @@ Stage by stage, high-level only:
 7. **Canon** — approved proposals become canonical knowledge in the Store, immediately available to future retrieval and future drafts.
 8. **Learning Capture** — the author's edits and acceptances are **captured** as they happen, so the system can later distill the author's preferences. Capture is day-one and irreversible-if-missed; the *learning* is a later, transparent, human-reviewed pass (§2.7, ADR-010).
 
-The four closed loops embedded in this lifecycle — **analysis**, **drafting/validation**, **continuity** (accepted chapter → living bible → next draft), and **learning-capture** — are where quality compounds. *The detailed mechanics of each stage are defined in their component RFCs (RFC-004 through RFC-010).*
+The four closed loops embedded in this lifecycle — **analysis**, **drafting/validation**, **continuity** (accepted chapter → living bible → next draft), and **learning-capture** — are where quality compounds. *Implemented topic ownership follows the current document map in `docs/architecture/README.md`; unimplemented topics remain unnumbered.*
 
 ---
 
@@ -261,7 +261,7 @@ A new "library" or ledger the author wants (a new kind of world knowledge, a new
 
 ### 7.2 New craft → a new prompt stage or facet
 
-A new planning heuristic, a new critique, a new style behavior, or a new thing to extract from references is a **new prompt file** — a Writer stage or an Analyst facet — added to a declarative list. The loop runner and the extractor are written once and do not change; the new behavior is a file the Bench can measure before it ships (ADR-005, ADR-008, ADR-013). *Stage and facet mechanics are defined in RFC-005 and RFC-006.*
+A new planning heuristic, a new critique, a new style behavior, or a new thing to extract from references is a **new prompt file** — a Writer stage or an Analyst facet — added to a declarative list. The loop runner and the extractor are written once and do not change; the new behavior is a file the Bench can measure before it ships (ADR-005, ADR-008, ADR-013). *Writer orchestration is defined in RFC-004; Analyst facet philosophy is defined in RFC-008.*
 
 ### 7.3 New analytical depth → a new Analyst facet
 
@@ -298,17 +298,17 @@ This RFC deliberately does **not** define the following. Each belongs to a later
 
 - **The knowledge data model** — the entry shape, its fields, the `type` vocabulary, scoping, provenance, status transitions. *Defined in RFC-002.*
 - **Retrieval mechanics** — ranking, budgeting, keyword-vs-embedding strategy, summary levels. *Defined in RFC-003.*
-- **The Living Story Bible internals** — the specific ledgers, the knowledge matrix, the promise ledger, the contradiction gate, the continuity loop. *Defined in RFC-004.*
-- **Analyst internals** — the facet catalog, extraction behavior, provenance and confidence handling, the three input paths in detail. *Defined in RFC-005.*
-- **The Writer pipeline** — the concrete stage list, the scene card, the two ground-truth checks, revision behavior, episode assembly, streaming. *Defined in RFC-006.*
-- **Prompt architecture** — block/budget assembly, provider-neutral prompt structure, the file layout of `prompts/`. *Defined in RFC-007.*
-- **Review Card UX** — the interaction, batching, editing, reversal, and surfacing model. *Defined in RFC-008.*
-- **Learning capture & distillation** — what is captured, when, and how preferences are later distilled. *Defined in RFC-009.*
+- **The Living Story Bible internals** — the specific ledgers, the knowledge matrix, the promise ledger, the contradiction gate, the continuity loop. *Defined in RFC-005.*
+- **Analyst internals** — the facet catalog, extraction behavior, provenance and confidence handling, the three input paths in detail. *Defined in RFC-008.*
+- **The Writer pipeline** — the concrete stage list, the scene card, the two ground-truth checks, revision behavior, episode assembly, streaming. *Defined in RFC-004.*
+- **Prompt architecture** — block/budget assembly, provider-neutral prompt structure, the file layout of `prompts/`. *Defined in RFC-009 and its future implementation contract.*
+- **Review Card UX** — the interaction, batching, editing, reversal, and surfacing model. *Defined in RFC-011.*
+- **Learning capture & distillation** — what is captured, when, and how preferences are later distilled. *Reserved as a future topic RFC; no number is assigned.*
 - **The Bench** — the golden set, the metrics, the diff report, the runner. *Defined in RFC-010.*
-- **The relationship model** — relationships-as-entries, the planning stage, the relationship check. *Defined in RFC-011.*
-- **Character/World DNA organization** — the exemplars-first, five-layer prompt organization. *Defined in RFC-012.*
-- **Provider adapters, persistence & DB-swap, and authentication** — the substrate seams. *Defined in RFC-013, RFC-014, RFC-015.*
-- **UI / information architecture** — the 쓰기 / 바이블 / 서재 surfaces, the five UI patterns, and the chat-vs-authoring IA. *Defined in RFC-016.*
+- **The relationship model** — relationships-as-entries, the planning stage, the relationship check. *Defined in RFC-006.*
+- **Character DNA organization** — the exemplars-first, five-layer prompt organization. *Defined in RFC-007; World DNA details remain a future topic contract.*
+- **Provider adapters, persistence & DB-swap, and authentication** — future substrate topic RFCs; no number is assigned until a file exists.
+- **UI / information architecture** — a future topic RFC; no number is assigned until a file exists.
 
 Also explicitly out of scope here: **database schema, APIs, prompt contents, entry field lists, Writer stage definitions, and algorithms.** Those are, by rule, never defined in this system-level document.
 
@@ -316,27 +316,24 @@ Also explicitly out of scope here: **database schema, APIs, prompt contents, ent
 
 ## 10. Dependencies
 
-RFC-001 is the root of the RFC series. Every later RFC **depends on** this document and must conform to its principles (§2), boundaries (§4), and constraints (§8). The anticipated series and their dependence on RFC-001:
+RFC-001 is the root of the RFC series. Every later RFC **depends on** this document and must conform to its principles (§2), boundaries (§4), and constraints (§8). The current series and its dependence on RFC-001 is:
 
-| Future RFC | Topic | Grounding ADR(s) | Depends on RFC-001 for |
+| RFC | Topic | Grounding ADR(s) | Depends on RFC-001 for |
 |---|---|---|---|
-| **RFC-002** | Store & Entry Knowledge Model | ADR-003 | Prose-first principle; one-model boundary; `type`-not-tables constraint |
-| **RFC-003** | Retrieval Strategy | ADR-018 | The single retrieval function boundary; deferred-seam philosophy |
-| **RFC-004** | Living Story Bible & Continuity Loop | ADR-004 | Review-before-Canon; the continuity loop in the lifecycle |
-| **RFC-005** | Analyst & Reference Analysis | ADR-008, ADR-010 | Stateless-extractor boundary; proposals-not-canon; facets-as-prompts |
-| **RFC-006** | Writer Pipeline & Scene/Episode Unit | ADR-005, ADR-020 | Loop-not-line; stages-as-data; no-new-engines |
-| **RFC-007** | Prompt Architecture | ADR-009, ADR-013 | Prompts-in-repository; prompt-first evolution |
-| **RFC-008** | Review Card UX | ADR-011, ADR-014 | The single human-gated write path |
-| **RFC-009** | Learning Capture & Distillation | ADR-010 | Transparent-learning; capture-day-one constraint |
-| **RFC-010** | Bench Evaluation Harness | ADR-012 | The Bench boundary; Bench-measurability constraint |
-| **RFC-011** | Relationship System | ADR-006 | Entries + stage + check, not an engine |
-| **RFC-012** | Character / World DNA Organization | ADR-007 | Prose-first; five-layers-as-prompt-org, not schema |
-| **RFC-013** | Provider Adapter & Vendor Neutrality | ADR-016 | Substrate seam; deferred second implementation |
-| **RFC-014** | Persistence & DB-Swap Strategy | ADR-017 | Local-first default; the promote-a-type escape valve |
-| **RFC-015** | Modular Authentication | ADR-019 | Local-no-login default; latent multi-user seam |
-| **RFC-016** | UI & Information Architecture | ADR-014 | Minimal-UI; chat-kept-first-class; navigation invariance |
+| **RFC-002** | Entry Model Contract | ADR-003, ADR-017 | Prose-first model, scope/type/status, migration boundary |
+| **RFC-003** | Store-wide Retrieval Contract | ADR-018, ADR-009 | One keyword-first retrieval seam and Context Assembly handoff |
+| **RFC-004** | Writer | ADR-005, ADR-020 | Loop-not-line; stages-as-data; no-new-engines |
+| **RFC-005** | Story Bible | ADR-004 | Work-scoped canon and continuity loop |
+| **RFC-006** | Relationship | ADR-006 | Entries + stage + check, not an engine |
+| **RFC-007** | Character DNA | ADR-007 | Prose-first, exemplars-first identity organization |
+| **RFC-008** | Analyst | ADR-008, ADR-010 | Stateless extractor; proposals-not-canon; facets-as-prompts |
+| **RFC-009** | Prompt System | ADR-009, ADR-013 | Prompts-in-repository and standardized composition |
+| **RFC-010** | Bench | ADR-012 | Dev-only evaluation and regression measurement |
+| **RFC-011** | Human Review & Review Card | ADR-011, ADR-014 | The single human-gated write path |
+| **RFC-012** | Character Chat | ADR-014, ADR-018 | First-class chat over shared knowledge, separate generation path |
+| **Unnumbered future topics** | Learning Capture, Provider Adapter, Persistence, Auth, UI, World DNA details | Relevant ADRs | Assign a number only when the RFC file is created |
 
-> The RFC numbering above is the planned series; only RFC-001 is authoritative until each successor is written. Successor RFCs may refine their own numbering, but their **dependence on RFC-001's principles, boundaries, and constraints is fixed** — none may override this document. Where a successor and RFC-001 appear to conflict, RFC-001 (and behind it, the ADR set) governs.
+> This table is the current series and must match the files on disk and the document map in `docs/architecture/README.md`. Unwritten topics do not reserve numbers. Every successor still depends on RFC-001's principles, boundaries, and constraints; where a successor conflicts, RFC-001 and the ADR set govern.
 
 ---
 

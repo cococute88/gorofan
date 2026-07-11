@@ -169,7 +169,7 @@ canon -> superseded     (only when an approved replacement becomes canon)
 
 Additional rules:
 
-- Analyst and Writer outputs may create `captured` or `proposed`; they must not directly create `canon`.
+- Analyst and Writer extraction outputs create `proposed` Entries, as required by ADR-002 and RFC-008; they must not directly create `captured` or `canon` Entries. `captured` is limited to explicit user drafts, import staging, and lossless pre-analysis capture that is not yet an Analyst output.
 - Explicit user-authored knowledge may become `canon` as part of the same intentional user action; the user action is the human gate.
 - Curated reference import may use a documented batch approval, but the Analyst itself still never decides canon.
 - Editing a proposed Entry before acceptance may update that proposal with audit metadata. Correcting existing canon creates a replacement proposal; it does not rewrite history in place.
@@ -203,6 +203,16 @@ Supersession preserves history while identifying current truth.
 - Current retrieval excludes superseded Entries by default; audit/history views may include them.
 - Rejecting a proposed replacement leaves the old canon unchanged.
 - Hard deletion must not be used as ordinary correction semantics.
+
+### 8.3 Confidence
+
+Confidence records how strongly an extracted assertion is supported; it is not a substitute for human authority or Entry status.
+
+- AI-extracted Entries must use a documented finite scale and identify the producer that assigned the value.
+- Explicit user-authored canon is authoritative because of the human action, not because it receives an artificially high model confidence.
+- Missing confidence must have one documented neutral meaning and must not be interpreted differently by different consumers.
+- Confidence may influence retrieval among otherwise comparable eligible Entries, but it cannot bypass ownership, scope, status, supersession, or Review Card rules.
+- Conflicting canon may coexist with distinct provenance and confidence until a human supersedes one; confidence alone does not rewrite canon.
 
 ## 9. Domain representation contracts
 
@@ -257,7 +267,7 @@ The additive implementation RFC/PR should evaluate at least the following logica
 | `data` | optional bounded structured facts used by deterministic consumers |
 | `status` | lifecycle state |
 | `provenance` | mandatory source and capture metadata |
-| `confidence` | optional/required-by-producer normalized confidence; user-authored canon may use an explicit trusted convention |
+| `confidence` | normalized confidence governed by §8.3; required for AI extraction and explicitly neutral or not-applicable for direct user authorship |
 | `priority` | explicit bounded author/system importance hint, distinct from retrieval score |
 | `superseded_by` | optional replacement link |
 | `created_at`, `updated_at` | audit timestamps |

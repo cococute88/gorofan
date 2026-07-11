@@ -125,7 +125,9 @@ A single-process, layered **modular monolith**: a reusable **substrate** (provid
 | Future-expansion principles / sanctioned seams | ADR-015 | *(cross-cutting)* |
 | UI & information architecture, five UI patterns | ADR-014 | *(future UI RFC)* |
 
-> **RFC numbering note.** RFC-003 now follows RFC-001's planned responsibility and defines Store-wide Retrieval. The pre-existing Analyst RFC moved without semantic deletion to RFC-008. Later RFC cross-references were updated accordingly; the table above is the authoritative current map.
+> **RFC numbering note.** RFC-003 defines Store-wide Retrieval and the pre-existing Analyst RFC moved without semantic deletion to RFC-008. RFC-001's dependency table and later RFC cross-references use this same current map. Unwritten topics do not reserve RFC numbers.
+>
+> **Historical background.** The former RFC-008 Retrieval & Context Assembly draft is preserved as [Retrieval & Context Assembly — Historical Background](retrieval-context-assembly-background.md). It is non-authoritative rationale; RFC-003 owns Store-wide selection and RFC-009/ADR-009 own prompt composition and final Context Assembly.
 
 ---
 
@@ -208,7 +210,7 @@ Plain-English definitions of every major term. Where two terms are easy to confu
 This section records the outcome of the final architecture audit performed before implementation. **No BLOCKER issues were found. The architecture is ready for implementation.** The reconciliations below keep the document map aligned with the Phase 1 contracts.
 
 - **W1 — Status of reference-derived knowledge.** ADR-008 describes curated reference output as canon while the universal review rule forbids an Analyst decision to canonize. RFC-002 resolves this as an authority rule: AI-inferred output is captured/proposed; a deliberate user action may canonize directly or through explicit batch approval. The Analyst never decides canon.
-- **W2 — RFC numbering alignment.** RFC-003 now owns Store-wide Retrieval as RFC-001 planned. The pre-existing Analyst RFC is preserved as RFC-008, and dependent document references were updated. Use the §5 map as the authoritative current series.
+- **W2 — RFC numbering alignment.** RFC-001, this guide, and the files on disk now share one current RFC-002~012 map. The pre-existing Analyst RFC is preserved as RFC-008, and the former Retrieval & Context Assembly draft is retained as non-authoritative historical background rather than deleted.
 - **W3 — Retrieval ↔ Prompt System seam.** RFC-003 owns Entry selection and the Entry-to-PromptBlock handoff contract. RFC-009 and ADR-009 own prompt assets and final deterministic Context Assembly. Retrieval never emits provider messages; assembly never reaches into the Store to re-rank Entries.
 
 **INFO (no action required):** implementation-level RFCs for the remaining substrate seams (Provider Adapter, Persistence, Auth, UI) and deferred internals (continuity-loop internals, Learning Capture, Bench runner, prompt contents) are intentionally not yet written. Retrieval mechanics now have the minimum Phase 1 contract in RFC-003. Evidence-gated items remain deferred: bounded auto-accept, per-scene cost, chat IA, embeddings, a third critic, and prose-first durability.
