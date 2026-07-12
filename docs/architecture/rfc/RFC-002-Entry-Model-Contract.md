@@ -73,7 +73,10 @@ Aggregates establish identity, lifecycle, and ownership. Entries describe creati
 - `Character` and `World` remain thin containers. Their durable identity fields remain on the aggregate; their evolving creative detail becomes Entries.
 - `Work` and `Collection` remain scope anchors, not Entries.
 - `Chapter` remains the canonical authored document; summaries and extracted assertions about it may be Entries.
-- Deleting or unlinking an aggregate must not silently reassign its Entries to another owner or scope. The implementation must define explicit soft-delete or orphan handling.
+- Deleting or unlinking an aggregate must not silently reassign its Entries to another owner or scope.
+- Soft-deleting an aggregate does not delete its Entries. Entry history and provenance remain available for audit, recovery, and an aggregate restore.
+- Default Store retrieval must exclude an Entry when either its scope anchor or any required subject anchor is soft-deleted, missing, or otherwise orphaned. It must not infer a replacement anchor.
+- Explicit audit, administration, or recovery tooling may opt into orphaned/soft-deleted-anchor Entries, but must label them as non-default history. The later `retrieve()` implementation owns this filter; this persistence-hardening change does not implement Store-wide retrieval.
 
 ## 5. Scope, subject, and ownership
 
@@ -174,6 +177,8 @@ Additional rules:
 - Curated reference import may use a documented batch approval, but the Analyst itself still never decides canon.
 - Editing a proposed Entry before acceptance may update that proposal with audit metadata. Correcting existing canon creates a replacement proposal; it does not rewrite history in place.
 - `rejected` and `superseded` are terminal for current truth. Undo creates an auditable new transition or replacement; it must not erase history.
+- `relationship.state` and `story.summary` are Phase 1 single-current-value types. A direct `proposed -> canon` transition must fail when active canon already has the same owner, scope, type, and subject identity; the caller must use the atomic supersession path instead.
+- Other Entry types retain their existing multiple-canon policy until their contracts explicitly classify them as single-current-value.
 
 ### 7.3 Review Card relationship
 
@@ -210,9 +215,9 @@ Confidence records how strongly an extracted assertion is supported; it is not a
 
 - AI-extracted Entries must use a documented finite scale and identify the producer that assigned the value.
 - Explicit user-authored canon is authoritative because of the human action, not because it receives an artificially high model confidence.
-- Missing confidence must have one documented neutral meaning and must not be interpreted differently by different consumers.
+- Missing confidence, and any future explicitly designated neutral confidence value, contributes neither a ranking bonus nor a ranking penalty. It is not equivalent to low confidence.
 - Confidence may influence retrieval among otherwise comparable eligible Entries, but it cannot bypass ownership, scope, status, supersession, or Review Card rules.
-- Conflicting canon may coexist with distinct provenance and confidence until a human supersedes one; confidence alone does not rewrite canon.
+- Confidence never decides whether an Entry is canon. Conflicting canon may coexist where a type permits it until a human supersedes one; confidence alone does not rewrite canon.
 
 ## 9. Domain representation contracts
 
@@ -322,11 +327,11 @@ Validation belongs at the application boundary and should be reinforced by porta
 ## 14. Open questions and intentional deferrals
 
 1. Whether `subject` is implemented as bounded JSON, join rows, or explicit nullable columns remains an implementation RFC decision.
-2. Whether `confidence` is mandatory for user-authored canon, and its exact scale, remains open; retrieval must not interpret a missing value ambiguously.
+2. Whether `confidence` is mandatory for user-authored canon, and its exact non-neutral scale, remains open; missing confidence is nevertheless ranking-neutral under §8.3.
 3. Exact structured shapes for `story.knowledge`, `story.promise`, `relationship.state`, and summary levels are deferred to their consumer contracts.
-4. The delete/restore semantics for Entries whose thin aggregate is deleted need a persistence RFC decision.
+4. Hard-delete and restore UX for thin aggregates remains a persistence RFC decision; default retrieval exclusion and Entry history retention are fixed by §4.3.
 5. Direct curated-reference batch approval must be reconciled with the universal Review Card UX without weakening the human gate.
-6. Whether multiple current canon Entries with the same scope/type/subject are allowed is type-specific and deferred; supersession is required for single-current-value types.
+6. Classification of additional single-current-value types is deferred; Phase 1 fixes `relationship.state` and `story.summary` as single-current-value under §7.2.
 7. The concrete migration revision identifier after `0001`, indexes, and uniqueness constraints are intentionally not fixed here.
 
 ## 15. Acceptance criteria for the implementation PR

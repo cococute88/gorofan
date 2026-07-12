@@ -32,6 +32,36 @@ class EntryRepository:
         )
         return (await session.execute(stmt)).scalars().first()
 
+    async def find_active_canon_for_update(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        scope_kind: str,
+        scope_id: str | None,
+        entry_type: str,
+        subject_type: str | None,
+        subject_id: str | None,
+        exclude_entry_id: str,
+    ) -> Entry | None:
+        """Lock an existing canon with the same persisted identity, if any."""
+        stmt = select(Entry).where(
+            Entry.user_id == user_id,
+            Entry.scope_kind == scope_kind,
+            Entry.scope_id.is_(None) if scope_id is None else Entry.scope_id == scope_id,
+            Entry.type == entry_type,
+            (
+                Entry.subject_type.is_(None)
+                if subject_type is None
+                else Entry.subject_type == subject_type
+            ),
+            Entry.subject_id.is_(None) if subject_id is None else Entry.subject_id == subject_id,
+            Entry.status == "canon",
+            Entry.id != exclude_entry_id,
+        )
+        stmt = stmt.order_by(Entry.id).limit(1).with_for_update()
+        return (await session.execute(stmt)).scalars().first()
+
     async def list(
         self,
         session: AsyncSession,

@@ -138,6 +138,12 @@ Type allow-lists and subject filters are hard constraints. `cast`, `location`, a
 
 Default generation retrieval includes active `canon` only. It excludes captured, proposed, rejected, superseded, soft-deleted, and invalid Entries. A canonical Entry with a canonical replacement is excluded through its `superseded` status; retrieval must not guess current truth by timestamp alone.
 
+### 7.5 Aggregate anchor liveness
+
+Entry history is retained when a Character, World, Work, Chapter, Collection, or other aggregate anchor is soft-deleted or becomes orphaned. Default retrieval must nevertheless exclude a candidate when its scope anchor or any required subject anchor is soft-deleted, missing, or no longer owner-visible.
+
+This is a pre-ranking eligibility filter, not a negative ranking signal. Retrieval must not silently re-anchor the Entry or guess a surviving aggregate. Explicit audit, administration, or recovery modes may opt into such Entries through a separately named option and must keep them visibly distinct from default generation context.
+
 ## 8. Candidate normalization and duplicate handling
 
 Before scoring, the implementation must:
@@ -190,7 +196,7 @@ Entry priority is an explicit bounded importance hint. It is distinct from type 
 
 ### 9.5 Confidence
 
-Confidence may break or influence ranking among otherwise comparable AI-derived Entries. It must not demote explicit user-authored canon below lower-authority inferred content. Missing confidence requires a documented neutral policy and cannot be interpreted differently between runs.
+Confidence may break or influence ranking among otherwise comparable AI-derived Entries. It must not demote explicit user-authored canon below lower-authority inferred content. Missing confidence, and any explicitly designated neutral confidence value, contributes exactly zero confidence bonus and zero confidence penalty; it is not treated as the minimum value. Confidence cannot replace ownership, scope, subject, anchor-liveness, status, or supersession filters, and it never determines whether an Entry is canon.
 
 ### 9.6 Exemplar precedence
 
@@ -302,7 +308,7 @@ The implementation PR must test:
 - keyword normalization and relevance monotonicity;
 - type, recency, priority, confidence, and exemplar precedence in appropriate task profiles;
 - deterministic tie-breaking and duplicate elimination;
-- superseded/deleted exclusion;
+- superseded/deleted Entry exclusion and soft-deleted/missing scope or subject anchor exclusion;
 - whole-Entry budget fitting, oversize skipping, and total tokens never exceeding budget;
 - Entry-to-PromptBlock trace preservation without prompt execution.
 
@@ -312,6 +318,7 @@ Useful invariants include:
 
 - no returned Entry belongs to another owner or an unreachable scope;
 - default results contain only active canon;
+- default results contain no Entry with a soft-deleted, missing, or owner-invisible scope/subject anchor;
 - selected token estimate is always `<= budget`;
 - the same fixed inputs always produce the same ordered IDs;
 - adding an ineligible Entry cannot change results;
