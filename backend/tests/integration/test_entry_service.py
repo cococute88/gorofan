@@ -71,6 +71,38 @@ async def _create_canon_note(
     return await service.update_status(session, user_id, entry.id, EntryStatus.CANON)
 
 
+def _relationship_state(
+    work_id: str,
+    first_character_id: str,
+    second_character_id: str,
+    *,
+    content: str,
+) -> EntryCreate:
+    return EntryCreate(
+        scope_kind=EntryScope.WORK,
+        scope_id=work_id,
+        subject_type=EntrySubjectType.CHARACTER_PAIR,
+        subject_data={"character_ids": [first_character_id, second_character_id]},
+        type=EntryType.RELATIONSHIP_STATE,
+        status=EntryStatus.PROPOSED,
+        content=content,
+        provenance=_human_provenance(),
+    )
+
+
+def _story_summary(work_id: str, chapter_id: str, *, content: str) -> EntryCreate:
+    return EntryCreate(
+        scope_kind=EntryScope.WORK,
+        scope_id=work_id,
+        subject_type=EntrySubjectType.CHAPTER,
+        subject_id=chapter_id,
+        type=EntryType.STORY_SUMMARY,
+        status=EntryStatus.PROPOSED,
+        content=content,
+        provenance=_human_provenance(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_owner_boundary_and_status_transitions(entry_db) -> None:
     service = EntryService()
@@ -193,6 +225,190 @@ async def test_supersession_is_atomic_owner_scoped_and_traceable(entry_db) -> No
         persisted_old = await session.get(Entry, old.id)
         assert persisted_old is not None
         assert persisted_old.superseded_by_entry_id == new.id
+
+
+@pytest.mark.asyncio
+async def test_relationship_state_duplicate_canon_requires_supersede(entry_db) -> None:
+    service = EntryService()
+    async with entry_db() as session:
+        owner = await _seed_owner(session, "relationship-canon@example.com")
+        work = Work(user_id=owner.id, title="Relationship work")
+        first = Character(user_id=owner.id, name="First")
+        second = Character(user_id=owner.id, name="Second")
+        session.add_all([work, first, second])
+        await session.commit()
+
+        current = await service.create(
+            session,
+            owner.id,
+            _relationship_state(
+                work.id, first.id, second.id, content="They distrust each other."
+            ),
+        )
+        current = await service.update_status(
+            session, owner.id, current.id, EntryStatus.CANON
+        )
+        replacement = await service.create(
+            session,
+            owner.id,
+            _relationship_state(
+                work.id, second.id, first.id, content="They now trust each other."
+            ),
+        )
+
+        with pytest.raises(ValidationAppError, match=r"use supersede\(\)"):
+            await service.update_status(
+                session, owner.id, replacement.id, EntryStatus.CANON
+            )
+        assert replacement.status == EntryStatus.PROPOSED.value
+
+        old, new = await service.supersede(session, owner.id, current.id, replacement.id)
+        assert old.status == EntryStatus.SUPERSEDED.value
+        assert new.status == EntryStatus.CANON.value
+        assert old.superseded_by_entry_id == new.id
+
+
+@pytest.mark.asyncio
+async def test_story_summary_duplicate_canon_is_rejected(entry_db) -> None:
+    service = EntryService()
+    async with entry_db() as session:
+        owner = await _seed_owner(session, "summary-canon@example.com")
+        work = Work(user_id=owner.id, title="Summary work")
+        session.add(work)
+        await session.flush()
+        chapter = Chapter(work_id=work.id, user_id=owner.id, index=1)
+        session.add(chapter)
+        await session.commit()
+
+        current = await service.create(
+            session, owner.id, _story_summary(work.id, chapter.id, content="First summary")
+        )
+        await service.update_status(session, owner.id, current.id, EntryStatus.CANON)
+        duplicate = await service.create(
+            session, owner.id, _story_summary(work.id, chapter.id, content="Second summary")
+        )
+
+        with pytest.raises(ValidationAppError, match=r"use supersede\(\)"):
+            await service.update_status(
+                session, owner.id, duplicate.id, EntryStatus.CANON
+            )
+
+
+@pytest.mark.asyncio
+async def test_non_single_current_type_still_allows_multiple_canon(entry_db) -> None:
+    service = EntryService()
+    async with entry_db() as session:
+        owner = await _seed_owner(session, "multi-canon@example.com")
+        first = await service.create(
+            session, owner.id, _note(status=EntryStatus.PROPOSED, content="First note")
+        )
+        second = await service.create(
+            session, owner.id, _note(status=EntryStatus.PROPOSED, content="Second note")
+        )
+
+        first = await service.update_status(session, owner.id, first.id, EntryStatus.CANON)
+        second = await service.update_status(session, owner.id, second.id, EntryStatus.CANON)
+
+        assert first.status == EntryStatus.CANON.value
+        assert second.status == EntryStatus.CANON.value
+
+
+@pytest.mark.asyncio
+async def test_single_current_canon_check_is_owner_scoped(entry_db) -> None:
+    service = EntryService()
+    async with entry_db() as session:
+        first_owner = await _seed_owner(session, "first-canon-owner@example.com")
+        second_owner = await _seed_owner(session, "second-canon-owner@example.com")
+        shared_identity = {
+            "scope_kind": EntryScope.WORK.value,
+            "scope_id": "shared-work-id",
+            "subject_type": EntrySubjectType.WORK.value,
+            "subject_id": "shared-work-id",
+            "subject_data": {},
+            "type": EntryType.STORY_SUMMARY.value,
+            "status": EntryStatus.PROPOSED.value,
+            "content": "Owner-specific summary",
+            "data": {},
+            "provenance": _human_provenance().model_dump(mode="json"),
+        }
+        first = Entry(user_id=first_owner.id, **shared_identity)
+        second = Entry(user_id=second_owner.id, **shared_identity)
+        session.add_all([first, second])
+        await session.commit()
+
+        first = await service.update_status(
+            session, first_owner.id, first.id, EntryStatus.CANON
+        )
+        second = await service.update_status(
+            session, second_owner.id, second.id, EntryStatus.CANON
+        )
+
+        assert first.status == EntryStatus.CANON.value
+        assert second.status == EntryStatus.CANON.value
+
+
+@pytest.mark.asyncio
+async def test_rejected_and_superseded_entries_do_not_block_canon(entry_db) -> None:
+    service = EntryService()
+    async with entry_db() as session:
+        owner = await _seed_owner(session, "terminal-canon@example.com")
+        work = Work(user_id=owner.id, title="Terminal history work")
+        session.add(work)
+        await session.flush()
+        rejected_chapter = Chapter(work_id=work.id, user_id=owner.id, index=1)
+        superseded_chapter = Chapter(work_id=work.id, user_id=owner.id, index=2)
+        session.add_all([rejected_chapter, superseded_chapter])
+        await session.commit()
+
+        rejected = await service.create(
+            session,
+            owner.id,
+            _story_summary(work.id, rejected_chapter.id, content="Rejected summary"),
+        )
+        await service.update_status(session, owner.id, rejected.id, EntryStatus.REJECTED)
+        after_rejected = await service.create(
+            session,
+            owner.id,
+            _story_summary(work.id, rejected_chapter.id, content="Accepted after rejection"),
+        )
+        after_rejected = await service.update_status(
+            session, owner.id, after_rejected.id, EntryStatus.CANON
+        )
+
+        superseded = Entry(
+            user_id=owner.id,
+            scope_kind=EntryScope.WORK.value,
+            scope_id=work.id,
+            subject_type=EntrySubjectType.CHAPTER.value,
+            subject_id=superseded_chapter.id,
+            subject_data={},
+            type=EntryType.STORY_SUMMARY.value,
+            status=EntryStatus.SUPERSEDED.value,
+            content="Historical superseded summary",
+            data={},
+            provenance=_human_provenance().model_dump(mode="json"),
+        )
+        candidate = Entry(
+            user_id=owner.id,
+            scope_kind=EntryScope.WORK.value,
+            scope_id=work.id,
+            subject_type=EntrySubjectType.CHAPTER.value,
+            subject_id=superseded_chapter.id,
+            subject_data={},
+            type=EntryType.STORY_SUMMARY.value,
+            status=EntryStatus.PROPOSED.value,
+            content="Accepted after supersession history",
+            data={},
+            provenance=_human_provenance().model_dump(mode="json"),
+        )
+        session.add_all([superseded, candidate])
+        await session.commit()
+        candidate = await service.update_status(
+            session, owner.id, candidate.id, EntryStatus.CANON
+        )
+
+        assert after_rejected.status == EntryStatus.CANON.value
+        assert candidate.status == EntryStatus.CANON.value
 
 
 @pytest.mark.asyncio

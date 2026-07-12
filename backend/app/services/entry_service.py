@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFound, ValidationAppError
@@ -36,6 +37,13 @@ ALLOWED_STATUS_TRANSITIONS: dict[EntryStatus, set[EntryStatus]] = {
     EntryStatus.REJECTED: set(),
     EntryStatus.SUPERSEDED: set(),
 }
+
+SINGLE_CURRENT_ENTRY_TYPES: frozenset[EntryType] = frozenset(
+    {
+        EntryType.RELATIONSHIP_STATE,
+        EntryType.STORY_SUMMARY,
+    }
+)
 
 
 class EntryService:
@@ -101,6 +109,8 @@ class EntryService:
         entry_id: str,
         new_status: EntryStatus,
     ) -> Entry:
+        if new_status is EntryStatus.CANON:
+            await self._lock_active_owner(session, user_id)
         entry = await self._get_for_update(session, user_id, entry_id)
         current = EntryStatus(entry.status)
         if new_status not in ALLOWED_STATUS_TRANSITIONS[current]:
@@ -108,6 +118,27 @@ class EntryService:
                 "Invalid Entry status transition",
                 {"from": current.value, "to": new_status.value},
             )
+
+        if (
+            new_status is EntryStatus.CANON
+            and EntryType(entry.type) in SINGLE_CURRENT_ENTRY_TYPES
+        ):
+            existing = await self.repo.find_active_canon_for_update(
+                session,
+                user_id=user_id,
+                scope_kind=entry.scope_kind,
+                scope_id=entry.scope_id,
+                entry_type=entry.type,
+                subject_type=entry.subject_type,
+                subject_id=entry.subject_id,
+                exclude_entry_id=entry.id,
+            )
+            if existing is not None:
+                raise ValidationAppError(
+                    "Active canon already exists for this single-current Entry identity; "
+                    "use supersede() to replace it",
+                    {"existing_entry_id": existing.id, "type": entry.type},
+                )
 
         entry.status = new_status.value
         now = utcnow()
@@ -129,6 +160,7 @@ class EntryService:
         if current_entry_id == replacement_entry_id:
             raise ValidationAppError("An Entry cannot supersede itself")
 
+        await self._lock_active_owner(session, user_id)
         locked: dict[str, Entry] = {}
         for entry_id in sorted((current_entry_id, replacement_entry_id)):
             locked[entry_id] = await self._get_for_update(session, user_id, entry_id)
@@ -160,6 +192,21 @@ class EntryService:
     async def _assert_active_owner(self, session: AsyncSession, user_id: str) -> None:
         user = await session.get(User, user_id)
         if user is None or not user.is_active:
+            raise NotFound("User not found")
+
+    async def _lock_active_owner(self, session: AsyncSession, user_id: str) -> None:
+        """Serialize canon lifecycle writes per owner on PostgreSQL.
+
+        An identity-level ``FOR UPDATE`` query cannot lock the absence of a canon
+        row. Locking the owner first closes that no-row race without a migration;
+        SQLite ignores the clause and retains its single-writer behavior.
+        """
+        stmt = (
+            select(User.id)
+            .where(User.id == user_id, User.is_active.is_(True))
+            .with_for_update()
+        )
+        if (await session.execute(stmt)).scalar_one_or_none() is None:
             raise NotFound("User not found")
 
     @staticmethod
