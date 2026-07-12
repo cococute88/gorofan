@@ -33,6 +33,7 @@ BASELINE_TABLES = {
     "works",
     "worlds",
 }
+HEAD_TABLES = BASELINE_TABLES | {"entries", "alembic_version"}
 
 
 def _file_fingerprint(path: Path) -> tuple[int, int, str] | None:
@@ -120,6 +121,7 @@ def test_initial_revision_compiles_for_postgresql(monkeypatch, capsys) -> None: 
         sql = capsys.readouterr().out
         assert "CREATE TABLE users" in sql
         assert "CREATE TABLE messages" in sql
+        assert "CREATE TABLE entries" in sql
         assert "JSONB" in sql
         assert "DROP TABLE" not in sql
     finally:
@@ -145,7 +147,7 @@ def test_migration_round_trip_uses_isolated_sqlite_db(tmp_path, monkeypatch) -> 
 
         engine = create_engine(f"sqlite:///{migration_db.as_posix()}")
         inspector = inspect(engine)
-        assert set(inspector.get_table_names()) == BASELINE_TABLES | {"alembic_version"}
+        assert set(inspector.get_table_names()) == HEAD_TABLES
 
         oauth_uniques = _unique_map(inspector, "oauth_accounts")
         chapter_uniques = _unique_map(inspector, "chapters")
@@ -190,6 +192,75 @@ def test_migration_round_trip_uses_isolated_sqlite_db(tmp_path, monkeypatch) -> 
         assert session_foreign_keys[("model_config_id",)]["options"]["ondelete"] == "SET NULL"
         assert message_foreign_keys[("parent_message_id",)]["referred_table"] == "messages"
         assert message_foreign_keys[("parent_message_id",)]["options"]["ondelete"] == "SET NULL"
+
+        entry_columns = {column["name"] for column in inspector.get_columns("entries")}
+        assert {
+            "id",
+            "user_id",
+            "scope_kind",
+            "scope_id",
+            "subject_type",
+            "subject_id",
+            "subject_data",
+            "type",
+            "status",
+            "content",
+            "data",
+            "provenance",
+            "confidence",
+            "priority",
+            "created_at_chapter_id",
+            "superseded_by_entry_id",
+            "accepted_at",
+            "rejected_at",
+            "superseded_at",
+            "created_at",
+            "updated_at",
+        }.issubset(entry_columns)
+        entry_indexes = _index_map(inspector, "entries")
+        assert entry_indexes["ix_entries_owner_scope"]["column_names"] == [
+            "user_id",
+            "scope_kind",
+            "scope_id",
+        ]
+        assert entry_indexes["ix_entries_owner_status_type"]["column_names"] == [
+            "user_id",
+            "status",
+            "type",
+        ]
+        assert entry_indexes["ix_entries_owner_type"]["column_names"] == [
+            "user_id",
+            "type",
+        ]
+        assert entry_indexes["ix_entries_owner_subject"]["column_names"] == [
+            "user_id",
+            "subject_type",
+            "subject_id",
+        ]
+        entry_checks = {
+            constraint["name"] for constraint in inspector.get_check_constraints("entries")
+        }
+        assert {
+            "ck_entries_scope_kind",
+            "ck_entries_type",
+            "ck_entries_status",
+            "ck_entries_content_nonempty",
+            "ck_entries_confidence",
+            "ck_entries_priority",
+            "ck_entries_not_self_superseded",
+        }.issubset(entry_checks)
+        entry_foreign_keys = _foreign_key_map(inspector, "entries")
+        assert entry_foreign_keys[("user_id",)]["referred_table"] == "users"
+        assert entry_foreign_keys[("user_id",)]["options"]["ondelete"] == "CASCADE"
+        assert entry_foreign_keys[("created_at_chapter_id",)]["referred_table"] == "chapters"
+        assert entry_foreign_keys[("created_at_chapter_id",)]["options"]["ondelete"] == "SET NULL"
+        assert entry_foreign_keys[("superseded_by_entry_id",)]["referred_table"] == "entries"
+        assert entry_foreign_keys[("superseded_by_entry_id",)]["options"]["ondelete"] == "RESTRICT"
+        engine.dispose()
+
+        command.downgrade(config, "0001_initial")
+        engine = create_engine(f"sqlite:///{migration_db.as_posix()}")
+        assert set(inspect(engine).get_table_names()) == BASELINE_TABLES | {"alembic_version"}
         engine.dispose()
 
         command.downgrade(config, "base")
@@ -199,7 +270,7 @@ def test_migration_round_trip_uses_isolated_sqlite_db(tmp_path, monkeypatch) -> 
 
         command.upgrade(config, "head")
         engine = create_engine(f"sqlite:///{migration_db.as_posix()}")
-        assert set(inspect(engine).get_table_names()) == BASELINE_TABLES | {"alembic_version"}
+        assert set(inspect(engine).get_table_names()) == HEAD_TABLES
         engine.dispose()
     finally:
         assert _file_fingerprint(ROOT_DB) == root_db_before
