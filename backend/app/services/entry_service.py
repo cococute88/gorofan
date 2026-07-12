@@ -1,11 +1,12 @@
-"""Minimal owner-safe Entry Store write/read boundary (RFC-002).
+"""Owner-safe Entry Store persistence and retrieval boundary (RFC-002/RFC-003).
 
-This service intentionally does not implement Store-wide retrieval or a Review
-Card API. It only establishes validated persistence, lifecycle transitions, and
-atomic supersession for later consumers.
+This service owns validated persistence, lifecycle transitions, atomic
+supersession, and the read-only Store retrieval seam. It does not implement a
+Review Card API or Context Assembly.
 """
 from __future__ import annotations
 
+import builtins
 from typing import Any
 
 from sqlalchemy import select
@@ -22,12 +23,20 @@ from app.models.world import World
 from app.repositories.entry_repository import EntryRepository
 from app.schemas.entry import (
     EntryCreate,
+    EntryRetrievalResult,
+    EntryRetrievalTrace,
+    EntryRetrieveRequest,
     EntryScope,
     EntryStatus,
     EntrySubjectType,
     EntryType,
     ProvenanceCaptureMethod,
     ProvenanceSourceKind,
+)
+from app.services.entry_retrieval import (
+    RETRIEVAL_POLICY_VERSION,
+    rank_entries,
+    select_entries,
 )
 
 ALLOWED_STATUS_TRANSITIONS: dict[EntryStatus, set[EntryStatus]] = {
@@ -100,6 +109,55 @@ class EntryService:
             scope_id=scope_id,
             status=status.value if status else None,
             entry_type=entry_type.value if entry_type else None,
+        )
+
+    async def retrieve(
+        self, session: AsyncSession, request: EntryRetrieveRequest
+    ) -> EntryRetrievalResult:
+        """Select an owner-safe, scope-bound slice of the Entry Store."""
+        await self._assert_active_owner(session, request.user_id)
+        statuses = set(request.status_filters or [EntryStatus.CANON])
+        if request.include_rejected:
+            statuses.add(EntryStatus.REJECTED)
+        if request.include_superseded:
+            statuses.add(EntryStatus.SUPERSEDED)
+
+        scopes = [
+            (selector.scope_kind.value, selector.scope_id)
+            for selector in request.scopes
+            if selector.scope_kind is not EntryScope.CHAT_PRIVATE
+        ]
+        subjects = [
+            (subject.subject_type.value, subject.persisted_subject_id)
+            for subject in request.subject_filters
+        ]
+        candidates = await self.repo.list_retrieval_candidates(
+            session,
+            user_id=request.user_id,
+            scopes=scopes,
+            statuses=sorted(status.value for status in statuses),
+            entry_types=(
+                sorted(entry_type.value for entry_type in request.entry_types)
+                if request.entry_types is not None
+                else None
+            ),
+            subjects=subjects,
+        )
+
+        candidates, orphaned_ids = await self._exclude_orphaned_candidates(
+            session, request.user_id, candidates
+        )
+        ranked = rank_entries(candidates, request)
+        selected, budget_rejected = select_entries(ranked, request)
+        return EntryRetrievalResult(
+            items=selected,
+            total_estimated_tokens=sum(item.estimated_tokens for item in selected),
+            requested_budget=request.budget,
+            policy_version=RETRIEVAL_POLICY_VERSION,
+            trace=EntryRetrievalTrace(
+                excluded_orphaned_entry_ids=orphaned_ids,
+                budget_rejected_entry_ids=budget_rejected,
+            ),
         )
 
     async def update_status(
@@ -193,6 +251,163 @@ class EntryService:
         user = await session.get(User, user_id)
         if user is None or not user.is_active:
             raise NotFound("User not found")
+
+    async def _exclude_orphaned_candidates(
+        self, session: AsyncSession, user_id: str, entries: builtins.list[Entry]
+    ) -> tuple[builtins.list[Entry], builtins.list[str]]:
+        """Pre-rank filter for missing, deleted, or owner-invisible anchors."""
+        work_ids = {
+            value
+            for entry in entries
+            for value in (
+                entry.scope_id if entry.scope_kind == EntryScope.WORK.value else None,
+                entry.subject_id
+                if entry.subject_type == EntrySubjectType.WORK.value
+                else None,
+            )
+            if value is not None
+        }
+        character_ids = {
+            value
+            for entry in entries
+            for value in self._entry_character_anchor_ids(entry)
+        }
+        world_ids = {
+            value
+            for entry in entries
+            for value in (
+                entry.scope_id if entry.scope_kind == EntryScope.WORLD.value else None,
+                entry.subject_id
+                if entry.subject_type == EntrySubjectType.WORLD.value
+                else None,
+            )
+            if value is not None
+        }
+        chapter_ids = {
+            entry.subject_id
+            for entry in entries
+            if entry.subject_type == EntrySubjectType.CHAPTER.value
+            and entry.subject_id is not None
+        }
+
+        active_work_ids = await self._active_ids(
+            session, Work, user_id, work_ids, soft_deletable=True
+        )
+        active_character_ids = await self._active_ids(
+            session, Character, user_id, character_ids, soft_deletable=True
+        )
+        active_world_ids = await self._active_ids(
+            session, World, user_id, world_ids, soft_deletable=True
+        )
+        active_chapter_work_ids: dict[str, str] = {}
+        if chapter_ids:
+            stmt = (
+                select(Chapter.id, Chapter.work_id)
+                .join(Work, Work.id == Chapter.work_id)
+                .where(
+                    Chapter.id.in_(chapter_ids),
+                    Chapter.user_id == user_id,
+                    Work.user_id == user_id,
+                    Work.deleted_at.is_(None),
+                )
+            )
+            active_chapter_work_ids = dict((await session.execute(stmt)).tuples().all())
+
+        included: builtins.list[Entry] = []
+        excluded: builtins.list[str] = []
+        for entry in entries:
+            if self._anchors_are_live(
+                entry,
+                active_work_ids=active_work_ids,
+                active_character_ids=active_character_ids,
+                active_world_ids=active_world_ids,
+                active_chapter_work_ids=active_chapter_work_ids,
+            ):
+                included.append(entry)
+            else:
+                excluded.append(entry.id)
+        return included, excluded
+
+    @staticmethod
+    async def _active_ids(
+        session: AsyncSession,
+        model: type[Any],
+        user_id: str,
+        record_ids: set[str],
+        *,
+        soft_deletable: bool,
+    ) -> set[str]:
+        if not record_ids:
+            return set()
+        stmt = select(model.id).where(model.id.in_(record_ids), model.user_id == user_id)
+        if soft_deletable:
+            stmt = stmt.where(model.deleted_at.is_(None))
+        return set((await session.execute(stmt)).scalars().all())
+
+    @staticmethod
+    def _entry_character_anchor_ids(entry: Entry) -> set[str]:
+        if entry.subject_type == EntrySubjectType.CHARACTER.value and entry.subject_id:
+            return {entry.subject_id}
+        if entry.subject_type == EntrySubjectType.CHARACTER_PAIR.value:
+            values = (entry.subject_data or {}).get("character_ids")
+            if isinstance(values, list):
+                return {value for value in values if isinstance(value, str)}
+        if entry.scope_kind == EntryScope.CHARACTER.value and entry.scope_id:
+            return {entry.scope_id}
+        return set()
+
+    @staticmethod
+    def _anchors_are_live(
+        entry: Entry,
+        *,
+        active_work_ids: set[str],
+        active_character_ids: set[str],
+        active_world_ids: set[str],
+        active_chapter_work_ids: dict[str, str],
+    ) -> bool:
+        scope_live = {
+            EntryScope.USER.value: entry.scope_id is None,
+            EntryScope.WORK.value: entry.scope_id in active_work_ids,
+            EntryScope.CHARACTER.value: entry.scope_id in active_character_ids,
+            EntryScope.WORLD.value: entry.scope_id in active_world_ids,
+            EntryScope.COLLECTION.value: False,
+        }.get(entry.scope_kind, False)
+        if not scope_live:
+            return False
+        if entry.subject_type is None:
+            return True
+        if entry.subject_type == EntrySubjectType.WORK.value:
+            return entry.subject_id in active_work_ids and (
+                entry.scope_kind != EntryScope.WORK.value
+                or entry.subject_id == entry.scope_id
+            )
+        if entry.subject_type == EntrySubjectType.CHAPTER.value:
+            subject_work_id = active_chapter_work_ids.get(entry.subject_id or "")
+            return subject_work_id is not None and (
+                entry.scope_kind != EntryScope.WORK.value
+                or subject_work_id == entry.scope_id
+            )
+        if entry.subject_type == EntrySubjectType.CHARACTER.value:
+            return entry.subject_id in active_character_ids and (
+                entry.scope_kind != EntryScope.CHARACTER.value
+                or entry.subject_id == entry.scope_id
+            )
+        if entry.subject_type == EntrySubjectType.WORLD.value:
+            return entry.subject_id in active_world_ids and (
+                entry.scope_kind != EntryScope.WORLD.value
+                or entry.subject_id == entry.scope_id
+            )
+        if entry.subject_type == EntrySubjectType.CHARACTER_PAIR.value:
+            values = (entry.subject_data or {}).get("character_ids")
+            return (
+                isinstance(values, list)
+                and len(values) == 2
+                and all(isinstance(value, str) for value in values)
+                and len(set(values)) == 2
+                and entry.subject_id == "|".join(sorted(values))
+                and all(value in active_character_ids for value in values)
+            )
+        return False
 
     async def _lock_active_owner(self, session: AsyncSession, user_id: str) -> None:
         """Serialize canon lifecycle writes per owner on PostgreSQL.

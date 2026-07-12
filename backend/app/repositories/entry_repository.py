@@ -1,7 +1,9 @@
 """Owner-scoped persistence access for RFC-002 Entries."""
 from __future__ import annotations
 
-from sqlalchemy import select
+import builtins
+
+from sqlalchemy import and_, false, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entry import Entry
@@ -82,4 +84,41 @@ class EntryRepository:
         if entry_type is not None:
             stmt = stmt.where(Entry.type == entry_type)
         stmt = stmt.order_by(Entry.created_at, Entry.id)
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def list_retrieval_candidates(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        scopes: builtins.list[tuple[str, str | None]],
+        statuses: builtins.list[str],
+        entry_types: builtins.list[str] | None,
+        subjects: builtins.list[tuple[str, str]],
+    ) -> builtins.list[Entry]:
+        """Return hard-filtered candidates with ownership at the query root."""
+        scope_predicates = [
+            and_(
+                Entry.scope_kind == scope_kind,
+                Entry.scope_id.is_(None) if scope_id is None else Entry.scope_id == scope_id,
+            )
+            for scope_kind, scope_id in scopes
+        ]
+        stmt = select(Entry).where(
+            Entry.user_id == user_id,
+            or_(*scope_predicates) if scope_predicates else false(),
+            Entry.status.in_(statuses),
+        )
+        if entry_types is not None:
+            stmt = stmt.where(Entry.type.in_(entry_types))
+        if subjects:
+            stmt = stmt.where(
+                or_(
+                    *(
+                        and_(Entry.subject_type == subject_type, Entry.subject_id == subject_id)
+                        for subject_type, subject_id in subjects
+                    )
+                )
+            )
+        stmt = stmt.order_by(Entry.id)
         return list((await session.execute(stmt)).scalars().all())
