@@ -40,6 +40,7 @@ class PromptBlock:
     priority: int
     token_count: int = 0
     truncatable: bool = True
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
