@@ -96,7 +96,12 @@ class EntryRepository:
         entry_types: builtins.list[str] | None,
         subjects: builtins.list[tuple[str, str]],
     ) -> builtins.list[Entry]:
-        """Return hard-filtered candidates with ownership at the query root."""
+        """Return owner-rooted candidates for ``EntryService.retrieve()`` only.
+
+        The service layer still excludes orphaned and soft-deleted scope or
+        subject anchors before ranking. Callers must not treat this repository
+        method's rows as complete retrieval results or bypass the service.
+        """
         scope_predicates = [
             and_(
                 Entry.scope_kind == scope_kind,

@@ -148,7 +148,7 @@ class EntryService:
             session, request.user_id, candidates
         )
         ranked = rank_entries(candidates, request)
-        selected, budget_rejected = select_entries(ranked, request)
+        selected, budget_rejected, limit_rejected = select_entries(ranked, request)
         return EntryRetrievalResult(
             items=selected,
             total_estimated_tokens=sum(item.estimated_tokens for item in selected),
@@ -157,6 +157,7 @@ class EntryService:
             trace=EntryRetrievalTrace(
                 excluded_orphaned_entry_ids=orphaned_ids,
                 budget_rejected_entry_ids=budget_rejected,
+                limit_rejected_entry_ids=limit_rejected,
             ),
         )
 

@@ -20,6 +20,7 @@ from app.schemas.entry import (
 RETRIEVAL_POLICY_VERSION = "entry-keyword-v1"
 NEUTRAL_CONFIDENCE = 0.5
 HUMAN_AUTHORITY_WEIGHT = 0.31
+CONFIDENCE_FACTOR_MULTIPLIER = 0.6
 
 _STATUS_WEIGHT = {
     "canon": 0.25,
@@ -117,7 +118,10 @@ def _capture_method(entry: Entry) -> str | None:
 def _confidence_factor(entry: Entry) -> tuple[float, float]:
     if _capture_method(entry) != "ai-extracted" or entry.confidence is None:
         return 0.0, NEUTRAL_CONFIDENCE
-    return (entry.confidence - NEUTRAL_CONFIDENCE) * 0.6, entry.confidence
+    return (
+        (entry.confidence - NEUTRAL_CONFIDENCE) * CONFIDENCE_FACTOR_MULTIPLIER,
+        entry.confidence,
+    )
 
 
 def _authority_factor(entry: Entry) -> float:
@@ -228,17 +232,21 @@ def rank_entries(
 
 def select_entries(
     ranked: list[RankedEntry], request: EntryRetrieveRequest
-) -> tuple[list[EntryRetrievalItem], list[str]]:
+) -> tuple[list[EntryRetrievalItem], list[str], list[str]]:
     selected: list[EntryRetrievalItem] = []
     budget_rejected: list[str] = []
+    limit_rejected: list[str] = []
     used = 0
-    for candidate in ranked:
+    for index, candidate in enumerate(ranked):
         if len(selected) >= request.limit:
+            limit_rejected.extend(
+                remaining.item.entry.id for remaining in ranked[index:]
+            )
             break
         item = candidate.item
-        if request.budget is not None and used + item.estimated_tokens > request.budget:
+        if used + item.estimated_tokens > request.budget:
             budget_rejected.append(item.entry.id)
             continue
         selected.append(item)
         used += item.estimated_tokens
-    return selected, budget_rejected
+    return selected, budget_rejected, limit_rejected

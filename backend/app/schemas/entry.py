@@ -280,14 +280,22 @@ class EntrySubjectFilter(BaseModel):
 
 
 class EntryRetrieveRequest(BaseModel):
-    """Owner-authorized Store retrieval situation (RFC-003)."""
+    """Internal owner-authorized Store retrieval situation (RFC-003).
 
-    user_id: str = Field(min_length=1)
+    ``user_id`` is required by the service contract. An HTTP/API adapter must
+    inject it from the authenticated context rather than accept it from a
+    request body.
+    """
+
+    user_id: str = Field(
+        min_length=1,
+        description="Authenticated owner injected by the calling boundary",
+    )
     scopes: list[EntryScopeSelector] = Field(min_length=1)
     cast: list[str] = Field(default_factory=list)
     location: str | None = None
     beat: str | None = None
-    budget: int | None = Field(default=None, ge=1)
+    budget: int = Field(ge=1)
     entry_types: list[EntryType] | None = Field(default=None, min_length=1)
     subject_filters: list[EntrySubjectFilter] = Field(default_factory=list)
     status_filters: list[EntryStatus] | None = Field(default=None, min_length=1)
@@ -322,12 +330,13 @@ class EntryRetrievalItem(BaseModel):
 class EntryRetrievalTrace(BaseModel):
     excluded_orphaned_entry_ids: list[str] = Field(default_factory=list)
     budget_rejected_entry_ids: list[str] = Field(default_factory=list)
+    limit_rejected_entry_ids: list[str] = Field(default_factory=list)
 
 
 class EntryRetrievalResult(BaseModel):
     items: list[EntryRetrievalItem]
     total_estimated_tokens: int
-    requested_budget: int | None
+    requested_budget: int
     policy_version: str
     truncated: bool = False
     trace: EntryRetrievalTrace
