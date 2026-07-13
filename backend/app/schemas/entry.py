@@ -227,3 +227,116 @@ class EntryRead(TimestampedOut):
     accepted_at: datetime | None
     rejected_at: datetime | None
     superseded_at: datetime | None
+
+
+class EntryRetrievalTaskKind(StrEnum):
+    GENERAL = "general"
+    SCENE = "scene"
+    CONTINUITY = "continuity"
+    VOICE = "voice"
+    DIALOGUE = "dialogue"
+    CHAT = "chat"
+
+
+class EntryScopeSelector(BaseModel):
+    scope_kind: EntryScope
+    scope_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> Self:
+        if self.scope_kind in {EntryScope.USER, EntryScope.CHAT_PRIVATE}:
+            if self.scope_id is not None:
+                raise ValueError(f"{self.scope_kind.value} scope cannot have scope_id")
+        elif not self.scope_id:
+            raise ValueError(f"{self.scope_kind.value} scope requires scope_id")
+        return self
+
+
+class EntrySubjectFilter(BaseModel):
+    subject_type: EntrySubjectType
+    subject_id: str | None = None
+    character_ids: list[str] = Field(default_factory=list, min_length=0, max_length=2)
+
+    @model_validator(mode="after")
+    def validate_subject(self) -> Self:
+        if self.subject_type is EntrySubjectType.CHARACTER_PAIR:
+            if len(self.character_ids) != 2 or len(set(self.character_ids)) != 2:
+                raise ValueError("character-pair filter requires two distinct character_ids")
+            if self.subject_id is not None:
+                raise ValueError("character-pair filter derives subject_id from character_ids")
+            self.character_ids = sorted(self.character_ids)
+        elif not self.subject_id:
+            raise ValueError(f"{self.subject_type.value} filter requires subject_id")
+        elif self.character_ids:
+            raise ValueError("character_ids are only valid for character-pair filters")
+        return self
+
+    @property
+    def persisted_subject_id(self) -> str:
+        if self.subject_type is EntrySubjectType.CHARACTER_PAIR:
+            return "|".join(self.character_ids)
+        assert self.subject_id is not None
+        return self.subject_id
+
+
+class EntryRetrieveRequest(BaseModel):
+    """Internal owner-authorized Store retrieval situation (RFC-003).
+
+    ``user_id`` is required by the service contract. An HTTP/API adapter must
+    inject it from the authenticated context rather than accept it from a
+    request body.
+    """
+
+    user_id: str = Field(
+        min_length=1,
+        description="Authenticated owner injected by the calling boundary",
+    )
+    scopes: list[EntryScopeSelector] = Field(min_length=1)
+    cast: list[str] = Field(default_factory=list)
+    location: str | None = None
+    beat: str | None = None
+    budget: int = Field(ge=1)
+    entry_types: list[EntryType] | None = Field(default=None, min_length=1)
+    subject_filters: list[EntrySubjectFilter] = Field(default_factory=list)
+    status_filters: list[EntryStatus] | None = Field(default=None, min_length=1)
+    include_superseded: bool = False
+    include_rejected: bool = False
+    task_kind: EntryRetrievalTaskKind = EntryRetrievalTaskKind.GENERAL
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class EntryRetrievalScore(BaseModel):
+    keyword: float
+    identity: float
+    type_weight: float
+    status: float
+    recency: float
+    priority: float
+    confidence: float
+    authority: float
+    exemplar: float
+
+
+class EntryRetrievalItem(BaseModel):
+    entry: EntryRead
+    score: float
+    matched_terms: list[str]
+    score_breakdown: EntryRetrievalScore
+    reason: list[str]
+    estimated_tokens: int
+    truncated: bool = False
+
+
+class EntryRetrievalTrace(BaseModel):
+    excluded_orphaned_entry_ids: list[str] = Field(default_factory=list)
+    budget_rejected_entry_ids: list[str] = Field(default_factory=list)
+    limit_rejected_entry_ids: list[str] = Field(default_factory=list)
+
+
+class EntryRetrievalResult(BaseModel):
+    items: list[EntryRetrievalItem]
+    total_estimated_tokens: int
+    requested_budget: int
+    policy_version: str
+    truncated: bool = False
+    trace: EntryRetrievalTrace
