@@ -260,6 +260,14 @@ The adapter from a selected Entry to a PromptBlock (or equivalent substrate bloc
 
 Retrieval priority and PromptBlock drop priority are related but not identical: retrieval decides which knowledge enters the candidate context; Context Assembly decides how all prompt material fits after system/user/history blocks are included. Context Assembly remains the final authority on the whole-prompt invariant and provider-neutral `messages[]`.
 
+Token accounting has three explicit responsibility boundaries:
+
+1. `retrieve()` estimates Entry `content` only and selects whole Entries within the knowledge budget.
+2. the Entry-to-PromptBlock bridge re-estimates the complete rendered block text, including its compact label, and excludes only whole blocks when its assembly budget is exceeded;
+3. the final PromptEngine/BudgetManager applies the model-context allocation and provider/tokenizer safety margin across every prompt source.
+
+Retrieval exclusions (including orphan, retrieval-budget, and limit rejection) remain in the retrieval trace. Rendered-block budget exclusions are recorded separately as Context Assembly exclusions, so a consumer can identify which stage rejected an Entry without re-running retrieval.
+
 ## 13. Relationships with existing subsystems
 
 ### 13.1 MemoryEngine
