@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import TimestampedOut
 
@@ -205,6 +205,36 @@ class EntryUpdate(BaseModel):
         if not normalized:
             raise ValueError("content must not be blank")
         return normalized
+
+
+class EntryReviewEdit(BaseModel):
+    """Owner-authenticated edits allowed while a Review Card is proposed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=300)
+    content: str | None = Field(default=None, min_length=1)
+    data: dict[str, Any] | None = None
+
+    @field_validator("content")
+    @classmethod
+    def normalize_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("content must not be blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def require_edit(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("at least one editable field is required")
+        if "content" in self.model_fields_set and self.content is None:
+            raise ValueError("content cannot be null")
+        if "data" in self.model_fields_set and self.data is None:
+            raise ValueError("data cannot be null")
+        return self
 
 
 class EntryRead(TimestampedOut):

@@ -1,21 +1,22 @@
 """Owner-safe Entry Store persistence and retrieval boundary (RFC-002/RFC-003).
 
 This service owns validated persistence, lifecycle transitions, atomic
-supersession, and the read-only Store retrieval seam. It does not implement a
-Review Card API or Context Assembly.
+supersession, Review Card transition helpers, and the read-only Store retrieval
+seam. HTTP adaptation and Context Assembly remain separate boundaries.
 """
 from __future__ import annotations
 
 import builtins
 from typing import Any
 
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFound, ValidationAppError
 from app.db.base import utcnow
 from app.models.character import Character
-from app.models.chat import Message
+from app.models.chat import ChatSession, Message
 from app.models.entry import Entry
 from app.models.novel import Chapter, Work
 from app.models.user import User
@@ -23,9 +24,11 @@ from app.models.world import World
 from app.repositories.entry_repository import EntryRepository
 from app.schemas.entry import (
     EntryCreate,
+    EntryProvenance,
     EntryRetrievalResult,
     EntryRetrievalTrace,
     EntryRetrieveRequest,
+    EntryReviewEdit,
     EntryScope,
     EntryStatus,
     EntrySubjectType,
@@ -111,6 +114,63 @@ class EntryService:
             entry_type=entry_type.value if entry_type else None,
         )
 
+    async def list_review_entries(
+        self, session: AsyncSession, user_id: str
+    ) -> builtins.list[Entry]:
+        """Return only the authenticated owner's pending Review Cards."""
+        await self._assert_active_owner(session, user_id)
+        return await self.list(session, user_id, status=EntryStatus.PROPOSED)
+
+    async def get_review_entry(
+        self, session: AsyncSession, user_id: str, entry_id: str
+    ) -> Entry:
+        entry = await self.get(session, user_id, entry_id)
+        self._require_proposed_review(entry)
+        return entry
+
+    async def edit_review_entry(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        entry_id: str,
+        dto: EntryReviewEdit,
+    ) -> Entry:
+        """Edit a proposed Entry without allowing lifecycle or ownership changes."""
+        entry = await self._get_for_update(session, user_id, entry_id)
+        self._require_proposed_review(entry)
+        for field, value in dto.model_dump(exclude_unset=True).items():
+            setattr(entry, field, value)
+        entry.provenance = {
+            **entry.provenance,
+            "capture_method": ProvenanceCaptureMethod.HUMAN_EDITED.value,
+        }
+        await session.commit()
+        await session.refresh(entry)
+        return entry
+
+    async def accept_review_entry(
+        self, session: AsyncSession, user_id: str, entry_id: str
+    ) -> Entry:
+        return await self._transition_status(
+            session,
+            user_id,
+            entry_id,
+            EntryStatus.CANON,
+            require_proposed_review=True,
+            validate_acceptance_anchors=True,
+        )
+
+    async def reject_review_entry(
+        self, session: AsyncSession, user_id: str, entry_id: str
+    ) -> Entry:
+        return await self._transition_status(
+            session,
+            user_id,
+            entry_id,
+            EntryStatus.REJECTED,
+            require_proposed_review=True,
+        )
+
     async def retrieve(
         self, session: AsyncSession, request: EntryRetrieveRequest
     ) -> EntryRetrievalResult:
@@ -168,15 +228,32 @@ class EntryService:
         entry_id: str,
         new_status: EntryStatus,
     ) -> Entry:
+        return await self._transition_status(session, user_id, entry_id, new_status)
+
+    async def _transition_status(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        entry_id: str,
+        new_status: EntryStatus,
+        *,
+        require_proposed_review: bool = False,
+        validate_acceptance_anchors: bool = False,
+    ) -> Entry:
         if new_status is EntryStatus.CANON:
             await self._lock_active_owner(session, user_id)
         entry = await self._get_for_update(session, user_id, entry_id)
+        if require_proposed_review:
+            self._require_proposed_review(entry)
         current = EntryStatus(entry.status)
         if new_status not in ALLOWED_STATUS_TRANSITIONS[current]:
             raise ValidationAppError(
                 "Invalid Entry status transition",
                 {"from": current.value, "to": new_status.value},
             )
+
+        if validate_acceptance_anchors:
+            await self._validate_acceptance_anchors(session, user_id, entry)
 
         if (
             new_status is EntryStatus.CANON
@@ -252,6 +329,91 @@ class EntryService:
         user = await session.get(User, user_id)
         if user is None or not user.is_active:
             raise NotFound("User not found")
+
+    @staticmethod
+    def _require_proposed_review(entry: Entry) -> None:
+        if entry.status != EntryStatus.PROPOSED.value:
+            raise ValidationAppError(
+                "Entry is not proposed for review",
+                {"entry_id": entry.id, "status": entry.status},
+            )
+
+    async def _validate_acceptance_anchors(
+        self, session: AsyncSession, user_id: str, entry: Entry
+    ) -> None:
+        """Recheck persisted owner/liveness anchors immediately before acceptance."""
+        live_entries, _ = await self._exclude_orphaned_candidates(
+            session, user_id, [entry]
+        )
+        if not live_entries:
+            raise ValidationAppError(
+                "Proposed Entry has a missing, inaccessible, or soft-deleted scope/subject anchor",
+                {"entry_id": entry.id},
+            )
+
+        try:
+            provenance = EntryProvenance.model_validate(entry.provenance)
+        except PydanticValidationError as exc:
+            raise ValidationAppError("Proposed Entry has invalid provenance") from exc
+
+        source_kind = provenance.source_kind
+        source_id = provenance.source_id
+        if source_kind is ProvenanceSourceKind.USER:
+            if source_id is not None and source_id != user_id:
+                raise ValidationAppError("Entry provenance no longer belongs to the owner")
+        elif source_kind in {
+            ProvenanceSourceKind.CHAPTER,
+            ProvenanceSourceKind.EDIT_DIFF,
+        }:
+            await self._assert_active_chapter_anchor(
+                session, user_id, source_id, "provenance.source_id"
+            )
+        elif source_kind is ProvenanceSourceKind.CHAT_BOOKMARK:
+            if not isinstance(source_id, str):
+                raise ValidationAppError("provenance.source_id is required")
+            stmt = (
+                select(Message.id)
+                .join(ChatSession, ChatSession.id == Message.chat_session_id)
+                .where(
+                    Message.id == source_id,
+                    Message.user_id == user_id,
+                    ChatSession.user_id == user_id,
+                )
+            )
+            if (await session.execute(stmt)).scalar_one_or_none() is None:
+                raise ValidationAppError(
+                    "provenance.source_id must reference an owned active record"
+                )
+
+        if entry.created_at_chapter_id is not None:
+            await self._assert_active_chapter_anchor(
+                session,
+                user_id,
+                entry.created_at_chapter_id,
+                "created_at_chapter_id",
+            )
+
+    @staticmethod
+    async def _assert_active_chapter_anchor(
+        session: AsyncSession,
+        user_id: str,
+        chapter_id: object,
+        field: str,
+    ) -> None:
+        if not isinstance(chapter_id, str):
+            raise ValidationAppError(f"{field} is required")
+        stmt = (
+            select(Chapter.id)
+            .join(Work, Work.id == Chapter.work_id)
+            .where(
+                Chapter.id == chapter_id,
+                Chapter.user_id == user_id,
+                Work.user_id == user_id,
+                Work.deleted_at.is_(None),
+            )
+        )
+        if (await session.execute(stmt)).scalar_one_or_none() is None:
+            raise ValidationAppError(f"{field} must reference an owned active record")
 
     async def _exclude_orphaned_candidates(
         self, session: AsyncSession, user_id: str, entries: builtins.list[Entry]
