@@ -1,6 +1,9 @@
 # Requirements Document
 # AI Native Creative Workspace (`ai-creative-workspace`)
 
+> **[2026-07-27 상태 고지]** 본 문서는 **Architecture Frozen 이전**의 요구사항 이력이다. `docs/architecture/adr/*` · `docs/architecture/rfc/*`와 충돌하면 **ADR/RFC가 우선**한다. 현재 구현 상태는 [`implementation-status.md`](./implementation-status.md), 앞으로의 작업 계획은 [`tasks.md`](./tasks.md)를 따른다. 여기 서술된 Story Bible Engine · Reference Intelligence Engine · Planning Engine · per-library 테이블 방향은 폐기되었다(대체: Entry `type` + Analyst facet + Writer stage + 프롬프트 파일).
+
+
 ## Introduction
 
 본 문서는 승인된 기술 설계서(`design.md`)에서 직접 도출된 정식 요구사항 명세다. EARS(Easy Approach to Requirements Syntax) 표기를 사용하며, 모든 요구사항은 고유 식별자를 가진다. 각 요구사항은 설계 문서의 Phase·불변식(INV)·정확성 속성(Property)과 추적성을 유지한다.
