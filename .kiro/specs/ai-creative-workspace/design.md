@@ -1,6 +1,9 @@
 ﻿# 기술 설계 문서 (PRD + Technical Design Document)
 # AI Native Creative Workspace (`ai-creative-workspace`)
 
+> **[2026-07-27 상태 고지]** 본 문서는 **Architecture Frozen 이전**의 설계 이력이며, substrate(FastAPI·Next.js·PromptEngine·MemoryEngine·어댑터·인증·PWA) 부분은 여전히 유효하다. 그러나 창작 아키텍처는 ADR-001~020 / RFC-001~012로 대체되었다. 충돌 시 **ADR/RFC가 우선**한다. 현재 구현 상태는 [`implementation-status.md`](./implementation-status.md), 작업 계획은 [`tasks.md`](./tasks.md)를 따른다. 폐기된 방향: Story Bible Engine · Reference Intelligence Engine · Planning Engine · per-library knowledge 테이블 · DB 저장 creative prompt body.
+
+
 > **문서 목적**: 본 문서는 Cursor / Codex / Claude Code 등 AI 코딩 에이전트가 **추가 질의 없이 곧바로 구현을 시작할 수 있는 수준**의 상세 기술 설계서입니다. 추상적 서술을 지양하고, 다이어그램·인터페이스·시그니처·스키마 중심으로 작성합니다.
 >
 > **중요**: 본 문서는 *설계 문서*입니다. 실제 프로덕션 코드는 작성하지 않으며, 저수준 설계를 위한 의사코드/시그니처/인터페이스/타입 정의만 포함합니다.

@@ -1,290 +1,369 @@
-# Implementation Plan: AI Native Creative Workspace
+# Implementation Plan: AI Native Creative Workspace (Architecture Frozen 기준 재확정)
 
-## Overview
+- **재확정 시각:** 2026-07-27 · **기준 커밋:** `bdc2cfb` (로컬 `main` == `origin/main`)
+- **상태 근거 문서:** [`implementation-status.md`](./implementation-status.md) — 파일 존재가 아닌 *실행 코드 경로 · API 노출 · 통과 테스트*로 판정한 검증 스냅샷.
+- **단일 진실 공급원(우선순위):** `docs/architecture/adr/*` → `docs/architecture/rfc/RFC-001` → `RFC-002…RFC-012` → `docs/architecture/README.md` → **본 문서** → (참고 이력) `design.md` · `requirements.md`.
 
-본 문서는 승인된 `design.md`와 `requirements.md`에서 도출된 구현 로드맵이다. 마일스톤은 design Phase 16(M0~M7)을 기반으로 하며, 각 마일스톤은 **완료 후에도 애플리케이션이 실행 가능**하도록 점진적으로 누적된다. 모든 작업은 design의 레이어 경계(Router→Service→Engine→Adapter/Repository→Model, 단방향)를 준수한다. 프로덕션 코드는 생성하지 않는다.
+> **이 문서의 위상 변경.** 이전 판(구 M0~M7 계획)은 substrate 구축 계획이었고 대부분 달성되었다. Architecture Frozen(ADR-001~020, RFC-001~012) 이후에는 **구 계획의 미체크 박스를 그대로 따르면 중복 구현·아키텍처 위반이 발생한다.** 구 계획의 검증된 상태는 §1에 보존하고, 앞으로의 작업은 §3의 Architecture Phase 1~6을 따른다. 구 `design.md`와 ADR/RFC가 충돌하면 **ADR/RFC가 이긴다.**
 
-**구현 순서 원칙**
-- 리팩터링 최소화: 스키마·인터페이스를 처음부터 확장 가능하게 정의(전 테이블 `user_id`, Protocol/Registry).
-- 점진적 진행: 각 마일스톤 종료 시 데모 가능한 기능 추가.
-- 항상 실행 가능: M0부터 `docker compose up`으로 기동, 이후 기능만 누적.
-- 경계 준수: 하위 레이어는 상위를 import 하지 않음, Engine은 Protocol에만 의존.
+## 불변식 (모든 작업이 지켜야 함)
 
-### 개발 우선순위 (Development Priority)
-
-| 우선 | 마일스톤 | 사유 |
-|------|----------|------|
-| P0 | M0 기반 | 모든 것의 전제(스키마·앱 팩토리·DI·마이그레이션) |
-| P0 | M1 코어 CRUD | 채팅/소설의 데이터 토대 |
-| P0 | M2 채팅 MVP | 제품 핵심 가치 1 (스트리밍 대화) |
-| P1 | M3 기억 | 장편 지속성(차별점) |
-| P1 | M4 소설 | 제품 핵심 가치 2 (이어쓰기) |
-| P1 | M5 멀티공급자 | No Vendor Lock-in |
-| P2 | M6 인증·배포 | 공유 가능·프로덕션화 |
-| P2 | M7 견고화 | 품질·속성 테스트·관측 |
-
-## Tasks
-
-## 마일스톤 M0 — 기반 (Foundation)
-
-- **Goal:** 모노레포·DB 스키마·앱 팩토리·DI·마이그레이션·헬스체크가 동작하는 실행 가능한 골격.
-- **Scope:** design Phase 4(스키마), 5(폴더), 8.1/8.4/8.10(앱 팩토리·DI·설정), 14.2(default-user).
-- **Dependencies:** 없음.
-- **Deliverables:** `docker compose up`으로 기동되는 빈 FastAPI + Next.js, Alembic 초기 마이그레이션, `/healthz`/`/readyz`.
-- **Estimated Complexity:** M (중).
-- **Testing Requirements:** 마이그레이션 up/down 무손실, 헬스체크 200, 설정 로딩 단위 테스트.
-- **Definition of Done:** 깨끗한 환경에서 단일 명령 기동, 헬스체크 통과, ORM 모델↔ERD(Phase 4) 1:1 일치, `user_id` 스코프·`ON DELETE` 정책·부분 유니크 제약 반영.
-
-### Tasks
-- [ ] 0.1 모노레포 스캐폴딩(`frontend/`, `backend/`, `docker-compose.yml`, `.env.example`). _Req: CON-1, NFR-3_
-- [ ] 0.2 백엔드 의존성·`pyproject.toml`·`app/main.py` 앱 팩토리 + lifespan(엔진/레지스트리/스토리지/잡큐 초기화). _Req: design 8.1_
-- [ ] 0.3 `app/config.py` Pydantic Settings(`DATABASE_URL`·`AUTH_ENABLED`·`APP_SECRET_KEY`·CORS·플래그). _Req: CON-3, CON-7_
-- [ ] 0.4 `db/base.py` BaseMixin(UUID PK, timestamps), `db/session.py` async 엔진/세션 팩토리, SQLite WAL+`foreign_keys=ON` pragma. _Req: CON-2, CON-4_
-- [ ] 0.5 ORM 모델 전체 정의(`models/*`)와 ERD 일치: User/OAuthAccount/World/Lorebook/LoreEntry/GlossaryTerm/Character/Persona/ChatSession/Message/Memory/Work/Chapter/WorkCharacter/ModelConfig/PromptTemplate/ProviderCredential. 비정규화 `user_id`(messages/memories/chapters), `parent_message_id`/`is_active`/`status`, `content_doc`/`content_text`/`version`, 부분 유니크(`is_default`). _Req: BR-2, BR-3, AC-NOVEL-4_
-- [ ] 0.6 Alembic 초기 마이그레이션 + 명시적 `ON DELETE`(CASCADE/SET NULL) 정책. _Req: ERR-5, design 4.7_
-- [ ] 0.7 `default-user` 멱등 시드(데이터 마이그레이션/startup). _Req: AC-AUTH-2_
-- [ ] 0.8 미들웨어 스택(CORS·RequestId·Logging·AuthContext) + 예외 핸들러(6.1 코드 매핑) + `/healthz`·`/readyz`. _Req: ERR-1, ERR-2_
-- [ ] 0.9 프론트엔드 Next.js App Router + Tailwind + shadcn/ui + PWA manifest 골격, API 클라이언트(`lib/api/client.ts`). _Req: CON-1, MOB-3_
-- [ ] 0.10 `docker-compose.yml`(proxy/frontend/backend/volume) + entrypoint `alembic upgrade head` + `--workers 1`. _Req: NFR-3, CON-4_
+1. **Store → Analyst → Writer + Bench** 3동사 + 1정직성 장치. 새 "엔진"을 만들지 않는다.
+2. **Everything is Entry.** 새 지식 종류 = 새 `type` 문자열. **도메인별 신규 knowledge 테이블 금지.**
+3. **Character DNA ≠ Relationship ≠ Story Event.** 정체성/관계/사건은 분리된 집으로 남는다.
+4. **Relationship = Shared Narrative State.** 어느 캐릭터의 DNA도, Writer의 소유도 아니다.
+5. **Story Bible = Entry Store의 work-scoped canonical view.** **별도 Bible 스토어/테이블을 만들지 않는다.**
+6. **AI는 canon을 직접 수정하지 않는다.** 모든 AI-inferred canon 변경은 **Review Card gate**를 통과한다.
+7. **Retrieval(선택)과 Context Assembly(구성)는 분리**된다. retrieval은 messages[]를 만들지 않는다.
+8. **Prompt body는 저장소의 versioned file asset.** DB에 프롬프트 body를 저장하지 않는다(사용자는 *입력*만 커스터마이즈).
+9. **Bench는 개발자 전용** 회귀 도구다. 사용자 출력을 게이팅하지 않는다.
+10. **Character Chat은 독립 제품**이며 Writer 하위 기능이 아니다.
+11. **chat-private `Memory`와 공유 Entry Store를 합치지 않는다.** 두 결과는 Context Assembly에서 별도 블록으로만 만난다.
+12. **파괴적 마이그레이션 금지.** frozen `0001` 수정 금지, 기존 기능/데이터 제거 금지. 새 구조는 항상 **additive**.
+13. **기존 substrate를 재작성하지 않는다.** PromptEngine·MemoryEngine·NovelEngine·어댑터·인증·PWA는 새 Architecture가 감싸거나 흡수한다.
 
 ---
 
-## 마일스톤 M1 — 코어 CRUD (Core CRUD)
+## 1. 구 M0~M7 계획 — 검증된 최종 상태 (아카이브)
 
-- **Goal:** 세계관·캐릭터·페르소나·작품·로어·용어집 CRUD를 UI까지 제공.
-- **Scope:** Repository/Service/Schema/Router(Phase 6), 프론트 목록·폼·상세(Phase 7), 소프트 삭제·전파(4.7).
-- **Dependencies:** M0.
-- **Deliverables:** 캐릭터/세계관/소설/페르소나 생성·편집·삭제 UI 흐름, 태그/세계관 필터, 커서 페이지네이션.
-- **Estimated Complexity:** L (대).
-- **Testing Requirements:** Repository `_scoped` 단위 테스트(Property 1), 소유권 일치(Property 2), CRUD 통합 테스트, 소프트 삭제 전파 테스트.
-- **Definition of Done:** 모든 코어 엔티티 CRUD 동작, 소유권 격리 검증, 빈 상태/로딩/에러 UX 구현, 3-Tap Rule 충족.
+`[x]` 완료 · `[~]` 부분 완료 · `[ ]` 미구현. 상세 근거는 `implementation-status.md` §5.
 
-### Tasks
-- [ ] 1.1 `repositories/base.py` BaseRepository[T](CRUD, `_scoped`, `_active`, 커서 페이지네이션). _Req: PERF-4, SEC-7_
-- [ ] 1.2 World/Character/Novel 리포지토리 + `selectinload` 적재 정책. _Req: PERF-5_
-- [ ] 1.3 Pydantic 스키마(`schemas/*`) 요청/응답 DTO + 검증(경계). _Req: ERR-2, AC-CHAR-1_
-- [ ] 1.4 WorldService(로어북/로어/용어집 추가) + 트랜잭션 경계. _Req: AC-WORLD-1~5_
-- [ ] 1.5 CharacterService(생성/수정/소프트삭제, INV-2 검증). _Req: AC-CHAR-2/4/5, Property 2_
-- [ ] 1.6 PersonaService + NovelService(작품/챕터 CRUD, `index` 유일성, reorder). _Req: AC-NOVEL-1/4/5, Property 3_
-- [ ] 1.7 라우터(`api/v1/worlds|characters|personas|novels`) + `get_current_user`/`get_db` 의존성. _Req: 6.2_
-- [ ] 1.8 프론트: AppShell(반응형 셸·사이드바·하단 탭바), 공통 컴포넌트(EntityCard/Fab/FormField/AdvancedDisclosure/EmptyState/ListSkeleton/ConfirmDialog/ToastUndo). _Req: MOB-1/2, A11Y-1_
-- [ ] 1.9 프론트: 캐릭터/세계관/소설/페르소나 목록·폼·상세 화면 + TanStack Query 훅. _Req: AC-CHAR-6, MOB-4/5_
-- [ ] 1.10 소프트 삭제 전파(작품→챕터, 세계관→로어/world_id 해제). _Req: AC-WORLD-5, AC-CHAR-5_
+- [x] **M0 기반** — 앱 팩토리+lifespan, 설정, DB 세션/베이스, ORM 전량, `0001_initial`, `/healthz`·`/readyz`, 미들웨어, compose, Next.js+PWA 골격.
+- [x] **M1 코어 CRUD** — BaseRepository(`_scoped`/`_active`/커서), World/Character/Persona/Work/Chapter 서비스·라우터·스키마, 프론트 CRUD 화면, 소프트 삭제 전파.
+- [~] **M2 채팅 MVP** — PromptEngine·어댑터·ChatEngine·SSE ChatService·멱등·마스킹·프론트 완료. **잔여: 2.2 Prompt Cache(LRU, memory.version).**
+- [~] **M3 기억** — JobQueue·공유 Summarizer·MemoryEngine·memory 블록 연결 완료. **잔여: 3.6 누적 압축 상한(메타 요약), 3.7 프론트 비차단 배지.**
+- [x] **M4 소설 이어쓰기** — single-pass 이어쓰기 SSE·version CAS·TipTap·위저드. ※ 이는 **Writer(RFC-004) 완료가 아니다** → §3.3.
+- [x] **M5 멀티 공급자** — Anthropic/Gemini/Ollama + 재시도·폴백 + capability.
+- [~] **M6 인증·배포** — OAuth/JWT/로컬 모드/컨테이너/PWA 완료. **잔여: refresh 회전·denylist, Lighthouse 실측.**
+- [~] **M7 견고화** — 구조화 로깅·SSE 통합·CI·Property(예산) 완료. **잔여: 7.4 JSON Export, 속성 테스트 커버리지 확대.**
 
----
+### 1.1 구 계획 중 **폐기된** 방향 (다시 착수하지 말 것)
 
-## 마일스톤 M2 — 채팅 MVP (Streaming Chat)
+| 구 계획/폐기 노선 | 폐기 근거 | 대체 경로 |
+|---|---|---|
+| Story Bible **Engine** / 별도 bible 테이블 (`0002_story_bible`) | ADR-004, RFC-005 | Entry Store의 work-scoped canonical **view** (§3.4) |
+| Reference Intelligence **Engine** (`engines/reference/*`, `models/reference.py`, `0003_reference`) | ADR-002 §4-B, ADR-008, RFC-008 | **단일 Analyst** + facet 프롬프트 (§3.2) |
+| Planning **Engine** (`engines/planning/*`, `models/planning.py`) | ADR-002, ADR-005 | Writer의 **plan stage** + 프롬프트 파일 (§3.3) |
+| per-library 테이블(dialogue/emotion/plot 라이브러리 등) | ADR-003 §2·§4-B | Entry `type` 문자열 추가 |
+| DB `PromptTemplate`에 creative prompt body 저장 확대 | ADR-013 | 저장소 prompt asset (§3.1 P1-3/P1-4) |
 
-- **Goal:** 캐릭터와의 SSE 스트리밍 대화. PromptEngine 최소 + OpenAI-compatible Adapter.
-- **Scope:** Phase 9(Prompt 핵심), 13(OpenAICompat), 8.5.2/8.7(SSE·트랜잭션), 12(ChatEngine), 7.7.11(채팅 UI).
-- **Dependencies:** M1.
-- **Deliverables:** 채팅방 진입→첫인사→메시지 전송→토큰 스트리밍→메시지 확정, 재생성, 중단.
-- **Estimated Complexity:** L (대).
-- **Testing Requirements:** PromptEngine 예산 속성 테스트(Property 7), fake provider SSE 통합 테스트(token/done/error 순서), 단일 저장(Property 4), 멱등 전송.
-- **Definition of Done:** TTFB 오버헤드 < 200ms(로컬 fake), 사용자 메시지 선저장, AI 메시지 정확히 1회 저장, 재생성이 새 행 생성, SSE 단절 시 부분 보존.
+> 위 폐기 노선의 실제 코드가 `stash@{1}`(브랜치 `codex/new`)에 5,081줄 남아 있다. **병합 금지.** 이력 참고용으로만 둔다.
 
-### Tasks
-- [ ] 2.1 `engines/prompt/`(blocks·budget·tokenizer·engine) 조립 파이프라인(collect→resolve→inject→fit→finalize), 예산 계산(safety_ratio 차등), user/system 보호. _Req: AC-PROMPT-1~6, Property 6/7_
-- [ ] 2.2 `engines/prompt` LoreScanner(history 기반 키워드 매칭) + Prompt Cache(LRU, memory.version). _Req: AC-WORLD-3, PERF-8_
-- [ ] 2.3 `adapters/base.py` LLMProvider Protocol + `ModelCapability`, `adapters/registry.py` ProviderRegistry. _Req: AC-AI-1, FUT-4_
-- [ ] 2.4 `adapters/openai_compat.py` 스트림/비스트림 + wire→중립 정규화 + 에러 매핑(429/5xx→6.1). _Req: AC-AI-3, ERR-2_
-- [ ] 2.5 `engines/chat/engine.py`(assemble_turn·stream·regenerate). _Req: AC-CHAT-1/4_
-- [ ] 2.6 ChatService SSE(T1 사용자 메시지 선저장→T3 AI 메시지 1회 저장→T4 요약 enqueue 자리), 단일 저장 가드(committed/idempotency). _Req: AC-CHAT-2/3, ERR-3/4, Property 4/9_
-- [ ] 2.7 채팅 라우터(`POST /chats/{id}/messages` SSE, `/regenerate`, `before` 페이지네이션, `Idempotency-Key`). _Req: AC-CHAT-7, 6.5_
-- [ ] 2.8 세션 단위 직렬화(인메모리 lock, MVP 단일 워커). _Req: AC-CHAT-6_
-- [ ] 2.9 ModelConfig/Credential/PromptTemplate CRUD + capability 정합 검증 + 마스킹 응답. _Req: AC-AI-5/6, SEC-1/2/3, Property 8_
-- [ ] 2.10 프론트: 채팅방(MessageBubble/StreamingBubble/ChatComposer), SSE 파서(`lib/api/sse.ts`) 누적·done·error·부분 보존, 중단 버튼. _Req: ERR-6, A11Y-3/8_
-- [ ] 2.11 프론트: 설정 화면(모델·API Key 마스킹·기본 모델 지정, 고급 토글). _Req: MOB-5, SEC-2_
+### 1.2 계승되는 것
+
+- 회귀 체크리스트 **R1~R12**(구 §Notes)는 계속 유효하며, 아래 각 작업의 "회귀 테스트" 항목에서 참조한다.
+- Property 1~9 속성 테스트 목록도 계속 유효하다.
 
 ---
 
-## 마일스톤 M3 — 기억 (Memory Engine)
-
-- **Goal:** 토큰 임계 초과 시 롤링 요약으로 장기 기억 유지, 컨텍스트 주입.
-- **Scope:** Phase 10(Memory), 8.8(JobQueue inproc), 공유 Summarizer.
-- **Dependencies:** M2.
-- **Deliverables:** 자동 백그라운드 요약, 키워드 검색·랭킹·예산 선택, 강제 요약 API.
-- **Estimated Complexity:** M (중).
-- **Testing Requirements:** needs_summary 임계 단위 테스트, `cover_up_to_message_id` 유효/단조 속성(Property 5), 요약 실패 시 대화 무영향, 멱등키 중복 방지.
-- **Definition of Done:** 임계 초과 시 요약 생성·주입, 요약이 응답을 차단하지 않음, 요약 실패가 대화 플로우를 깨지 않음.
-
-### Tasks
-- [ ] 3.1 `core/jobs.py` JobQueue Protocol + InProcessJobQueue(멱등키·재시도·drain). _Req: BR-6, AC-MEM-4_
-- [ ] 3.2 `engines/shared/summarizer.py` 공유 Summarizer(요약 프롬프트 구성, 요약 전용 ModelConfig 우선). _Req: AC-MEM-5, CON-6_
-- [ ] 3.3 `engines/memory/`(engine·retriever[Keyword]·ranker) build_memory_context·needs_summary·maybe_summarize·rank. _Req: AC-MEM-1/2, Property 5_
-- [ ] 3.4 메모리 컨텍스트를 PromptEngine memory 블록으로 연결(version 기반 캐시 무효화). _Req: PERF-8_
-- [ ] 3.5 ChatService 요약 트리거(T4 enqueue) + `POST /chats/{id}/summarize`. _Req: AC-MEM-6_
-- [ ] 3.6 누적 압축 상한(메타 요약) 정책. _Req: design 10.7_
-- [ ] 3.7 프론트: "기억 정리 중" 비차단 토스트/배지. _Req: ERR-6_
-
----
-
-## 마일스톤 M4 — 소설 이어쓰기 (Novel Engine)
-
-- **Goal:** 이전 챕터 요약·로어·등장인물 컨텍스트로 SSE 이어쓰기, 챕터 자동 요약 환류.
-- **Scope:** Phase 11(Novel), TipTap 에디터, 동시성(version).
-- **Dependencies:** M2, M3(공유 Summarizer).
-- **Deliverables:** 챕터 에디터(이어쓰기/중단), 자동저장, 챕터 요약 환류, reorder.
-- **Estimated Complexity:** L (대).
-- **Testing Requirements:** build_story_context 구성 단위 테스트, index 유일성 속성(Property 3), 조립 예산(Property 7), SSE 단절 부분 보존, 낙관적 동시성 409.
-- **Definition of Done:** 이어쓰기 스트리밍·중단·부분 보존, content_doc/content_text 동기, 자동저장 vs 이어쓰기 경합 해결, 챕터 요약 후속 컨텍스트 반영.
-
-### Tasks
-- [ ] 4.1 `engines/novel/engine.py`(build_story_context·continue_chapter·summarize_chapter, Summarizer 주입). _Req: AC-NOVEL-3/6, CON-6_
-- [ ] 4.2 PromptEngine Chapter Injection(prior_summaries·캐릭터·세계관·로어) + target_words→max_tokens clamp(CJK soft target). _Req: AC-NOVEL-3_
-- [ ] 4.3 NovelService 이어쓰기 SSE(T1 로드→스트림→T3 content append·version CAS→백그라운드 요약). _Req: AC-NOVEL-6/7, ERR-3_
-- [ ] 4.4 라우터 `POST /chapters/{id}/continue`(SSE), `PATCH /chapters/{id}`(If-Match version), `:reorder`. _Req: AC-NOVEL-5/7_
-- [ ] 4.5 프론트: TipTapEditor + StreamingInsertion + ContinueWriteBar + 자동저장(version) + 챕터 Sheet/사이드패널. _Req: ERR-6, MOB-1_
-- [ ] 4.6 소설 생성 Wizard(Step1~3) + 작품 상세·챕터 목록. _Req: AC-NOVEL-1/2_
-
----
-
-## 마일스톤 M5 — 멀티 공급자 (Multi-Provider)
-
-- **Goal:** Anthropic/Gemini/Ollama 어댑터로 No Vendor Lock-in 실현 + 폴백.
-- **Scope:** Phase 13(어댑터·정규화·재시도/폴백·capability).
-- **Dependencies:** M2.
-- **Deliverables:** 4종+ 공급자 런타임 교체, system 처리 차등(message/param/instruction), 폴백 체인(옵션), `GET /providers`.
-- **Estimated Complexity:** M (중).
-- **Testing Requirements:** 어댑터별 wire→정규화 픽스처 테스트, 청크 분할 결합성 속성, 에러 매핑, 폴백 경로 통합 테스트.
-- **Definition of Done:** 설정 변경만으로 공급자 전환, 모든 공급자 SSE 정규화 일치, 폴백 동작(설정 시), capability 정합 검증.
-
-### Tasks
-- [ ] 5.1 `adapters/anthropic.py`(system 파라미터 분리, content_block_delta 정규화). _Req: AC-AI-1/3_
-- [ ] 5.2 `adapters/gemini.py`(systemInstruction/contents 매핑). _Req: AC-AI-1/3_
-- [ ] 5.3 `adapters/ollama.py`(OpenAICompat 재사용, 로컬 base_url, 오프라인). _Req: NFR-8_
-- [ ] 5.4 재시도/백오프 + 선택적 폴백 체인(스트림 시작 전 한정). _Req: AC-AI-4_
-- [ ] 5.5 PromptEngine 중립 구조 ↔ Adapter system 렌더 차등 검증. _Req: AC-PROMPT-5_
-- [ ] 5.6 `GET /providers` capability 메타 + 프론트 모델 선택 연동. _Req: AC-AI-6_
-
----
-
-## 마일스톤 M6 — 인증·배포 (Auth & Deployment)
-
-- **Goal:** Google OAuth + 로컬 모드 토글, 프로덕션 배포·PWA 마감.
-- **Scope:** Phase 14(Auth), 15(Deployment), NFR-5(PWA).
-- **Dependencies:** M1+ (인증 가드는 전 라우터 적용).
-- **Deliverables:** OAuth 로그인/로그아웃/me, 로컬 모드, Docker Compose 프로덕션 프로파일, 백업 가이드.
-- **Estimated Complexity:** M (중).
-- **Testing Requirements:** JWT 발급/검증/만료 단위 테스트, fake OAuth login→callback→me→logout 통합, Property 8 마스킹, 로컬 모드 default-user 주입.
-- **Definition of Done:** `AUTH_ENABLED` 토글 동작, PKCE/state/id_token 검증, TLS·단일워커 배포 문서화, Lighthouse PWA ≥ 90.
-
-### Tasks
-- [ ] 6.1 `auth/jwt.py`(access 발급/검증, refresh 회전, denylist). _Req: AC-AUTH-4_
-- [ ] 6.2 `auth/oauth.py` + `auth/providers/google.py`(PKCE·state·id_token 검증, OAuthProvider Protocol). _Req: AC-AUTH-1/5, SEC-4_
-- [ ] 6.3 `auth/router.py`(`/auth/{provider}/login|callback`, `/logout`, `/me`) + 토큰 암호화 저장. _Req: AC-AUTH-6, SEC-1_
-- [ ] 6.4 `get_current_user` 인증/로컬 모드 분기 + 전 라우터 가드. _Req: AC-AUTH-2/3, SEC-7_
-- [ ] 6.5 프론트: 로그인 화면(Google/로컬 모드), 토큰 관리, 401 리다이렉트. _Req: ERR-6_
-- [ ] 6.6 배포: 프로덕션 compose 프로파일(Caddy TLS, PG 옵션, Ollama profile), 백업/복구 가이드, 헬스체크 와이어링. _Req: NFR-3/8, SEC-6_
-- [ ] 6.7 PWA 마감(Service Worker 캐시·오프라인·아이콘) + Lighthouse 점검. _Req: MOB-3_
-
----
-
-## 마일스톤 M7 — 견고화 (Hardening)
-
-- **Goal:** 품질·속성 테스트·관측·복원력 강화.
-- **Scope:** Phase 8.11(로깅), 8.15(테스트), 속성 1~9, 멱등/부분보존 강화.
-- **Dependencies:** M2~M6.
-- **Deliverables:** Hypothesis 속성 테스트 스위트, 구조화 로깅(request_id·마스킹), 회귀 스위트, JSON Export.
-- **Estimated Complexity:** M (중).
-- **Testing Requirements:** Property 1·3·4·5·7·8 속성 테스트, SSE 단절·재시도 통합, 마이그레이션 무손실, 시크릿 미기록 검증.
-- **Definition of Done:** 전 Property 테스트 통과, 로그에 시크릿 부재, 회귀 체크리스트 통과, JSON Export 동작.
-
-### Tasks
-- [ ] 7.1 Hypothesis 속성 테스트(Property 1·3·4·5·7·8) 인코딩. _Req: 3.6 Properties_
-- [ ] 7.2 구조화 로깅(JSON, request_id, 마스킹 규칙) + 로깅 포인트. _Req: SEC-3_
-- [ ] 7.3 SSE 통합 테스트(token/done/error 순서, 단절 부분 보존) + 멱등 전송/재생성. _Req: Property 9_
-- [ ] 7.4 JSON Export(작품/캐릭터/세계관 논리 백업, StorageBackend). _Req: NFR-6, FUT-6_
-- [ ] 7.5 회귀 스위트 자동화(아래 체크리스트) + CI 통합. _Req: 전체_
-
----
-
-## Task Dependency Graph
-
-### 임계 경로 (Critical Path)
+## 2. Architecture Phase 로드맵
 
 ```
-M0(스키마·앱팩토리·DI)
-  └→ M1(Repository·Service·CRUD API)
-       └→ M2(PromptEngine 최소 + OpenAICompat Adapter + SSE ChatService)
-            ├→ M3(MemoryEngine + 백그라운드 요약)
-            │     └→ M4(NovelEngine 이어쓰기, 요약 공유)
-            └→ M5(추가 어댑터: Anthropic/Gemini/Ollama)
-M6(인증·배포)·M7(견고화)는 M2 이후 부분 병행 가능
-```
-**임계 경로:** M0 → M1 → M2 → M3 → M4. (M5는 M2에만 의존, M4와 병행 가능)
-
-### 마일스톤 의존 관계
-
-| 마일스톤 | 의존 |
-|----------|------|
-| M0 | — |
-| M1 | M0 |
-| M2 | M1 |
-| M3 | M2 |
-| M4 | M2, M3(공유 Summarizer) |
-| M5 | M2 |
-| M6 | M1+ (전 라우터 가드) |
-| M7 | M2~M6 |
-
-### 실행 웨이브 정의 (Execution Waves)
-
-```json
-{
-  "waves": [
-    { "wave": 1, "milestone": "M0", "tasks": ["0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9","0.10"], "depends_on": [] },
-    { "wave": 2, "milestone": "M1", "tasks": ["1.1","1.2","1.3","1.4","1.5","1.6","1.7","1.8","1.9","1.10"], "depends_on": ["M0"] },
-    { "wave": 3, "milestone": "M2", "tasks": ["2.1","2.2","2.3","2.4","2.5","2.6","2.7","2.8","2.9","2.10","2.11"], "depends_on": ["M1"] },
-    { "wave": 4, "milestone": "M3", "tasks": ["3.1","3.2","3.3","3.4","3.5","3.6","3.7"], "depends_on": ["M2"] },
-    { "wave": 4, "milestone": "M5", "tasks": ["5.1","5.2","5.3","5.4","5.5","5.6"], "depends_on": ["M2"] },
-    { "wave": 5, "milestone": "M4", "tasks": ["4.1","4.2","4.3","4.4","4.5","4.6"], "depends_on": ["M2","M3"] },
-    { "wave": 5, "milestone": "M6", "tasks": ["6.1","6.2","6.3","6.4","6.5","6.6","6.7"], "depends_on": ["M1"] },
-    { "wave": 6, "milestone": "M7", "tasks": ["7.1","7.2","7.3","7.4","7.5"], "depends_on": ["M2","M3","M4","M5","M6"] }
-  ]
-}
+Phase 1  잔여 Core 정리          ← 지금 여기 (약 65%)
+  └→ Phase 2  Analyst (text → proposed Entries)
+       ├→ Phase 3  Writer (loop over declarative stages)
+       │    └→ Phase 4  Story Bible (canonical view + continuity loop)
+       └→ Phase 5  Character Chat shared knowledge integration
+Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phase 1부터 누적)
 ```
 
-> 동일 `wave` 값은 병렬 실행 가능을 의미한다(M3∥M5, M4∥M6). `depends_on`은 선행 마일스톤 완료 조건이다.
+**작업 규칙:** 1 작업 = 1 PR. PR은 additive·되돌릴 수 있어야 하며, 기능 구현과 상태정리/문서 정리를 섞지 않는다. 모든 텍스트 파일은 UTF-8.
 
-### 병렬화 가능 작업 (Parallelizable Tasks)
+**모델/effort 표기 규칙:** Architecture·cross-cutting·대규모 multi-file → **Claude Opus 5** · bounded 구현/UI/API → **GPT-5.6 Terra** · 복잡한 terminal 조사/디버깅/대규모 검증 → **GPT-5.6 Sol**. 기본 effort **High**, 위험도가 매우 높은 아키텍처 변경만 **XHigh**.
 
-| 병렬 그룹 | 작업 | 조건 |
-|-----------|------|------|
-| A (M1 내) | 1.8/1.9 프론트 UI ∥ 1.1~1.7 백엔드 CRUD | API 계약(Phase 6) 합의 후 |
-| B | M5(추가 어댑터) ∥ M3/M4 | M2 완료 후, M5는 M3/M4와 독립 |
-| C (M2 내) | 2.10/2.11 프론트 ∥ 2.1~2.9 백엔드 | SSE 프로토콜(6.4) 고정 후 |
-| D | M6 인증 백엔드(6.1~6.4) ∥ 6.5 프론트 로그인 | JWT/쿠키 계약 후 |
-| E | M7 7.1 속성 테스트 ∥ 7.2 로깅 ∥ 7.4 Export | 상호 독립 |
+---
 
-**직렬 필수(병렬 불가):** PromptEngine(2.1) → ChatService SSE(2.6) → MemoryEngine(3.x) → NovelEngine(4.x).
+## 3. 작업 목록
 
-## Notes
+### 3.1 Phase 1 — 잔여 Core 정리
 
-### 회귀 테스트 체크리스트 (Regression Test Checklist)
+#### P1-1 Review Card supersede 엔드포인트
+- **목적:** 기존 canon 교체를 review gate 안에서 완결한다(현재 `EntryService.supersede()`가 API로 노출되지 않아 `relationship.state`/`story.summary` 교체가 UI/API에서 불가능).
+- **선행 의존성:** 없음 (기존 review API·supersede 서비스 존재).
+- **예상 변경 범위:** `backend/app/api/v1/entries.py`, `schemas/entry.py`(supersede 요청 DTO), 필요 시 `services/entry_service.py` 얇은 래퍼, `docs/architecture/review-card-api.md`(deferral 해제 기록), `tests/integration/test_entry_review_api.py`.
+- **완료 조건:** `POST /entries/review/{id}/supersede`가 교체 대상 현행 canon을 **명시적으로 지명**받아 원자적으로 `proposed→canon` + `canon→superseded` 수행 · 소유권/스코프/서브젝트/앵커 재검증 · 비-proposed·타 소유자·앵커 소실 시 명시적 lifecycle 오류 · 마이그레이션/스키마 변경 0.
+- **회귀 테스트:** 신규 supersede 통합 테스트(성공·중복·교차소유자·앵커 소실·비-proposed) + `test_entry_service.py`/`test_entry_review_api.py` 전량 + R2.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
 
-매 마일스톤 종료 시 실행:
-- [ ] R1 코어 CRUD(생성/조회/수정/소프트삭제) 전 엔티티 동작.
-- [ ] R2 소유권 격리: 타 사용자 데이터 접근 차단(Property 1).
-- [ ] R3 채팅 SSE: token→done 순서, 단절 시 부분 보존, 재생성이 새 행 생성(Property 4/9).
-- [ ] R4 프롬프트 예산: 임의 입력에도 토큰 ≤ context_window(Property 7), user_message 보존.
-- [ ] R5 메모리: 임계 초과 요약 생성·주입, `cover_up_to` 유효·단조(Property 5), 요약 실패 무영향.
-- [ ] R6 소설: index 유일성(Property 3), 이어쓰기 부분 보존, 자동저장 vs 이어쓰기 409.
-- [ ] R7 공급자 전환: 설정 변경만으로 4종 동작, 정규화 일치, 폴백.
-- [ ] R8 인증: 로컬 모드 default-user, OAuth 로그인/로그아웃, 401 처리, 마스킹(Property 8).
-- [ ] R9 마이그레이션: up/down 무손실, SQLite↔PG 스키마 동일.
-- [ ] R10 기능 플래그 OFF 시 MVP 내비/성능 영향 0(7.15).
-- [ ] R11 접근성: 키보드 순회·대비·터치 타깃·reduced-motion.
-- [ ] R12 PWA: Lighthouse ≥ 90, 오프라인(Ollama) 동작.
+#### P1-2 Entry Review Card 프론트엔드 (하나의 큐, 하나의 카드)
+- **목적:** RFC-011의 gate를 사용자에게 노출한다. 제안 종류별 화면을 만들지 않고 **단일 큐 + 단일 카드**로 구현한다.
+- **선행 의존성:** P1-1 (supersede 액션 포함 위해). 없이도 accept/edit/reject만으로 착수 가능.
+- **예상 변경 범위:** `frontend/src/lib/api/endpoints.ts`, `hooks/use-entry-review.ts`(신규), `components/review/*`(신규 카드/큐), 기존 화면 내 진입점(최상위 내비 항목 추가 금지 — ADR-011 §5/ADR-014 §4), `types/index.ts`, vitest 테스트.
+- **완료 조건:** 제안 목록·상세·Accept·Edit-then-accept·Reject 동작 · provenance/confidence 노출("왜 이렇게 생각하나") · 비차단(작성/채팅 흐름을 가로막지 않음) · 모바일 터치 타깃/키보드 순회 충족 · `npm run lint`·`build`·`test` 통과.
+- **회귀 테스트:** 프론트 유닛(큐 상태 전이·에러 처리), R11(접근성), R12(PWA 빌드), 기존 프론트 테스트 전량.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
 
-### MVP 릴리스 계획 (Release Plan for MVP)
+#### P1-3 저장소 관리 prompt asset 구조 도입
+- **목적:** ADR-013/RFC-009의 "prompt body는 versioned file asset" 요구를 충족하는 최소 자산 계층(디렉터리 규약 + 로더 + 버전 식별자)을 만든다.
+- **선행 의존성:** 없음. Phase 2/3의 사실상 선행 작업.
+- **예상 변경 범위:** `prompts/`(신규, 저장소 루트 또는 `backend/prompts/`), `backend/app/engines/prompt/assets.py`(신규 로더: 이름+버전 조회, 파일 해시/버전 노출), 기존 하드코딩 3건 이관 — `engines/chat/engine.py: DEFAULT_CHAT_TEMPLATE`, `engines/novel/engine.py: DEFAULT_NOVEL_TEMPLATE`, `engines/shared/summarizer.py: SUMMARY_TEMPLATE`, 유닛 테스트.
+- **완료 조건:** 프롬프트 body가 파일에서 로드됨 · 코드 상수는 fallback 없이 제거 또는 파일 참조로 대체 · 프롬프트 식별자+버전이 조립 결과 metadata/trace에 기록 · 기존 채팅/이어쓰기/요약 출력 계약 불변 · DB에서 프롬프트 body를 읽지 않음.
+- **회귀 테스트:** `tests/property/test_prompt_budget.py`, `test_streaming.py`, R3/R4, 신규 asset 로더 테스트(누락 파일·버전 불일치 오류).
+- **추천 모델/effort:** GPT-5.6 Terra / High.
 
-| 릴리스 | 포함 마일스톤 | 사용자 가치 | 게이트 |
-|--------|---------------|-------------|--------|
-| **0.1 Alpha (Local)** | M0+M1+M2 | 캐릭터 생성 + 스트리밍 채팅(로컬 모드) | R1~R4 통과 |
-| **0.2 Beta (Memory+Novel)** | +M3+M4 | 장편 기억 + 소설 이어쓰기 | R5~R6 통과 |
-| **0.3 RC (Multi-Provider)** | +M5 | 공급자 자유 교체 + 오프라인(Ollama) | R7 통과 |
-| **1.0 MVP (Shareable)** | +M6+M7 | OAuth·배포·PWA·품질 | R1~R12 통과 |
+#### P1-4 legacy `PromptTemplate` 경계 고정 (비파괴)
+- **목적:** DB `PromptTemplate`(0001 포함, CRUD 노출 중)과 새 prompt asset의 관계를 확정한다. **테이블/데이터를 지우지 않고** "사용자 입력만 저장, creative body는 파일" 경계를 코드·문서·테스트로 고정한다.
+- **선행 의존성:** P1-3.
+- **예상 변경 범위:** `docs/architecture/` 결정 노트(신규, 또는 ADR-013 부속 구현 노트), `services/ai_config_service.py`·`api/v1/ai_config.py` 검증 보강(신규 creative stage body 저장 경로 차단), 통합 테스트.
+- **완료 조건:** 새 Architecture 경로(Analyst/Writer/Bench)가 DB 템플릿 body를 읽지 않음이 테스트로 고정 · 기존 사용자 템플릿 데이터·API 하위호환 유지 · 마이그레이션 0 · 향후 제거는 별도 승인 필요임을 문서화.
+- **회귀 테스트:** `test_api.py`(ai_config CRUD), Property 8(마스킹), R1.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
 
-**MVP 출시 기준(Go/No-Go):** 전 회귀 체크리스트(R1~R12) 통과 + Property 1~9 속성 테스트 통과 + `docker compose up` 단일 명령 기동 + Lighthouse PWA ≥ 90 + 시크릿 미노출 확인.
+#### P1-5 Entry authoring / 조회 API (사용자 직접 canon + 감사 뷰)
+- **목적:** 현재 Entry Store는 review 5개 엔드포인트만 노출되어 사용자가 직접 지식을 작성·열람할 수 없다. 명시적 사용자 행위(=human gate)로서의 canon 작성과 이력/감사 조회 경로를 만든다.
+- **선행 의존성:** 없음.
+- **예상 변경 범위:** `api/v1/entries.py`(생성/목록/상세/수정 — status는 서비스 규칙이 결정), `schemas/entry.py`, 필요 시 `services/entry_service.py` 조회 필터, 통합 테스트.
+- **완료 조건:** 사용자 authoring은 RFC-002 §7.2에 따라 허용 상태만 생성 · AI 생산자용 `status=canon` 직접 지정 경로 없음 · 기본 조회는 canon만, `proposed/rejected/superseded`는 명시 요청 시에만 라벨과 함께 반환 · 소유자 격리 유지 · 마이그레이션 0.
+- **회귀 테스트:** 신규 authoring 통합 테스트 + `test_entry_service.py` 전량 + R2.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
 
-**MVP 제외(범위 외):** OOS-1~9(이미지·TTS/STT·RAG·관계도/타임라인·협업·클라우드 동기화·EPUB/PDF·Playground·그룹채팅).
+#### P1-6 retrieve() → Context Assembly를 실제 생성 경로에 연결 (flag 기반, 추가만)
+- **목적:** 현재 `EntryService.retrieve()`와 `assemble_entry_context()`의 호출자는 테스트뿐이다. 실사용 경로에 **추가 블록**으로 주입해 Store가 실제로 작동하게 한다. 레거시 lore 키워드 스캔은 **유지**한다(RFC-003 §16.8: 두 경로 공존은 승인된 마이그레이션 시점까지 잠정 허용).
+- **선행 의존성:** P1-5 (검증 데이터 작성 경로), 권장 P1-3.
+- **예상 변경 범위:** `services/chat_service.py`·`services/novel_service.py`(retrieval 호출 + Entry 블록 병합), `engines/prompt/engine.py`(외부 블록 수용 지점), `config.py`(기능 플래그 기본 OFF), 통합/골든 테스트.
+- **완료 조건:** 플래그 OFF 시 기존 프롬프트 조립 결과가 **바이트 동일** · ON 시 Entry 블록이 예산 내에서 별도 블록으로 주입되고 trace에 retrieval/assembly 제외 사유가 분리 기록 · chat-private Memory는 Entry로 섞이지 않음 · 전체 프롬프트 토큰 ≤ context_window 유지.
+- **회귀 테스트:** `tests/golden/*` 전량, `test_prompt_budget.py`, `test_streaming.py`, R3/R4/R10(플래그 OFF 영향 0).
+- **추천 모델/effort:** Claude Opus 5 / High.
+
+#### P1-7 edit-diff capture (day-one 데이터 수집)
+- **목적:** ADR-010·RFC-001 §8.8 — draft ↔ 사용자 확정본의 차이는 **소급 수집이 불가능**하다. 분석(distillation)은 미루되 **capture는 지금 시작**한다. 현재는 provenance 열거값만 존재한다.
+- **선행 의존성:** 없음 (단, 영속 설계 승인 필요).
+- **예상 변경 범위:** 신규 additive 마이그레이션 `0003_*`(diff capture 테이블 — Entry가 아닌 **운영 기록**이므로 aggregate로 취급), `models/`·`services/novel_service.py`(이어쓰기 확정 시 캡처), `services/chat_service.py`(선택), 통합 테이블 테스트.
+- **완료 조건:** `0001`·`0002` 미수정 · 다운그레이드 가능 · 캡처 실패가 사용자 작성 흐름을 깨지 않음(비차단) · 캡처 데이터는 Entry가 아니며 canon 경로에 진입하지 않음 · Analyst 소비 계약(입력 형태) 문서화.
+- **회귀 테스트:** `test_migrations.py`(체인·PG 컴파일·라운드트립), R6(이어쓰기), R9(마이그레이션 무손실).
+- **추천 모델/effort:** Claude Opus 5 / High (스키마 결정이 되돌리기 어려우므로 설계 리뷰 필수).
+
+#### P1-8 legacy Character/World/Lore ↔ Entry 동등성 브릿지 (읽기 비교, 백필 없음)
+- **목적:** RFC-002 §12의 안전 순서 중 4단계(레거시 ↔ Entry 투영 비교)를 먼저 확보한다. 전환 스위치·삭제는 하지 않는다.
+- **선행 의존성:** P1-5, P1-6.
+- **예상 변경 범위:** `backend/app/services/`(레거시 → Entry 투영 순수 함수), `tests/golden/`(레거시/Entry 컨텍스트 동등성 픽스처), 문서(전환 기준·잔여 격차 목록).
+- **완료 조건:** `Character.personality`/`speech_style`, `World` 배열, `Lorebook`/`LoreEntry`, `Chapter.summary`의 Entry 투영이 결정적으로 생성됨 · 레거시 컨텍스트와의 차이가 테스트로 가시화됨 · **DB 쓰기 0, 삭제 0, 마이그레이션 0** · lore 스캐너 비활성화 조건을 문서화.
+- **회귀 테스트:** 신규 동등성 골든 + `test_api.py`(world/character CRUD) + R1/R2.
+- **추천 모델/effort:** GPT-5.6 Sol / High (대규모 대조·검증 성격).
+
+#### P1-9 review 감사(actor/action history) persistence 결정
+- **목적:** `review-card-api.md`가 남긴 미결 사항(리뷰 행위자·이력·되돌림 메타데이터)을 **버전 없는 JSON 즉흥 스키마 없이** 결정한다.
+- **선행 의존성:** P1-1.
+- **예상 변경 범위:** ADR 초안 또는 RFC-011 구현 노트(`docs/architecture/`), 결정에 따른 additive 마이그레이션 후속 작업 분리.
+- **완료 조건:** 감사 대상 필드·보존 기간·되돌림 의미가 문서로 확정 · Entry 상태 기계와 충돌 없음 · 구현은 별도 PR로 분리.
+- **회귀 테스트:** 문서 작업(코드 변경 없음). 아키텍처 문서 상호 모순 검사.
+- **추천 모델/effort:** Claude Opus 5 / High.
+
+#### P1-10 로컬 개발 환경 정리 (선택, 사용자 확인 필요)
+- **목적:** 로컬 `backend/data/app.db`가 저장소에 없는 리비전 `0002_story_bible`로 스탬프되어 `alembic current`가 실패한다. 폐기 노선 stash 2건도 정리 판단이 필요하다.
+- **선행 의존성:** 없음.
+- **예상 변경 범위:** 저장소 코드 변경 **없음**. 로컬 DB 재생성 또는 `alembic stamp` 절차 문서화(`README.md` 트러블슈팅 절 정도).
+- **완료 조건:** `alembic current`가 head를 보고함 · 기존 로컬 데이터 손실 없음(백업 후 진행) · stash 처리(보존/드롭) 사용자 승인 기록.
+- **회귀 테스트:** `alembic upgrade head` 후 `pytest` 전량, 앱 기동 `/healthz`.
+- **추천 모델/effort:** GPT-5.6 Sol / High. **주의: 데이터 영향 작업이므로 반드시 사용자 확인 후 실행.**
+
+### 3.2 Phase 2 — Analyst (text → proposed Entries)
+
+> **경계:** Analyst는 **stateless transformer**다. 자체 store/index/cache/테이블을 갖지 않고, canon을 절대 쓰지 않으며, 무엇을 추출할지는 **facet 프롬프트 파일**이다. 새 엔진을 만드는 것이 아니다(RFC-008 §2.2, §4, §10.1).
+
+#### P2-1 Analyst 골격 + facet 레지스트리
+- **목적:** 단일 진입점 `analyze(text, scope, facets) → proposed Entries` 구현. 코드에 facet 분기를 만들지 않는다.
+- **선행 의존성:** P1-3(prompt asset), P1-5(Entry 작성 경로), P1-1/P1-2(제안 처리 경로).
+- **예상 변경 범위:** `backend/app/services/analyst/`(신규, 얇게), `prompts/analyst/*`(facet 파일), 어댑터 호출은 기존 registry 재사용, 유닛/통합 테스트.
+- **완료 조건:** 출력은 항상 `status=proposed` Entry(+필수 provenance·confidence) · 영속 상태·캐시·인덱스 0 · facet 추가가 파일 추가만으로 가능 · 동일 입력 → 동일 제안(모델 스텁 기준 결정성) · canon 직접 기록 경로 부재가 테스트로 고정.
+- **회귀 테스트:** 신규 Analyst 통합(제안만 생성·소유자 격리·잘못된 type 거부) + `test_entry_service.py` + R2.
+- **추천 모델/effort:** Claude Opus 5 / High.
+
+#### P2-2 facet: accepted chapter ingestion
+- **목적:** 확정 챕터에서 `story.fact`·`story.knowledge`·`story.promise`·`story.summary`·`relationship.state` 제안을 생성한다(연속성 루프의 입력).
+- **선행 의존성:** P2-1.
+- **예상 변경 범위:** `prompts/analyst/chapter/*`, ingestion 트리거(작성 흐름 비차단, 기존 `core/jobs.py` 재사용), 통합 테스트.
+- **완료 조건:** 챕터 확정 시 백그라운드 제안 생성 · 실패가 작성 흐름을 깨지 않음 · 제안은 review 큐에 그대로 노출 · `created_at_chapter` 등 story-order provenance 기록.
+- **회귀 테스트:** 신규 ingestion 통합, R5(요약 비차단 성격), R6, 프롬프트 예산 R4.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P2-3 facet: reference 분석 (collection scope)
+- **목적:** 사용자가 소유한 참고 텍스트에서 `character.*`·`world.*`·`style.preference` 제안을 생성한다. 별도 reference 엔진/테이블을 만들지 않는다.
+- **선행 의존성:** P2-1, P2-4.
+- **예상 변경 범위:** `prompts/analyst/reference/*`, collection 스코프 처리, 통합 테스트.
+- **완료 조건:** 결과가 `scope=collection` Entry 제안으로 적립 · 원문 전량 저장 없이 provenance + 최소 발췌만 보존(저작권 규율) · 큐레이션 배치 승인 경로를 쓰더라도 Analyst가 canon을 결정하지 않음.
+- **회귀 테스트:** 신규 reference facet 통합 + Entry 검증 테스트 + R2.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P2-4 reference 입력 substrate (최소)
+- **목적:** 참고 텍스트를 시스템에 넣는 최소 경로(붙여넣기/업로드 1종)를 만든다. 별도 지식 스토어를 만들지 않는다.
+- **선행 의존성:** P2-1.
+- **예상 변경 범위:** collection aggregate 최소 정의(신규 additive 마이그레이션 가능), 업로드/텍스트 등록 API, 프론트 최소 화면.
+- **완료 조건:** 원문은 Entry가 아니라 소스 레코드로 보관 · 소유자 격리 · Analyst 입력으로만 사용 · 기존 기능 영향 0.
+- **회귀 테스트:** `test_migrations.py`, 신규 통합, R1/R9.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P2-5 facet: edit-diff distillation (주기적 패스)
+- **목적:** P1-7이 모아둔 diff를 `user.preference` 제안으로 증류한다. 온라인 학습이 아니라 **주기적·검토 가능·되돌릴 수 있는** 패스다.
+- **선행 의존성:** P1-7, P2-1.
+- **예상 변경 범위:** `prompts/analyst/preference/*`, 주기 실행 트리거(수동 실행 우선), 통합 테스트.
+- **완료 조건:** 실행이 사용자 요청 경로에 없음 · 결과는 제안뿐 · 불투명 모델 학습 없음 · 되돌림은 Entry 상태 전이로만.
+- **회귀 테스트:** 신규 distillation 통합 + R2.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+### 3.3 Phase 3 — Writer (loop over declarative stages)
+
+> **경계:** 기존 `NovelEngine`의 single-pass 이어쓰기는 **Writer 완료가 아니다.** 기존 구현은 draft stage가 흡수할 substrate로 보존하고, 기존 `/chapters/{id}/continue` 계약은 깨지 않는다. Writer는 지식을 소유하지 않고 canon을 조용히 쓰지 않는다.
+
+#### P3-1 stage 계약 + loop runner 골격
+- **목적:** retrieve → assemble → generate → validate → revise → persist를 **선언적 stage 목록**으로 실행하는 작은 러너를 한 번 작성한다.
+- **선행 의존성:** P1-3, P1-6.
+- **예상 변경 범위:** `backend/app/services/writer/`(신규 러너 + stage 계약), `prompts/writer/*`, 기존 NovelEngine 호출을 stage 뒤로 배치, 유닛 테스트.
+- **완료 조건:** stage 추가가 파일+선언 목록 변경만으로 가능 · 러너에 창작 정책(계획/비평/문체) 코드 부재 · 기존 이어쓰기 API 동작 불변 · scene을 원자 단위로 표현 · canon 직접 쓰기 경로 부재.
+- **회귀 테스트:** 신규 러너 유닛(stage 순서·실패 격리·예산), `test_streaming.py`, R3/R4/R6.
+- **추천 모델/effort:** Claude Opus 5 / **XHigh** (cross-cutting 계약이며 잘못 잡으면 이후 전 Phase가 오염됨).
+
+#### P3-2 plan / draft stage
+- **목적:** scene 계획과 초안 생성을 stage 프롬프트로 구현하고 기존 single-pass 경로를 이 stage로 재배선한다(재작성 아님).
+- **선행 의존성:** P3-1.
+- **예상 변경 범위:** `prompts/writer/plan|draft`, 러너 파이프라인 정의, `services/novel_service.py` 얇은 연결.
+- **완료 조건:** 기존 이어쓰기 SSE·부분 보존·version CAS 동작 유지 · 계획 결과가 임시 작업 지식으로만 존재(canon 아님) · 프롬프트 자산 버전이 trace에 기록.
+- **회귀 테스트:** R6, `test_streaming.py`, 골든 컨텍스트 픽스처.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P3-3 validate stage (연속성 + 목소리 귀속 검사)
+- **목적:** 초안을 canon(Entry)에 대해 검사하는 **결정적 체크** 2종을 도입한다. Bench가 재사용할 메트릭의 원천.
+- **선행 의존성:** P3-1, P1-6.
+- **예상 변경 범위:** `services/writer/checks/`(신규), `prompts/writer/check/*`(LLM 보조가 필요한 부분만), 유닛 테스트.
+- **완료 조건:** 검사는 canon만 신뢰(proposed 불신) · 결과가 사용자 출력을 차단하지 않음 · 위반 항목이 구조적으로 보고됨(다음 stage가 소비 가능).
+- **회귀 테스트:** 신규 체크 유닛(위반/무위반 픽스처) + 골든 회귀.
+- **추천 모델/effort:** Claude Opus 5 / High.
+
+#### P3-4 revise stage (bounded loop)
+- **목적:** 검사 실패 항목에 대해 **횟수 상한이 있는** 수정 루프를 돌린다.
+- **선행 의존성:** P3-3.
+- **예상 변경 범위:** 러너 루프 정책, `prompts/writer/revise`, 유닛 테스트.
+- **완료 조건:** 반복 상한·비용 상한 명시 · 무한 루프 불가 · 스트리밍 UX 저하 시 우회 경로 존재 · 사용자 출력 게이팅 없음.
+- **회귀 테스트:** 신규 루프 유닛(상한 도달·조기 종료), R3/R4.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P3-5 episode(회차) assembly + 기존 Chapter 저장 연결
+- **목적:** scene들을 회차로 조립하고 기존 Chapter 영속 경로에 연결한다.
+- **선행 의존성:** P3-2.
+- **예상 변경 범위:** 러너 assembly stage, `services/novel_service.py`, 프론트 최소 노출.
+- **완료 조건:** 기존 Chapter 스키마·API 하위호환 · `content_doc`/`content_text` 동기 유지 · 조립 결과가 사용자 확정 전에는 canon을 만들지 않음.
+- **회귀 테스트:** R6, 낙관적 동시성 409 테스트, 프론트 빌드.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P3-6 Writer ingestion → 제안 emit
+- **목적:** 확정된 출력에서 관찰된 새 사실/약속을 **제안으로만** 내보낸다(인라인 canon 기록 금지).
+- **선행 의존성:** P3-5, P2-2.
+- **예상 변경 범위:** 러너 persist 단계, Analyst 호출 연결, 통합 테스트.
+- **완료 조건:** Writer가 canon을 직접 쓰지 않음이 테스트로 고정 · 제안은 단일 review 큐로 유입 · 실패 비차단.
+- **회귀 테스트:** 신규 통합 + R2 + review API 전량.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+### 3.4 Phase 4 — Story Bible (Entry Store의 canonical view)
+
+> **금지:** 별도 Bible 테이블·별도 knowledge store·별도 retriever를 만들지 않는다. Bible은 work 스코프 canon **뷰**다(RFC-005, ADR-004).
+
+#### P4-1 work-scoped canonical view (읽기 전용)
+- **목적:** 하나의 작품 canon(`story.*`, `relationship.state`, 관련 world/character, 요약, 타임라인)을 **기존 `retrieve()` + task profile**로 조회하는 뷰를 제공한다.
+- **선행 의존성:** P1-5, P1-6.
+- **예상 변경 범위:** `api/v1/`(뷰 조회 엔드포인트), retrieval task profile 추가, 통합 테스트.
+- **완료 조건:** 새 테이블·새 검색 함수 0 · proposed는 기본 제외 · 삭제/superseded 제외 · 소유자 격리 · 응답이 프롬프트가 아니라 지식 목록.
+- **회귀 테스트:** `test_entry_retrieval.py`, 골든 회귀, R2.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P4-2 continuity loop 결선
+- **목적:** accepted chapter → Analyst 제안 → human review → canon → 다음 draft 검색 → 검사로 이어지는 플라이휠을 닫는다.
+- **선행 의존성:** P2-2, P3-3, P4-1.
+- **예상 변경 범위:** 루프 결선(잡 트리거·검색 프로필·검사 입력), 통합 테스트, 문서.
+- **완료 조건:** 사람 승인 없이는 canon 증가 0 · 승인 즉시 다음 draft 검색에 반영 · 실패 지점이 사용자 흐름을 깨지 않음 · 루프 각 단계가 trace로 설명 가능.
+- **회귀 테스트:** 종단 통합(챕터 확정 → 제안 → 승인 → 검색 반영), 골든 회귀, R2/R5/R6.
+- **추천 모델/effort:** Claude Opus 5 / High.
+
+#### P4-3 Bible 읽기 UI (기존 화면 내부)
+- **목적:** 작품 화면 안에서 canon을 열람하고 review 큐로 자연스럽게 이동한다. 최상위 내비 항목을 늘리지 않는다.
+- **선행 의존성:** P4-1, P1-2.
+- **예상 변경 범위:** `frontend/src/app/(main)/novels/[id]/*`, 공통 Entry 렌더러(review 카드와 **동일 컴포넌트** 재사용).
+- **완료 조건:** 제안/캐논 시각적 구분 · 하나의 에디터/렌더러 재사용 · lint/build/test 통과 · 모바일 우선.
+- **회귀 테스트:** 프론트 테스트 전량, R11/R12.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+### 3.5 Phase 5 — Character Chat 공유 지식 통합
+
+> **경계:** Chat은 독립 제품이며 자체 생성 경로(기존 ChatEngine)를 유지한다. 공유되는 것은 **지식**(Store/DNA/Relationship/Bible)과 review gate뿐이다. chat-private `Memory`를 Entry로 통합하지 않는다.
+
+#### P5-1 chat 생성에 공유 canon 주입
+- **목적:** 활성 캐릭터의 `character.*`, 공유 `relationship.state`, 선택된 work canon, world canon을 chat 프롬프트에 별도 블록으로 주입한다.
+- **선행 의존성:** P1-6.
+- **예상 변경 범위:** `services/chat_service.py`, retrieval chat task profile(exemplar 우선순위 포함), 통합 테스트.
+- **완료 조건:** work canon은 **명시적으로 지정된 work만** 사용(추측 금지) · Memory 블록과 Entry 블록이 분리 유지 · 예산 초과 시 결정적 제외 · 플래그 OFF 시 기존 동작 동일.
+- **회귀 테스트:** `test_streaming.py`, 골든 회귀, R3/R4/R10.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P5-2 chat 북마크 → `character.exemplar` 제안
+- **목적:** "이게 딱 이 캐릭터 말투다"라는 사용자 행위를 공유 지식으로 승격시키는 유일한 경로를 만든다.
+- **선행 의존성:** P5-1, P1-2.
+- **예상 변경 범위:** 북마크 API + 제안 생성(chat-message provenance), 프론트 북마크 액션, 통합 테스트.
+- **완료 조건:** 원 대화는 private 유지 · 승격은 제안 → review → canon 경로만 · Memory 테이블은 그대로.
+- **회귀 테스트:** 신규 통합 + review API 전량 + R2.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P5-3 relationship shared state의 chat 반영 (읽기)
+- **목적:** 소설과 채팅이 **하나의** 관계 상태를 읽게 한다(쌍 정체성 정규화 유지).
+- **선행 의존성:** P5-1, P4-1.
+- **예상 변경 범위:** retrieval 프로필·chat 조립, 통합 테스트.
+- **완료 조건:** `(A,B)`/`(B,A)` 중복 없음 · single-current 규칙 준수 · chat이 관계 canon을 쓰지 않음(제안만 가능).
+- **회귀 테스트:** `test_entry_service.py`(관계 single-current), 골든 회귀.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+### 3.6 Phase 6 — Bench 확장
+
+> **구분:** 현재 존재하는 것은 `tests/golden/`의 **retrieval/context 회귀 픽스처(pytest)** 다. Bench는 그와 별개의 **개발자 전용 out-of-band 하네스**이며 사용자 출력을 게이팅하지 않는다.
+
+#### P6-1 Bench 러너 골격 (dev-only)
+- **목적:** 골든 씬(프로즌 시나리오 + 프로즌 지식 스냅샷)에 대해 실제 코드 경로를 호출하는 CLI 러너를 만든다.
+- **선행 의존성:** P1-6 (권장 P3-3).
+- **예상 변경 범위:** `bench/`(신규, 프로덕션 코드 밖), 기존 `tests/golden/` 픽스처 재사용, 러너 문서.
+- **완료 조건:** 프로덕션 경로에 Bench import 0 · 사용자 API 노출 0 · 실행이 결정적(고정 `now`/정책 버전) · 리포트가 파일로 산출.
+- **회귀 테스트:** 러너 자체 스모크 + `tests/golden/*` 전량 + 전체 pytest.
+- **추천 모델/effort:** GPT-5.6 Sol / High.
+
+#### P6-2 Writer checks를 메트릭으로 재사용
+- **목적:** 별도 평가 로직을 만들지 않고 P3-3의 검사를 그대로 지표화한다.
+- **선행 의존성:** P6-1, P3-3.
+- **예상 변경 범위:** `bench/metrics/*`(얇은 어댑터), 리포트 포맷.
+- **완료 조건:** 검사 코드 중복 0 · 지표가 씬별/집계로 출력 · 사용자 경로 영향 0.
+- **회귀 테스트:** 체크 유닛 + 러너 스모크.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P6-3 pairwise 판정 + A/B 리포트
+- **목적:** 프롬프트/stage/검색 변경의 방향성 증거를 만든다(오라클이 아님).
+- **선행 의존성:** P6-2.
+- **예상 변경 범위:** `bench/judge/*`, 리포트 diff.
+- **완료 조건:** 판정 프롬프트도 파일 자산 · 결과가 재현 가능(모델/시드/버전 기록) · 사용자 출력 게이팅 없음 · 골든 씬 버전이 리포트에 기록.
+- **추천 모델/effort:** GPT-5.6 Terra / High.
+
+#### P6-4 검색 랭킹 정책 회귀 + 한국어 keyword-miss 케이스
+- **목적:** 랭킹 정책 변경과 (향후) 임베딩 도입 게이트의 증거 기반을 만든다(RFC-003 §14).
+- **선행 의존성:** P6-1.
+- **예상 변경 범위:** 골든 씬 확장(한국어 패러프레이즈/동의어 miss), 정책 버전 비교 리포트.
+- **완료 조건:** 정책 버전별 결과 비교 가능 · 임베딩 없이 실패 사례가 문서화됨 · 임베딩 도입은 여전히 게이트 뒤에 있음.
+- **회귀 테스트:** `tests/golden/*`, `test_entry_retrieval.py` 전량.
+- **추천 모델/effort:** GPT-5.6 Sol / High.
+
+---
+
+## 4. 권장 다음 PR (순서 및 근거)
+
+| 순서 | 작업 | 근거 | 추천 모델 / effort |
+|---|---|---|---|
+| 1 | **P1-1** Review Card supersede 엔드포인트 | 작고 독립적이며, review gate의 마지막 구멍(canon 교체)을 닫는다. 후속 프론트 작업의 계약을 먼저 고정한다. | GPT-5.6 Terra / High |
+| 2 | **P1-3** prompt asset 구조 도입 | Phase 2/3의 사실상 모든 작업이 프롬프트 파일 자산을 전제한다. 하드코딩 3건도 함께 해소된다. | GPT-5.6 Terra / High |
+| 3 | **P1-2** Review Card 프론트엔드 | 백엔드 gate가 사용자에게 노출되지 않으면 Analyst 제안이 쌓여도 canon이 자라지 않는다(플라이휠 정지). | GPT-5.6 Terra / High |
+
+**병행 가능:** P1-7(edit-diff capture)은 위 3건과 독립적이며, *데이터가 지금부터만 모인다*는 점 때문에 착수를 미룰수록 손실이 누적된다. 여력이 있으면 1~3과 병행한다(Claude Opus 5 / High).
+
+---
+
+## 5. 매 PR 공통 완료 조건
+
+- [ ] `cd backend && pytest` 전량 통과
+- [ ] `cd frontend && npm test && npm run lint && npm run build` 통과
+- [ ] `alembic heads`가 단일 head · `0001`/`0002` 미수정 · 새 마이그레이션은 additive + 다운그레이드 가능
+- [ ] `git diff --check` 무오류 · 모든 텍스트 파일 UTF-8
+- [ ] 회귀 체크리스트 관련 항목(R1~R12) 확인
+- [ ] ADR/RFC 불변식(§불변식 1~13) 위반 없음 — 특히 새 knowledge 테이블·AI direct-to-canon·별도 Bible 스토어·chat Memory 통합 여부
+- [ ] 기능 구현과 문서/상태 정리를 같은 PR에 섞지 않음
