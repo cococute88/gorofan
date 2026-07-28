@@ -1,7 +1,9 @@
 # Entry Review Card API — Phase 1 implementation note
 
 This note records the deliberately small backend boundary that operationalizes
-RFC-001, RFC-002, and RFC-011 without defining or implementing Review Card UI.
+RFC-001, RFC-002, and RFC-011. The P1-2 frontend consumes this boundary; its
+single shared Queue/Card is documented in the implementation status rather than
+specified by this API note.
 
 ## Phase 1 boundary
 
@@ -85,7 +87,9 @@ replacement to canon.
   source, or chapter-origin anchor is missing, owner-invisible, or soft-deleted
   cannot be accepted or superseded into canon.
 - No migration, Entry table/schema change, retrieval ranking change, Context
-  Assembly change, Analyst, Writer, Bench extension, frontend, or UI is included.
+  Assembly change, Analyst, Writer, or Bench extension is included. The separate
+  P1-2 frontend Queue/Card only calls this authenticated boundary and does not
+  widen its server lifecycle contract.
 
 ## Intentional deferrals
 

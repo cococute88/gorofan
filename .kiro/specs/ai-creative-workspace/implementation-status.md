@@ -14,7 +14,7 @@
 | 검증 항목 | 명령 | 결과 |
 |---|---|---|
 | 백엔드 전체 테스트 | `backend/.venv/Scripts/python -m pytest -q` | **77 passed, 0 failed** (exit 0) |
-| 프론트엔드 테스트 | `npm test` (vitest) | **3 files / 13 tests passed** (P1-2 Queue 상태 전이·오류 처리 포함, exit 0) |
+| 프론트엔드 테스트 | `npm test` (vitest) | **3 files / 13 tests passed** (공유 Queue cache helper의 상태 전이·오류 메시지 처리 포함, exit 0) |
 | 프론트엔드 린트 | `npm run lint` | **No ESLint warnings or errors** (exit 0) |
 | 프론트엔드 빌드 | `npm run build` | **성공** (15 routes, exit 0) |
 | Alembic head | `alembic heads` | `0002_entry_store (head)` |

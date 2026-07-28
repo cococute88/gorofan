@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { removeReviewQueueEntry } from "@/components/review/review-utils";
 import * as api from "@/lib/api/endpoints";
 import type {
   EntryReviewEdit,
@@ -11,20 +12,13 @@ import type {
 
 export const entryReviewQueueKey = ["entry-review"] as const;
 
-function removeFromReviewQueue(
-  entries: EntryReviewEntry[] | undefined,
-  entryId: string,
-): EntryReviewEntry[] | undefined {
-  return entries?.filter((entry) => entry.id !== entryId);
-}
-
 function useReviewQueueInvalidation() {
   const queryClient = useQueryClient();
 
   return {
     remove(entryId: string) {
       queryClient.setQueryData<EntryReviewEntry[]>(entryReviewQueueKey, (entries) =>
-        removeFromReviewQueue(entries, entryId),
+        entries ? removeReviewQueueEntry(entries, entryId) : undefined,
       );
       queryClient.removeQueries({ queryKey: ["entry-review", entryId] });
     },
