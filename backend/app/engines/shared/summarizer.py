@@ -6,23 +6,19 @@ summary prompt via PromptEngine and calls the provider (non-stream).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.adapters.base import ProviderRequest
 from app.adapters.registry import ProviderRegistry
+from app.engines.prompt.assets import PromptAssetLoader
 from app.engines.prompt.engine import AssembleInput, PromptEngine
-
-SUMMARY_TEMPLATE = (
-    "당신은 장편 서사의 기록자다. 아래 대화/본문을 한국어로 간결하게 요약한다. "
-    "등장인물의 결정·감정 변화·중요한 사실·미해결 떡밥을 보존하되 군더더기는 제거한다. "
-    "이전 요약이 있으면 누적해 갱신한다."
-)
 
 
 @dataclass
 class Summarizer:
     prompt_engine: PromptEngine
     registry: ProviderRegistry
+    prompt_assets: PromptAssetLoader = field(default_factory=PromptAssetLoader)
 
     async def summarize_text(
         self,
@@ -31,12 +27,16 @@ class Summarizer:
         prev_summary: str | None,
         req: ProviderRequest,
     ) -> str:
-        body = SUMMARY_TEMPLATE
+        asset = self.prompt_assets.load("summary.rolling")
+        body = asset.body
         if prev_summary:
             body += f"\n\n[이전 요약]\n{prev_summary}"
         assembled = self.prompt_engine.assemble(
             AssembleInput(
                 template_body=body,
+                prompt_asset_id=asset.asset_id,
+                prompt_asset_version=asset.version,
+                prompt_asset_sha256=asset.sha256,
                 user_message=f"[요약 대상]\n{source_text}",
                 context_window=req.context_window,
                 max_tokens=req.max_tokens,

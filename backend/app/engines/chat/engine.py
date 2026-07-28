@@ -7,19 +7,15 @@ orchestration over engines/adapters.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.base import AssembledPrompt, ProviderRequest, StreamEvent
 from app.adapters.registry import ProviderRegistry
 from app.engines.memory.engine import MemoryEngine
+from app.engines.prompt.assets import PromptAssetLoader
 from app.engines.prompt.engine import AssembleInput, PromptEngine
-
-DEFAULT_CHAT_TEMPLATE = (
-    "당신은 {{char}}라는 캐릭터로서 사용자와 대화한다. 캐릭터의 성격과 말투를 일관되게 "
-    "유지하고, 세계관과 기억을 존중하며 자연스러운 한국어로 응답한다."
-)
 
 
 @dataclass
@@ -27,6 +23,7 @@ class ChatEngine:
     prompt_engine: PromptEngine
     memory_engine: MemoryEngine
     registry: ProviderRegistry
+    prompt_assets: PromptAssetLoader = field(default_factory=PromptAssetLoader)
 
     async def assemble_for_chat(
         self,
@@ -41,6 +38,12 @@ class ChatEngine:
         req: ProviderRequest,
         template_body: str | None = None,
     ) -> AssembledPrompt:
+        if template_body:
+            body = template_body
+            asset = None
+        else:
+            asset = self.prompt_assets.load("chat.default")
+            body = asset.body
         budget_hint = max(256, int(req.context_window * 0.4))
         mem = await self.memory_engine.build_memory_context(
             session, chat_id, query=user_message, budget_hint=budget_hint
@@ -48,7 +51,10 @@ class ChatEngine:
         cap = self.registry.capabilities(req.provider, req.model_name)
         return self.prompt_engine.assemble(
             AssembleInput(
-                template_body=template_body or DEFAULT_CHAT_TEMPLATE,
+                template_body=body,
+                prompt_asset_id=asset.asset_id if asset is not None else None,
+                prompt_asset_version=asset.version if asset is not None else None,
+                prompt_asset_sha256=asset.sha256 if asset is not None else None,
                 character=character,
                 persona=persona,
                 world=world,

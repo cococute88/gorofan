@@ -135,6 +135,8 @@ A single-process, layered **modular monolith**: a reusable **substrate** (provid
 
 **Read first, in order:** ADR-001 → ADR-002 → ADR-003 → RFC-001 → RFC-002. Those five give you the spine (the three verbs, the one Entry model, the governing rule). Then read the RFC for whatever you're building, plus its grounding ADR(s) from the map above.
 
+**P1-3 implementation note:** [Repository Prompt Assets](prompt-assets.md) records the stable asset root, loader contract, and boundary between architecture-owned bodies, runtime inputs, and legacy user template data.
+
 **Build order (from ADR-001 / `architecture-final-minimal.md` §8):**
 1. Entry store + `retrieve()`; migrate character/world/lore fields → Entries.
 2. Writer loop runner with the smallest pipeline (plan → draft → assemble).
