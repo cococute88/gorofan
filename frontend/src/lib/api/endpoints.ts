@@ -7,6 +7,9 @@ import type {
   ChatSession,
   Credential,
   CurrentUser,
+  EntryReviewEdit,
+  EntryReviewEntry,
+  EntryReviewSupersedeResponse,
   GlossaryTerm,
   Lorebook,
   LoreEntry,
@@ -126,3 +129,20 @@ export const listCredentials = () => apiGet<Credential[]>("/credentials");
 export const createCredential = (b: { provider: string; api_key: string; label?: string }) =>
   apiPost<Credential>("/credentials", b);
 export const listProviders = () => apiGet<ProviderInfo[]>("/providers");
+
+// --- Entry Review ---
+// The server owns lifecycle and canonical-state validation. These wrappers expose
+// that Review Card gate without introducing a frontend canon-write path.
+export const listReviewEntries = () => apiGet<EntryReviewEntry[]>("/entries/review");
+export const getReviewEntry = (entryId: string) =>
+  apiGet<EntryReviewEntry>(`/entries/review/${entryId}`);
+export const acceptReviewEntry = (entryId: string) =>
+  apiPost<EntryReviewEntry>(`/entries/review/${entryId}/accept`);
+export const rejectReviewEntry = (entryId: string) =>
+  apiPost<EntryReviewEntry>(`/entries/review/${entryId}/reject`);
+export const editReviewEntry = (entryId: string, edit: EntryReviewEdit) =>
+  apiPost<EntryReviewEntry>(`/entries/review/${entryId}/edit`, edit);
+export const supersedeReviewEntry = (entryId: string, currentEntryId: string) =>
+  apiPost<EntryReviewSupersedeResponse>(`/entries/review/${entryId}/supersede`, {
+    current_entry_id: currentEntryId,
+  });

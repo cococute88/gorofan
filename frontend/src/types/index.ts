@@ -151,3 +151,51 @@ export interface CurrentUser {
   display_name: string;
   avatar_url: string | null;
 }
+
+// Entry Review DTOs mirror the authenticated Review Card API. `type` and
+// scope/status values stay strings so the common Card remains forward-compatible
+// with governed Entry vocabulary additions.
+export interface EntryReviewProvenance {
+  source_kind?: string;
+  source_id?: string | null;
+  locator?: Record<string, unknown>;
+  capture_method?: string;
+  producer?: string;
+  [key: string]: unknown;
+}
+
+export interface EntryReviewEntry {
+  id: string;
+  user_id: string;
+  scope_kind: string;
+  scope_id: string | null;
+  subject_type: string | null;
+  subject_id: string | null;
+  subject_data: Record<string, unknown>;
+  type: string;
+  status: string;
+  title: string | null;
+  content: string;
+  data: Record<string, unknown>;
+  provenance: EntryReviewProvenance;
+  confidence: number | null;
+  priority: number;
+  created_at_chapter_id: string | null;
+  superseded_by_entry_id: string | null;
+  accepted_at: string | null;
+  rejected_at: string | null;
+  superseded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EntryReviewEdit {
+  title?: string | null;
+  content?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface EntryReviewSupersedeResponse {
+  old_entry: EntryReviewEntry;
+  new_entry: EntryReviewEntry;
+}
