@@ -86,6 +86,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** GPT-5.6 Terra / High.
 
 #### P1-2 Entry Review Card 프론트엔드 (하나의 큐, 하나의 카드)
+- **상태:** 완료 — 기존 Home 화면에 단일 Review Queue와 type-agnostic Review Card를 배치했고, Review API hook·Accept·Edit-then-accept·Reject·Supersede·공유 Queue cache helper/오류 메시지 단위 테스트를 추가했다. 최상위 내비게이션은 변경하지 않았으며, 2026-07-28에 `npm test`(3 files/13 tests)·`npm run lint`·`npm run build`를 통과했다.
 - **목적:** RFC-011의 gate를 사용자에게 노출한다. 제안 종류별 화면을 만들지 않고 **단일 큐 + 단일 카드**로 구현한다.
 - **선행 의존성:** P1-1 (supersede 액션 포함 위해). 없이도 accept/edit/reject만으로 착수 가능.
 - **예상 변경 범위:** `frontend/src/lib/api/endpoints.ts`, `hooks/use-entry-review.ts`(신규), `components/review/*`(신규 카드/큐), 기존 화면 내 진입점(최상위 내비 항목 추가 금지 — ADR-011 §5/ADR-014 §4), `types/index.ts`, vitest 테스트.

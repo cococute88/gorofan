@@ -4,6 +4,7 @@ import { BookOpen, Globe, MessageCircle, Plus, User } from "lucide-react";
 import Link from "next/link";
 
 import { PageHeader } from "@/components/layout/app-shell";
+import { ReviewQueue } from "@/components/review/review-queue";
 import { Card } from "@/components/ui/primitives";
 import { ListSkeleton } from "@/components/ui/states";
 import { useChats } from "@/hooks/use-chats";
@@ -37,6 +38,8 @@ export default function HomePage() {
           </Link>
         ))}
       </div>
+
+      <ReviewQueue />
 
       <section>
         <div className="mb-3 flex items-center justify-between">
