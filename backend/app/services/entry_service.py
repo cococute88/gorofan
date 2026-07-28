@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFound, ValidationAppError
+from app.core.pagination import Page, PageParams
 from app.db.base import utcnow
 from app.models.character import Character
 from app.models.chat import ChatSession, Message
@@ -23,6 +24,7 @@ from app.models.user import User
 from app.models.world import World
 from app.repositories.entry_repository import EntryRepository
 from app.schemas.entry import (
+    EntryAuthoringCreate,
     EntryCreate,
     EntryProvenance,
     EntryRetrievalResult,
@@ -64,27 +66,82 @@ class EntryService:
 
     async def create(self, session: AsyncSession, user_id: str, dto: EntryCreate) -> Entry:
         await self._assert_active_owner(session, user_id)
-        self._validate_creation_state(dto)
-        await self._validate_scope(session, user_id, dto.scope_kind, dto.scope_id)
-        subject_id, subject_data = await self._validate_and_normalize_subject(
-            session,
-            user_id,
-            dto.scope_kind,
-            dto.scope_id,
-            dto.subject_type,
-            dto.subject_id,
-            dto.subject_data,
-        )
-        await self._validate_provenance(session, user_id, dto)
-        await self._validate_chapter_origin(
-            session, user_id, dto.scope_kind, dto.scope_id, dto.created_at_chapter_id
-        )
-
-        values = dto.model_dump(mode="json")
-        values["subject_id"] = subject_id
-        values["subject_data"] = subject_data
+        values = await self._validated_create_values(session, user_id, dto)
         entry = Entry(user_id=user_id, **values)
         await self.repo.add(session, entry)
+        await session.commit()
+        await session.refresh(entry)
+        return entry
+
+    async def create_user_authored(
+        self, session: AsyncSession, user_id: str, dto: EntryAuthoringCreate
+    ) -> Entry:
+        """Create human-authored canon without accepting client lifecycle metadata.
+
+        The authenticated request itself is the RFC-002 human gate. A correction
+        remains an immutable replacement: the new Entry is persisted as an
+        uncommitted proposal and promoted only by the existing atomic
+        ``supersede()`` implementation.
+        """
+        await self._lock_active_owner(session, user_id)
+        internal_dto = EntryCreate(
+            scope_kind=dto.scope_kind,
+            scope_id=dto.scope_id,
+            subject_type=dto.subject_type,
+            subject_id=dto.subject_id,
+            subject_data=dto.subject_data,
+            type=dto.type,
+            status=EntryStatus.CAPTURED,
+            title=dto.title,
+            content=dto.content,
+            data=dto.data,
+            provenance=EntryProvenance(
+                source_kind=ProvenanceSourceKind.USER,
+                source_id=user_id,
+                capture_method=ProvenanceCaptureMethod.HUMAN_AUTHORED,
+                producer="user-authoring-api",
+            ),
+            priority=dto.priority,
+            created_at_chapter_id=dto.created_at_chapter_id,
+        )
+        values = await self._validated_create_values(session, user_id, internal_dto)
+        # The transient proposed state is not committed. It exists only so a
+        # correction can reuse the same atomic supersession implementation as
+        # Review Card replacements.
+        values["status"] = EntryStatus.PROPOSED.value
+        entry = Entry(user_id=user_id, **values)
+        await self.repo.add(session, entry)
+
+        if dto.supersedes_entry_id is not None:
+            _, replacement = await self.supersede(
+                session,
+                user_id,
+                dto.supersedes_entry_id,
+                entry.id,
+            )
+            return replacement
+
+        await self._validate_acceptance_anchors(session, user_id, entry)
+        if EntryType(entry.type) in SINGLE_CURRENT_ENTRY_TYPES:
+            existing = await self.repo.find_active_canon_for_update(
+                session,
+                user_id=user_id,
+                scope_kind=entry.scope_kind,
+                scope_id=entry.scope_id,
+                entry_type=entry.type,
+                subject_type=entry.subject_type,
+                subject_id=entry.subject_id,
+                exclude_entry_id=entry.id,
+            )
+            if existing is not None:
+                raise ValidationAppError(
+                    "Active canon already exists for this single-current Entry identity; "
+                    "use supersede() to replace it",
+                    {"existing_entry_id": existing.id, "type": entry.type},
+                )
+
+        entry.status = EntryStatus.CANON.value
+        entry.accepted_at = utcnow()
         await session.commit()
         await session.refresh(entry)
         return entry
@@ -113,6 +170,99 @@ class EntryService:
             status=status.value if status else None,
             entry_type=entry_type.value if entry_type else None,
         )
+
+    async def list_entries(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        *,
+        page: PageParams,
+        statuses: builtins.list[EntryStatus],
+        scope_kind: EntryScope | None = None,
+        scope_id: str | None = None,
+        entry_type: EntryType | None = None,
+        subject_type: EntrySubjectType | None = None,
+        subject_id: str | None = None,
+        exclude_orphaned: bool = True,
+    ) -> Page[Entry]:
+        """Return a bounded owner-scoped CRUD/audit page, never a retrieval rank.
+
+        Current canon views exclude inaccessible or soft-deleted anchors before
+        pagination. Explicit history/audit views retain those immutable records.
+        """
+        await self._assert_active_owner(session, user_id)
+        status_values = [status.value for status in statuses]
+        scope_kind_value = scope_kind.value if scope_kind else None
+        entry_type_value = entry_type.value if entry_type else None
+        subject_type_value = subject_type.value if subject_type else None
+        if not exclude_orphaned:
+            return await self.repo.list_page(
+                session,
+                user_id=user_id,
+                page=page,
+                statuses=status_values,
+                scope_kind=scope_kind_value,
+                scope_id=scope_id,
+                entry_type=entry_type_value,
+                subject_type=subject_type_value,
+                subject_id=subject_id,
+            )
+
+        # Filter liveness before the externally visible page is finalized. We
+        # scan bounded repository pages so orphaned records cannot underfill a
+        # response or cause later live records to be skipped.
+        from app.core.pagination import encode_cursor
+
+        items: builtins.list[Entry] = []
+        candidate_page = page
+        while True:
+            candidates = await self.repo.list_page(
+                session,
+                user_id=user_id,
+                page=candidate_page,
+                statuses=status_values,
+                scope_kind=scope_kind_value,
+                scope_id=scope_id,
+                entry_type=entry_type_value,
+                subject_type=subject_type_value,
+                subject_id=subject_id,
+            )
+            live_entries, _ = await self._exclude_orphaned_candidates(
+                session, user_id, candidates.items
+            )
+            items.extend(live_entries)
+            if len(items) > page.limit:
+                last = items[page.limit - 1]
+                return Page(
+                    items=items[: page.limit],
+                    next_cursor=encode_cursor(str(last.created_at), last.id),
+                )
+            if candidates.next_cursor is None:
+                return Page(items=items, next_cursor=None)
+            candidate_page = PageParams(limit=page.limit, cursor=candidates.next_cursor)
+
+    async def _validated_create_values(
+        self, session: AsyncSession, user_id: str, dto: EntryCreate
+    ) -> dict[str, Any]:
+        self._validate_creation_state(dto)
+        await self._validate_scope(session, user_id, dto.scope_kind, dto.scope_id)
+        subject_id, subject_data = await self._validate_and_normalize_subject(
+            session,
+            user_id,
+            dto.scope_kind,
+            dto.scope_id,
+            dto.subject_type,
+            dto.subject_id,
+            dto.subject_data,
+        )
+        await self._validate_provenance(session, user_id, dto)
+        await self._validate_chapter_origin(
+            session, user_id, dto.scope_kind, dto.scope_id, dto.created_at_chapter_id
+        )
+        values = dto.model_dump(mode="json")
+        values["subject_id"] = subject_id
+        values["subject_data"] = subject_data
+        return values
 
     async def list_review_entries(
         self, session: AsyncSession, user_id: str

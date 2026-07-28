@@ -117,6 +117,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **예상 변경 범위:** `api/v1/entries.py`(생성/목록/상세/수정 — status는 서비스 규칙이 결정), `schemas/entry.py`, 필요 시 `services/entry_service.py` 조회 필터, 통합 테스트.
 - **완료 조건:** 사용자 authoring은 RFC-002 §7.2에 따라 허용 상태만 생성 · AI 생산자용 `status=canon` 직접 지정 경로 없음 · 기본 조회는 canon만, `proposed/rejected/superseded`는 명시 요청 시에만 라벨과 함께 반환 · 소유자 격리 유지 · 마이그레이션 0.
 - **회귀 테스트:** 신규 authoring 통합 테스트 + `test_entry_service.py` 전량 + R2.
+- **현재 상태:** 구현 및 API/schema 통합 테스트는 `feature/entry-authoring-api`에 추가되었다. 그러나 현재 Windows shell wrapper가 실행 명령을 손상시키므로 pytest/Ruff/MyPy/CI 실측 전에는 본 항목을 완료로 체크하지 않는다.
 - **추천 모델/effort:** GPT-5.6 Terra / High.
 
 #### P1-6 retrieve() → Context Assembly를 실제 생성 경로에 연결 (flag 기반, 추가만)

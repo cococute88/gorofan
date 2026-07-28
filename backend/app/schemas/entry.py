@@ -188,6 +188,63 @@ class EntryCreate(BaseModel):
         return self
 
 
+class EntryAuthoringCreate(BaseModel):
+    """Authenticated human authoring input for a direct canon Entry.
+
+    The request deliberately has no owner, lifecycle status, or provenance
+    fields. ``EntryService`` derives those facts from the authenticated user
+    so this boundary cannot impersonate an AI producer or bypass review.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope_kind: EntryScope
+    scope_id: str | None = None
+    subject_type: EntrySubjectType | None = None
+    subject_id: str | None = None
+    subject_data: dict[str, Any] = Field(default_factory=dict)
+    type: EntryType
+    title: str | None = Field(default=None, max_length=300)
+    content: str = Field(min_length=1)
+    data: dict[str, Any] = Field(default_factory=dict)
+    priority: int = Field(default=50, ge=0, le=100)
+    created_at_chapter_id: str | None = None
+    supersedes_entry_id: str | None = Field(default=None, min_length=1)
+
+    @field_validator("content")
+    @classmethod
+    def normalize_content(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("content must not be blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_entry_contract(self) -> Self:
+        # Reuse the closed type/scope/subject contract without accepting a
+        # client-controlled provenance or lifecycle state.
+        EntryCreate(
+            scope_kind=self.scope_kind,
+            scope_id=self.scope_id,
+            subject_type=self.subject_type,
+            subject_id=self.subject_id,
+            subject_data=self.subject_data,
+            type=self.type,
+            status=EntryStatus.CAPTURED,
+            title=self.title,
+            content=self.content,
+            data=self.data,
+            provenance=EntryProvenance(
+                source_kind=ProvenanceSourceKind.USER,
+                capture_method=ProvenanceCaptureMethod.HUMAN_AUTHORED,
+                producer="user-authoring-validation",
+            ),
+            priority=self.priority,
+            created_at_chapter_id=self.created_at_chapter_id,
+        )
+        return self
+
+
 class EntryUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=300)
     content: str | None = Field(default=None, min_length=1)

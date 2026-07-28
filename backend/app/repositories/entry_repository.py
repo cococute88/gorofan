@@ -6,6 +6,8 @@ import builtins
 from sqlalchemy import and_, false, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ValidationAppError
+from app.core.pagination import Page, PageParams, decode_cursor, encode_cursor
 from app.models.entry import Entry
 
 
@@ -85,6 +87,65 @@ class EntryRepository:
             stmt = stmt.where(Entry.type == entry_type)
         stmt = stmt.order_by(Entry.created_at, Entry.id)
         return list((await session.execute(stmt)).scalars().all())
+
+    async def list_page(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        page: PageParams,
+        scope_kind: str | None = None,
+        scope_id: str | None = None,
+        statuses: builtins.list[str] | None = None,
+        entry_type: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+    ) -> Page[Entry]:
+        """Return a stable, owner-rooted Entry read/audit page.
+
+        This is intentionally a CRUD/audit query. It does not call the
+        Store-wide retrieval/ranking path.
+        """
+        stmt = select(Entry).where(Entry.user_id == user_id)
+        if scope_kind is not None:
+            stmt = stmt.where(Entry.scope_kind == scope_kind)
+        if scope_id is not None:
+            stmt = stmt.where(Entry.scope_id == scope_id)
+        if statuses is not None:
+            stmt = stmt.where(Entry.status.in_(statuses))
+        if entry_type is not None:
+            stmt = stmt.where(Entry.type == entry_type)
+        if subject_type is not None:
+            stmt = stmt.where(Entry.subject_type == subject_type)
+        if subject_id is not None:
+            stmt = stmt.where(Entry.subject_id == subject_id)
+
+        stmt = stmt.order_by(Entry.created_at, Entry.id)
+        if page.cursor:
+            decoded = decode_cursor(page.cursor)
+            if decoded is None:
+                raise ValidationAppError("Invalid Entry cursor")
+            created_at_text, entry_id = decoded
+            if not isinstance(created_at_text, str) or not isinstance(entry_id, str):
+                raise ValidationAppError("Invalid Entry cursor")
+            try:
+                from datetime import datetime
+
+                created_at = datetime.fromisoformat(created_at_text)
+            except (TypeError, ValueError) as exc:
+                raise ValidationAppError("Invalid Entry cursor") from exc
+            stmt = stmt.where(
+                (Entry.created_at > created_at)
+                | and_(Entry.created_at == created_at, Entry.id > entry_id)
+            )
+
+        rows = list((await session.execute(stmt.limit(page.limit + 1))).scalars().all())
+        next_cursor = None
+        if len(rows) > page.limit:
+            last = rows[page.limit - 1]
+            next_cursor = encode_cursor(str(last.created_at), last.id)
+            rows = rows[: page.limit]
+        return Page(items=rows, next_cursor=next_cursor)
 
     async def list_retrieval_candidates(
         self,
