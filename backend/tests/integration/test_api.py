@@ -139,3 +139,21 @@ def test_work_character_link_list_unlink(client):
     assert client.get(f"/api/v1/works/{work_id}/characters").json() == []
     # unlinking again is a 404
     assert client.delete(f"/api/v1/works/{work_id}/characters/{char_id}").status_code == 404
+
+
+def test_prompt_template_legacy_create_and_list_compatibility(client):
+    created = client.post(
+        "/api/v1/prompt-templates",
+        json={
+            "scope": "chat",
+            "name": "사용자 템플릿",
+            "body": "사용자가 저장한 legacy body",
+            "is_default": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    template_id = created.json()["id"]
+
+    listed = client.get("/api/v1/prompt-templates")
+    assert listed.status_code == 200, listed.text
+    assert any(template["id"] == template_id for template in listed.json())

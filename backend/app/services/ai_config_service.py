@@ -75,6 +75,8 @@ class AIConfigService:
         return tpl
 
     async def list_templates(self, session: AsyncSession, user_id: str) -> list[PromptTemplate]:
+        """List legacy/user-authored compatibility templates for one user."""
+
         stmt = select(PromptTemplate).where(PromptTemplate.user_id == user_id)
         return list((await session.execute(stmt)).scalars().all())
 

@@ -1,4 +1,9 @@
-"""AI config router: model-configs, prompt-templates, credentials, providers (design 6.2)."""
+"""AI config router: model configs, legacy templates, credentials, and providers.
+
+The ``/prompt-templates`` surface preserves frozen-schema, user-authored
+compatibility data. Architecture-owned creative prompt defaults are resolved
+only from repository-managed prompt assets.
+"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, status

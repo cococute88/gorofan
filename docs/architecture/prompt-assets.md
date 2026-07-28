@@ -38,15 +38,20 @@ existing runtime contracts are otherwise unchanged.
 
 | Category | Ownership and treatment |
 |---|---|
-| Architecture-owned creative body | Repository prompt asset. Maintainers change a diffable file, test it, and commit it. |
+| Architecture-owned creative body | **Repository prompt asset.** Maintainers change a diffable versioned file, test it, and commit it. The repository is the source for the asset identifier, version, body, and SHA-256 digest. |
 | Runtime-generated wrapper/instruction | Runtime composition input. Current character rendering, previous-summary inclusion, labels, variable resolution, and the legacy continuation instruction remain code because their text is generated from call data or is an input default, not a standalone creative body. |
-| User-authored template/config | Persisted user data may exist independently, but it is not an architecture-owned creative prompt body. |
+| Legacy/user-authored `PromptTemplate` | Frozen-schema compatibility data. Its user, scope, name, body, and default flag remain available through the legacy API, but its body is not an architecture-owned creative prompt source. |
 | Test fixture | Test-only frozen text may duplicate a body solely to prove migration fidelity; it is not a runtime source. |
 
-`PromptTemplate` remains an additive legacy model/API in the frozen `0001`
-schema. Its current CRUD persists a user, scope, name, body, and default flag,
-but the P1-3 loader and the Chat/Novel/Summary default generation paths never
-read it. It is therefore retained for compatibility as legacy user-authored
-template data, not a source for architecture-owned creative bodies. P1-4 may
-harden this compatibility boundary without deleting data, changing the schema,
-or adding a migration.
+`PromptTemplate` remains an additive legacy model in the frozen `0001` schema.
+Its existing `GET/POST` compatibility API preserves user-authored data,
+including bodies that happen to have an asset-like name or similar text. The
+allow-listed `PromptAssetLoader` has no DB lookup or fallback, and the Chat,
+Novel, and rolling Summary defaults never query `PromptTemplate`; therefore DB
+data cannot override a repository default.
+
+This contract also applies to future Analyst facets, declarative Writer stages,
+and Bench checks: their architecture-owned creative bodies must resolve through
+repository-managed versioned assets, never `PromptTemplate.body`. P1-4 adds no
+migration, schema change, data conversion, or deletion. Any future removal or
+conversion of legacy `PromptTemplate` data requires separately approved work.

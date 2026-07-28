@@ -47,6 +47,7 @@
 | Retrieval/Context 골든 회귀 픽스처 | `tests/golden/retrieval_context_fixture.py`, `tests/golden/test_retrieval_context_golden.py` | 동일 |
 | Entry Review Card 백엔드 API | `api/v1/entries.py` — `GET /entries/review`, `GET /entries/review/{id}`, `POST .../accept|reject|edit`; 라우터 등록 `api/router.py`; `docs/architecture/review-card-api.md` | `tests/integration/test_entry_review_api.py` |
 | Repository-managed prompt assets (P1-3) | `backend/prompts/`의 `chat.default`·`novel.continue`·`summary.rolling` versioned UTF-8 body, `engines/prompt/assets.py` allow-listed loader, Chat/Novel/Summarizer trace identity/version/digest | `tests/unit/test_prompt_assets.py` + 기존 prompt budget/streaming 회귀 |
+| `PromptTemplate` compatibility boundary (P1-4) | frozen `0001` legacy/user-authored `PromptTemplate` table과 기존 `GET/POST` API를 유지하고, repository asset의 identifier/version/body/digest가 유일한 architecture creative source임을 코드·ADR·asset 문서에 명시 | `tests/integration/test_prompt_template_boundary.py` + `test_api.py` POST/GET-list + 기존 asset/Chat/Novel/Summary 회귀 |
 
 **보존된 불변식(코드로 확인됨):** `status=canon`을 직접 받는 API 없음 · AI 생산자의 canon 직접 기록 경로 없음 · chat-private `Memory`는 Entry로 저장되지 않음 · per-library 테이블 없음 · `misc` 타입 없음 · `0001` 미수정.
 
@@ -58,7 +59,6 @@
 |---|---|---|
 | G1 | **Review Card supersede API 부재** | 확인됨. `EntryService.supersede()`는 존재하지만 이를 노출하는 review 엔드포인트가 없다(`api/v1/entries.py`에 accept/reject/edit만). `docs/architecture/review-card-api.md`가 "intentional deferral"로 명시. → 기존 canon 교체를 UI/API에서 완결할 수 없다. |
 | G2 | **Review Card 프론트엔드 부재** | 확인됨. `frontend/src`에서 `/entries` 호출은 **레거시 lorebook entries뿐**(`lib/api/endpoints.ts:55,57`). Review 큐/카드/훅/화면 없음. RFC-011의 gate가 사용자에게 노출되지 않는다. |
-| G5 | **legacy `PromptTemplate` compatibility boundary needs P1-4 hardening** | `models/ai_config.py` and `api/v1/ai_config.py` retain the frozen-`0001` CRUD table/API. P1-3 documents it as legacy user-authored template data and confirms the repository loader and Chat/Novel/Summary defaults do not read it; P1-4 must add explicit compatibility validation without deleting data or changing the schema. |
 | G6 | **legacy Character/World/Lore ↔ Entry Store 미연결** | 확인됨. `Character.personality`/`speech_style`, `World` 배열, `Lorebook`/`LoreEntry`가 여전히 유일한 생성 컨텍스트 소스다. `PromptEngine._make_lore_blocks()`(키워드 lore 스캔)가 `chat_service`/`novel_service`에서 실사용 중. Entry 백필/듀얼리드/동등성 비교 없음. |
 | G7 | **retrieve()/Context Assembly가 실사용 경로에 미연결** | 확인됨. `EntryService.retrieve()`와 `assemble_entry_context()`의 호출자는 **테스트뿐**이다(프로덕션 호출 0건). 즉 RFC-003 §16.8이 경고한 "두 개의 권위 있는 검색 경로" 상태가 아직 해소되지 않았고, Entry 지식이 실제 생성에 주입되지 않는다. |
 | G8 | **edit-diff capture 미구현** | 확인됨. `edit-diff`는 `schemas/entry.py`의 provenance source-kind **열거값으로만** 존재한다(`ProvenanceSourceKind.EDIT_DIFF`). draft↔accepted diff를 계산·저장하는 코드/컬럼/테이블 없음. ADR-010·RFC-001 §8.8의 "day-one capture, 소급 수집 불가" 요구 미충족 — **잔여 gap 중 유일하게 시간이 지날수록 데이터가 영구 손실되는 항목.** |
