@@ -34,13 +34,23 @@ class ModelConfigOut(TimestampedOut):
 
 
 class PromptTemplateCreate(BaseModel):
+    """Legacy/user-authored compatibility template; not an architecture prompt asset."""
+
     scope: str = "chat"
     name: str = "기본"
-    body: str = ""
+    body: str = Field(
+        default="",
+        description=(
+            "Legacy/user-authored compatibility data. Architecture default prompts are "
+            "repository-managed assets and never read this body."
+        ),
+    )
     is_default: bool = False
 
 
 class PromptTemplateOut(TimestampedOut):
+    """Serialized legacy/user-authored compatibility template data."""
+
     user_id: str
     scope: str
     name: str

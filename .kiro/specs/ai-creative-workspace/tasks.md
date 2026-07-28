@@ -103,11 +103,11 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** GPT-5.6 Terra / High.
 
 #### P1-4 legacy `PromptTemplate` 경계 고정 (비파괴)
+- **상태:** 완료 — frozen `0001`의 legacy/user-authored `PromptTemplate`과 기존 `GET/POST` compatibility API를 비파괴적으로 유지하고, repository default asset이 같은 이름 또는 유사 body의 DB template에 의해 override되지 않음을 격리 DB 테스트로 고정했다.
 - **목적:** DB `PromptTemplate`(0001 포함, CRUD 노출 중)과 새 prompt asset의 관계를 확정한다. **테이블/데이터를 지우지 않고** "사용자 입력만 저장, creative body는 파일" 경계를 코드·문서·테스트로 고정한다.
 - **선행 의존성:** P1-3.
-- **예상 변경 범위:** `docs/architecture/` 결정 노트(신규, 또는 ADR-013 부속 구현 노트), `services/ai_config_service.py`·`api/v1/ai_config.py` 검증 보강(신규 creative stage body 저장 경로 차단), 통합 테스트.
-- **완료 조건:** 새 Architecture 경로(Analyst/Writer/Bench)가 DB 템플릿 body를 읽지 않음이 테스트로 고정 · 기존 사용자 템플릿 데이터·API 하위호환 유지 · 마이그레이션 0 · 향후 제거는 별도 승인 필요임을 문서화.
-- **회귀 테스트:** `test_api.py`(ai_config CRUD), Property 8(마스킹), R1.
+- **완료 조건:** 현재 Chat/Novel/Summary와 향후 Analyst/Writer/Bench architecture 경로는 DB template body를 읽지 않음 · 기존 사용자 template 데이터/API 하위호환 유지 · 마이그레이션 0 · 향후 제거는 별도 승인 필요임을 문서화.
+- **회귀 테스트:** `test_prompt_template_boundary.py`(DB 무의존 asset load, Chat/Novel/Summary repository-default 우선), `test_api.py`(legacy POST/GET-list compatibility), 기존 `test_prompt_assets.py`, Property 8/R1.
 - **추천 모델/effort:** GPT-5.6 Terra / High.
 
 #### P1-5 Entry authoring / 조회 API (사용자 직접 canon + 감사 뷰)

@@ -15,7 +15,16 @@ Notably, this is the *exact* failure mode v1 itself flagged as the downside of D
 
 ## 2. Decision
 
-**Prompt bodies (system templates, facet prompts, Writer stage prompts) live only in versioned repository files. There is no `prompt_templates` table and no per-user prompt-body override. User customization is limited to structured inputs that are injected into prompts.**
+**Architecture-owned prompt bodies (system templates, facet prompts, Writer stage prompts) live only in versioned repository files. There is no architecture runtime `prompt_templates` lookup or per-user prompt-body override. User customization is limited to structured inputs that are injected into prompts.**
+
+**P1-4 frozen-schema compatibility qualification (2026-07-28).** The pre-existing
+`PromptTemplate` table and its existing `GET/POST` user-authored compatibility
+API remain in frozen migration `0001`; this decision does not delete, rewrite,
+or migrate that data.
+Those legacy bodies are not a creative-default source and are never an asset
+fallback. The repository remains authoritative for an architecture asset's
+identifier, version, body, and digest. Removing or converting the legacy data
+requires separately approved work.
 
 1. **All prompt bodies are files**, versioned in the repo (`prompts/…`), diffed, reviewed, and **Bench-regression-tested** (ADR-012). A facet = a file (ADR-008); a Writer stage = a file (ADR-005).
 2. **No DB-stored prompt bodies.** The `design.md` `prompt_templates` table idea is **deleted** (it is on the two-year debt list, `architecture-final-minimal.md` §5). This *reverses v1's DB-override tier.*

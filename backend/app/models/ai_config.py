@@ -1,8 +1,10 @@
 """AI Config context: ModelConfig, PromptTemplate, ProviderCredential (design 3, 4.2).
 
 Partial-unique defaults (design 4.1-7): one default ModelConfig per user, one
-default PromptTemplate per (user, scope). Credentials store encrypted keys only;
-plaintext is never serialized (Property 8 / SEC-2).
+default PromptTemplate per (user, scope). ``PromptTemplate`` is frozen-schema,
+legacy/user-authored compatibility data; architecture-owned creative prompt bodies
+are repository assets and never resolve through this model. Credentials store
+encrypted keys only; plaintext is never serialized (Property 8 / SEC-2).
 """
 from __future__ import annotations
 
