@@ -7,16 +7,12 @@ design 11.6); actual end is delegated to the provider finish_reason.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.adapters.base import AssembledPrompt, ProviderRequest, StreamEvent
 from app.adapters.registry import ProviderRegistry
+from app.engines.prompt.assets import PromptAssetLoader
 from app.engines.prompt.engine import AssembleInput, PromptEngine
-
-DEFAULT_NOVEL_TEMPLATE = (
-    "당신은 숙련된 소설가다. 주어진 세계관·등장인물·이전 줄거리에 일관되게, 몰입감 있는 "
-    "한국어 산문으로 다음 분량을 이어쓴다. 시점과 문체를 유지하고 갑작스러운 설정 변경을 피한다."
-)
 
 
 def words_to_tokens(words: int) -> int:
@@ -38,6 +34,7 @@ class ChapterContext:
 class NovelEngine:
     prompt_engine: PromptEngine
     registry: ProviderRegistry
+    prompt_assets: PromptAssetLoader = field(default_factory=PromptAssetLoader)
 
     def assemble_continue(
         self,
@@ -46,13 +43,14 @@ class NovelEngine:
         instruction: str,
         req: ProviderRequest,
     ) -> AssembledPrompt:
+        asset = self.prompt_assets.load("novel.continue")
         cap = self.registry.capabilities(req.provider, req.model_name)
-        # blend characters' personalities into the system body
+        # Preserve the legacy runtime character-context wrapper around the asset body.
         char_lines = [
             f"- {getattr(c, 'name', '')}: {getattr(c, 'personality', '')} / 말투: {getattr(c, 'speech_style', '')}"
             for c in ctx.characters
         ]
-        body = DEFAULT_NOVEL_TEMPLATE
+        body = asset.body
         if char_lines:
             body += "\n\n[등장인물]\n" + "\n".join(char_lines)
         tail = getattr(ctx.current_chapter, "content_text", "") or ""
@@ -60,6 +58,9 @@ class NovelEngine:
         return self.prompt_engine.assemble(
             AssembleInput(
                 template_body=body,
+                prompt_asset_id=asset.asset_id,
+                prompt_asset_version=asset.version,
+                prompt_asset_sha256=asset.sha256,
                 character=None,
                 world=ctx.world,
                 lore_entries=ctx.lore_entries or [],

@@ -27,6 +27,9 @@ _VAR_RE = re.compile(r"\{\{([\w\.]+)\}\}")
 @dataclass
 class AssembleInput:
     template_body: str
+    prompt_asset_id: str | None = None
+    prompt_asset_version: str | None = None
+    prompt_asset_sha256: str | None = None
     character: object | None = None
     persona: object | None = None
     world: object | None = None
@@ -201,6 +204,12 @@ class PromptEngine:
             ]
             + [_trace_entry(b, "dropped").__dict__ for b in result.dropped],
         }
+        if inp.prompt_asset_id is not None:
+            trace["prompt_asset"] = {
+                "id": inp.prompt_asset_id,
+                "version": inp.prompt_asset_version,
+                "sha256": inp.prompt_asset_sha256,
+            }
         # Property 7 defensive assertion
         assert token_count <= inp.context_window, "Property 7 violated"
         return AssembledPrompt(

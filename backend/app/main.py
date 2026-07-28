@@ -24,6 +24,7 @@ from app.db.session import create_engine, create_sessionmaker
 from app.engines.chat.engine import ChatEngine
 from app.engines.memory.engine import MemoryEngine
 from app.engines.novel.engine import NovelEngine
+from app.engines.prompt.assets import PromptAssetLoader
 from app.engines.prompt.engine import PromptEngine
 from app.engines.shared.summarizer import Summarizer
 from app.services.ai_config_service import AIConfigService
@@ -47,10 +48,20 @@ async def lifespan(app: FastAPI):
 
     # engines
     prompt_engine = PromptEngine()
-    summarizer = Summarizer(prompt_engine=prompt_engine, registry=registry)
+    prompt_assets = PromptAssetLoader()
+    summarizer = Summarizer(
+        prompt_engine=prompt_engine,
+        registry=registry,
+        prompt_assets=prompt_assets,
+    )
     memory_engine = MemoryEngine(summarizer=summarizer)
-    chat_engine = ChatEngine(prompt_engine, memory_engine, registry)
-    novel_engine = NovelEngine(prompt_engine, registry)
+    chat_engine = ChatEngine(
+        prompt_engine,
+        memory_engine,
+        registry,
+        prompt_assets=prompt_assets,
+    )
+    novel_engine = NovelEngine(prompt_engine, registry, prompt_assets=prompt_assets)
 
     # services (app-lifetime; session-bound work uses sessionmaker)
     chat_service = ChatService(sessionmaker, settings, registry, chat_engine, job_queue)

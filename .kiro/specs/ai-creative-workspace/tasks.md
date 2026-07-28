@@ -94,6 +94,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** GPT-5.6 Terra / High.
 
 #### P1-3 저장소 관리 prompt asset 구조 도입
+- **상태:** 완료 — `backend/prompts/` 자산, allow-listed UTF-8 loader, trace identity/version/digest, 3개 legacy body 이관 및 회귀 테스트가 구현되었다.
 - **목적:** ADR-013/RFC-009의 "prompt body는 versioned file asset" 요구를 충족하는 최소 자산 계층(디렉터리 규약 + 로더 + 버전 식별자)을 만든다.
 - **선행 의존성:** 없음. Phase 2/3의 사실상 선행 작업.
 - **예상 변경 범위:** `prompts/`(신규, 저장소 루트 또는 `backend/prompts/`), `backend/app/engines/prompt/assets.py`(신규 로더: 이름+버전 조회, 파일 해시/버전 노출), 기존 하드코딩 3건 이관 — `engines/chat/engine.py: DEFAULT_CHAT_TEMPLATE`, `engines/novel/engine.py: DEFAULT_NOVEL_TEMPLATE`, `engines/shared/summarizer.py: SUMMARY_TEMPLATE`, 유닛 테스트.
