@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db
 from app.models.user import User
-from app.schemas.entry import EntryRead, EntryReviewEdit
+from app.schemas.entry import (
+    EntryRead,
+    EntryReviewEdit,
+    EntryReviewSupersedeRequest,
+    EntryReviewSupersedeResponse,
+)
 from app.services.entry_service import EntryService
 
 router = APIRouter()
@@ -56,3 +61,21 @@ async def edit_review_entry(
     db: AsyncSession = Depends(get_db),
 ):
     return await _entries.edit_review_entry(db, user.id, entry_id, dto)
+
+
+@router.post(
+    "/review/{entry_id}/supersede", response_model=EntryReviewSupersedeResponse
+)
+async def supersede_review_entry(
+    entry_id: str,
+    dto: EntryReviewSupersedeRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    old_entry, new_entry = await _entries.supersede(
+        db,
+        user.id,
+        dto.current_entry_id,
+        entry_id,
+    )
+    return EntryReviewSupersedeResponse(old_entry=old_entry, new_entry=new_entry)
