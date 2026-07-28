@@ -259,6 +259,21 @@ class EntryRead(TimestampedOut):
     superseded_at: datetime | None
 
 
+class EntryReviewSupersedeRequest(BaseModel):
+    """Identify the existing canon that an owned proposed Entry replaces."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    current_entry_id: str = Field(min_length=1)
+
+
+class EntryReviewSupersedeResponse(BaseModel):
+    """The old and new lifecycle states committed by one supersede action."""
+
+    old_entry: EntryRead
+    new_entry: EntryRead
+
+
 class EntryRetrievalTaskKind(StrEnum):
     GENERAL = "general"
     SCENE = "scene"

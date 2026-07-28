@@ -313,6 +313,7 @@ class EntryService:
                 "Replacement must have compatible scope, type, and subject identity"
             )
         await self._assert_acyclic(session, user_id, current.id, replacement)
+        await self._validate_acceptance_anchors(session, user_id, replacement)
 
         now = utcnow()
         replacement.status = EntryStatus.CANON.value
