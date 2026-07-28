@@ -59,7 +59,7 @@
 ## 2. Architecture Phase 로드맵
 
 ```
-Phase 1  잔여 Core 정리          ← 지금 여기 (약 65%)
+Phase 1  잔여 Core 정리          ← 지금 여기 (약 75%)
   └→ Phase 2  Analyst (text → proposed Entries)
        ├→ Phase 3  Writer (loop over declarative stages)
        │    └→ Phase 4  Story Bible (canonical view + continuity loop)
@@ -117,7 +117,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **예상 변경 범위:** `api/v1/entries.py`(생성/목록/상세/수정 — status는 서비스 규칙이 결정), `schemas/entry.py`, 필요 시 `services/entry_service.py` 조회 필터, 통합 테스트.
 - **완료 조건:** 사용자 authoring은 RFC-002 §7.2에 따라 허용 상태만 생성 · AI 생산자용 `status=canon` 직접 지정 경로 없음 · 기본 조회는 canon만, `proposed/rejected/superseded`는 명시 요청 시에만 라벨과 함께 반환 · 소유자 격리 유지 · 마이그레이션 0.
 - **회귀 테스트:** 신규 authoring 통합 테스트 + `test_entry_service.py` 전량 + R2.
-- **현재 상태:** 구현 및 API/schema 통합 테스트는 `feature/entry-authoring-api`에 추가되었다. 그러나 현재 Windows shell wrapper가 실행 명령을 손상시키므로 pytest/Ruff/MyPy/CI 실측 전에는 본 항목을 완료로 체크하지 않는다.
+- **상태:** 완료 — `feature/entry-authoring-api`에서 사용자 authoring·canon/audit 조회 API와 API/schema 통합 테스트를 구현했다. 로컬 전체 pytest **110 passed, 0 failed**, 대상 테스트 통과, Ruff 통과, 변경 파일 범위 MyPy 통과, Alembic head 불변(`0002_entry_store`) 및 GitHub Actions backend/frontend push·PR checks 4건 성공을 확인했다. 전체 MyPy의 기존 비관련 오류 44건은 본 변경 범위에 없다.
 - **추천 모델/effort:** GPT-5.6 Terra / High.
 
 #### P1-6 retrieve() → Context Assembly를 실제 생성 경로에 연결 (flag 기반, 추가만)
@@ -353,11 +353,11 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 
 | 순서 | 작업 | 근거 | 추천 모델 / effort |
 |---|---|---|---|
-| 1 | **P1-1** Review Card supersede 엔드포인트 | 작고 독립적이며, review gate의 마지막 구멍(canon 교체)을 닫는다. 후속 프론트 작업의 계약을 먼저 고정한다. | GPT-5.6 Terra / High |
-| 2 | **P1-3** prompt asset 구조 도입 | Phase 2/3의 사실상 모든 작업이 프롬프트 파일 자산을 전제한다. 하드코딩 3건도 함께 해소된다. | GPT-5.6 Terra / High |
-| 3 | **P1-2** Review Card 프론트엔드 | 백엔드 gate가 사용자에게 노출되지 않으면 Analyst 제안이 쌓여도 canon이 자라지 않는다(플라이휠 정지). | GPT-5.6 Terra / High |
+| 1 | **P1-6** retrieve() → Context Assembly 실사용 경로 연결 | P1-5의 검증 데이터 작성/조회 경로가 준비되었다. flag 기본 OFF로 기존 Chat/Novel 동작을 보존하면서 Entry 지식을 실제 생성 경로에 추가할 수 있다. | Claude Opus 5 / High |
+| 2 | **P1-7** edit-diff capture | 승인 전후 차이는 소급 수집할 수 없다. 영속 설계 승인 뒤 P1-6과 병행해 비차단 capture를 시작해야 한다. | Claude Opus 5 / High |
+| 3 | **P1-8** legacy Character/World/Lore ↔ Entry 동등성 브릿지 | P1-6의 실제 주입 경로가 확보된 뒤, 백필 없이 기존 컨텍스트와 Entry 투영을 비교해 안전한 전환 근거를 만든다. | GPT-5.6 Sol / High |
 
-**병행 가능:** P1-7(edit-diff capture)은 위 3건과 독립적이며, *데이터가 지금부터만 모인다*는 점 때문에 착수를 미룰수록 손실이 누적된다. 여력이 있으면 1~3과 병행한다(Claude Opus 5 / High).
+**병행 가능:** P1-7(edit-diff capture)은 P1-6과 독립적으로 착수할 수 있지만, 신규 운영 기록의 영속 설계는 되돌리기 어렵다. 사용자 승인과 additive migration 설계 리뷰를 선행한다.
 
 ---
 
