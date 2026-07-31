@@ -1,7 +1,7 @@
 # Implementation Status (검증 기준 스냅샷)
 
-- **확정 시각:** 2026-07-28 — P1-2 Entry Review Card 프론트엔드 검증 반영
-- **기준 main:** `4e318b33656b19e066629bba535a812b440cdb59` — PR #17 merge commit. 이 문서는 이를 기반으로 한 `feature/entry-review-card-frontend` 변경을 포함한다.
+- **확정 시각:** 2026-07-28 — P1-5 Entry authoring/read API 검증 완료 반영
+- **기준 main:** `170f383d707b1919be310457d48f85d7e7c87924` — PR #18 merge commit. P1-5는 `feature/entry-authoring-api`의 `b731b99bf3c22ed5253eefc080d2397be14439ad`에서 구현·검증되었으며, Draft PR #19의 GitHub Actions backend/frontend push·PR checks 4건이 모두 성공했다.
 - **판정 기준:** 파일 존재만으로 완료 처리하지 않는다. **실행되는 코드 경로 + API 노출 + 통과하는 테스트**를 근거로 `완료 / 부분 완료 / 미구현`을 판정한다.
 - **문서 우선순위:** ADR → RFC-001 → RFC-002…RFC-012 → `docs/architecture/README.md` → 본 문서 → (참고용) 구 `.kiro/specs` M0~M7 계획.
 
@@ -13,14 +13,19 @@
 
 | 검증 항목 | 명령 | 결과 |
 |---|---|---|
-| 백엔드 전체 테스트 | `backend/.venv/Scripts/python -m pytest -q` | **77 passed, 0 failed** (exit 0) |
+| 백엔드 전체 테스트 | `backend/.venv/Scripts/python -m pytest -q` | **110 passed, 0 failed** (exit 0; 기존 Starlette/Alembic deprecation warning만 발생) |
+| P1-5 대상 테스트 | `backend/.venv/Scripts/python -m pytest -q tests/unit/test_entry_authoring_schema.py tests/integration/test_entry_authoring_api.py` | **통과** (exit 0) |
+| P1-5 Ruff | `backend/.venv/Scripts/python -m ruff check app tests` | **All checks passed!** |
+| P1-5 범위 MyPy | `backend/.venv/Scripts/python -m mypy app/schemas/entry.py app/repositories/entry_repository.py app/services/entry_service.py app/api/v1/entries.py tests/unit/test_entry_authoring_schema.py tests/integration/test_entry_authoring_api.py` | **Success: no issues found in 6 source files** |
+| 전체 MyPy (참고) | `backend/.venv/Scripts/python -m mypy app tests` | 기존 비관련 모듈/테스트의 **44 errors / 14 files**; P1-5 6개 파일에는 오류 없음 |
 | 프론트엔드 테스트 | `npm test` (vitest) | **3 files / 13 tests passed** (공유 Queue cache helper의 상태 전이·오류 메시지 처리 포함, exit 0) |
 | 프론트엔드 린트 | `npm run lint` | **No ESLint warnings or errors** (exit 0) |
 | 프론트엔드 빌드 | `npm run build` | **성공** (15 routes, exit 0) |
-| Alembic head | `alembic heads` | `0002_entry_store (head)` |
+| Alembic head | `backend/.venv/Scripts/python -m alembic heads` | `0002_entry_store (head)` |
 | Alembic chain | `alembic history` | `<base> → 0001_initial → 0002_entry_store` |
-| 공백/개행 오류 | `git diff --check` | 오류 없음 |
-| 작업 트리 | `git status --porcelain` | 클린 |
+| 공백/개행 오류 | 변경 9개 파일 대상 trailing-whitespace scan | **오류 없음** (`git diff --check`는 shell wrapper가 단기 명령을 거부하여 직접 실행 불가) |
+| GitHub Actions (PR #19) | backend/frontend push·pull_request checks | **4건 모두 성공** |
+| 작업 트리 | P1-5 구현 커밋 `b731b99` 직후 `git status --porcelain` | 클린 (이후 이 상태 문서 후속 커밋 작성) |
 
 ### 1.1 로컬 환경에서만 발견된 이상 (커밋 대상 아님)
 
@@ -49,19 +54,19 @@
 | Entry Review Card 프론트엔드 (P1-2) | `frontend/src/components/review/review-queue.tsx` + 단일 type-agnostic `review-card.tsx`, `hooks/use-entry-review.ts`, typed endpoint wrappers, 기존 Home 진입점. AI 제안 처리 중에도 작성·채팅을 차단하지 않으며 최상위 내비게이션을 추가하지 않는다. | `frontend/src/components/review/review-utils.test.ts` (큐 제거 불변성, lifecycle/대상 소실/네트워크 오류, supersede 양쪽 상태) + `npm test`/lint/build |
 | Repository-managed prompt assets (P1-3) | `backend/prompts/`의 `chat.default`·`novel.continue`·`summary.rolling` versioned UTF-8 body, `engines/prompt/assets.py` allow-listed loader, Chat/Novel/Summarizer trace identity/version/digest | `tests/unit/test_prompt_assets.py` + 기존 prompt budget/streaming 회귀 |
 | `PromptTemplate` compatibility boundary (P1-4) | frozen `0001` legacy/user-authored `PromptTemplate` table과 기존 `GET/POST` API를 유지하고, repository asset의 identifier/version/body/digest가 유일한 architecture creative source임을 코드·ADR·asset 문서에 명시 | `tests/integration/test_prompt_template_boundary.py` + `test_api.py` POST/GET-list + 기존 asset/Chat/Novel/Summary 회귀 |
+| Entry authoring / canonical + audit read API (P1-5) | `api/v1/entries.py`, `schemas/entry.py`, `services/entry_service.py`, `repositories/entry_repository.py` — 인증 사용자만 server-issued `user`/`human-authored` provenance로 canon을 작성하며, correction은 불변 supersession을 재사용한다. `GET /entries`는 기본 canon/live anchor만 반환하고 `include_history=true`에서 명시적 감사 이력을 제공한다. | `tests/unit/test_entry_authoring_schema.py`, `tests/integration/test_entry_authoring_api.py`, 전체 backend pytest 110 passed, Ruff, P1-5 범위 MyPy, PR #19 GitHub Actions 4건 성공 |
 
 **보존된 불변식(코드로 확인됨):** `status=canon`을 직접 받는 API 없음 · AI 생산자의 canon 직접 기록 경로 없음 · chat-private `Memory`는 Entry로 저장되지 않음 · per-library 테이블 없음 · `misc` 타입 없음 · `0001` 미수정.
 
 ---
 
-## 3. Architecture Phase 1 — 남은 gap (P1-1/P1-2 해결 후 코드 확인 결과)
+## 3. Architecture Phase 1 — 남은 gap (P1-1~P1-5 해결 후 코드 확인 결과)
 
 | # | gap | 확인 결과 |
 |---|---|---|
 | G6 | **legacy Character/World/Lore ↔ Entry Store 미연결** | 확인됨. `Character.personality`/`speech_style`, `World` 배열, `Lorebook`/`LoreEntry`가 여전히 유일한 생성 컨텍스트 소스다. `PromptEngine._make_lore_blocks()`(키워드 lore 스캔)가 `chat_service`/`novel_service`에서 실사용 중. Entry 백필/듀얼리드/동등성 비교 없음. |
 | G7 | **retrieve()/Context Assembly가 실사용 경로에 미연결** | 확인됨. `EntryService.retrieve()`와 `assemble_entry_context()`의 호출자는 **테스트뿐**이다(프로덕션 호출 0건). 즉 RFC-003 §16.8이 경고한 "두 개의 권위 있는 검색 경로" 상태가 아직 해소되지 않았고, Entry 지식이 실제 생성에 주입되지 않는다. |
 | G8 | **edit-diff capture 미구현** | 확인됨. `edit-diff`는 `schemas/entry.py`의 provenance source-kind **열거값으로만** 존재한다(`ProvenanceSourceKind.EDIT_DIFF`). draft↔accepted diff를 계산·저장하는 코드/컬럼/테이블 없음. ADR-010·RFC-001 §8.8의 "day-one capture, 소급 수집 불가" 요구 미충족 — **잔여 gap 중 유일하게 시간이 지날수록 데이터가 영구 손실되는 항목.** |
-| G9 | **Entry 작성/조회 API 부재** | 확인됨. `api/v1/entries.py`에는 review 6개 엔드포인트(list/detail/accept/reject/edit/supersede)만 있다. 사용자 직접 authoring(명시적 사용자 행위로서의 canon)·감사/이력 조회 API가 없어 Entry Store는 서비스 계층에서만 접근 가능하다. |
 | G10 | **review 감사 필드 미결정** | 확인됨. `accepted_at`/`rejected_at`/`superseded_at`/`human-edited` provenance는 있으나 review actor·action history·edit diff·되돌림 메타데이터가 없다. `review-card-api.md`가 별도 승인된 persistence 설계 필요로 명시. |
 
 ---
@@ -118,7 +123,7 @@
 | 영역 | 진행도 |
 |---|---|
 | Substrate (M0~M7 기반) | 약 90% — 잔여는 Prompt Cache, 메타 요약 상한, refresh 회전/denylist, JSON Export |
-| Architecture Phase 1 (Store/Retrieval/Review gate) | 약 72% — 계약·영속·생명주기·검색·브리지·Review API·supersede API·Review 프론트·프롬프트 자산 완료 / 실사용 연결·edit-diff 미완 |
+| Architecture Phase 1 (Store/Retrieval/Review gate) | 약 75% — 계약·영속·생명주기·검색·브리지·Review API·supersede API·Review 프론트·프롬프트 자산·P1-5 authoring/audit read API 완료 / 실사용 연결·edit-diff 미완 |
 | Phase 2 Analyst | 0% |
 | Phase 3 Writer | 0% (기존 single-pass 이어쓰기는 substrate로 보존) |
 | Phase 4 Story Bible | 0% (별도 스토어 없음 = 의도된 상태) |
