@@ -1,6 +1,9 @@
 """Authenticated user-authoring and Entry read/audit API integration tests."""
 from __future__ import annotations
 
+import base64
+import json
+from datetime import datetime
 from functools import partial
 from typing import cast
 
@@ -8,6 +11,7 @@ from app.config import get_settings
 from app.core.pagination import encode_cursor
 from app.db.base import utcnow
 from app.models.character import Character
+from app.models.entry import Entry
 from app.models.novel import Work
 from app.models.user import User
 from app.schemas.entry import (
@@ -427,3 +431,229 @@ def test_default_page_scans_past_orphans_before_selecting_live_entries(client) -
     assert page.status_code == 200, page.text
     assert [item["id"] for item in page.json()["items"]] == [live.json()["id"]]
     assert page.json()["next_cursor"] is None
+
+
+async def _force_created_at(sessionmaker, entry_ids: list[str], moment: datetime) -> None:
+    """Collapse distinct creation instants so the id tie-break becomes observable."""
+    async with sessionmaker() as session:
+        for entry_id in entry_ids:
+            entry = await session.get(Entry, entry_id)
+            assert entry is not None
+            entry.created_at = moment
+        await session.commit()
+
+
+def test_cursor_pagination_breaks_ties_on_identical_created_at(client) -> None:
+    anchors = _run(client, _seed_owned_and_foreign_anchors)
+    created_ids = []
+    for index in range(3):
+        response = client.post(
+            "/api/v1/entries",
+            json=_authoring_payload(
+                scope_kind="work",
+                scope_id=anchors["work_id"],
+                type="story.fact",
+                content=f"Tie-break fact {index}.",
+            ),
+        )
+        assert response.status_code == 201, response.text
+        created_ids.append(response.json()["id"])
+
+    shared_moment = datetime.fromisoformat("2026-01-02T03:04:05.678901+00:00")
+    _run(client, _force_created_at, created_ids, shared_moment)
+
+    scope_filter = {
+        "scope": "work",
+        "scope_id": anchors["work_id"],
+        "type": "story.fact",
+        "limit": 1,
+    }
+    visited: list[str] = []
+    cursor: str | None = None
+    for _ in range(len(created_ids)):
+        params = dict(scope_filter)
+        if cursor is not None:
+            params["cursor"] = cursor
+        page = client.get("/api/v1/entries", params=params)
+        assert page.status_code == 200, page.text
+        body = page.json()
+        assert len(body["items"]) == 1
+        visited.append(body["items"][0]["id"])
+        cursor = body["next_cursor"]
+
+    # Identical timestamps must still advance deterministically by id, so no
+    # Entry is repeated and none is skipped.
+    assert visited == sorted(created_ids)
+    assert cursor is None
+
+
+def test_list_rejects_every_malformed_cursor_shape(client) -> None:
+    def _encoded(payload: object) -> str:
+        return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+
+    malformed = [
+        "!!!not-base64!!!",
+        base64.urlsafe_b64encode(b"plain text, not json").decode("utf-8"),
+        _encoded({"i": "entry-id"}),
+        _encoded({"c": "2026-07-28T00:00:00"}),
+        _encoded({"c": 20260728, "i": "entry-id"}),
+        _encoded({"c": "2026-07-28T00:00:00", "i": 42}),
+        encode_cursor("not-a-timestamp", "entry-id"),
+    ]
+    for cursor in malformed:
+        response = client.get("/api/v1/entries", params={"cursor": cursor})
+        # A rejected cursor must fail loudly instead of silently restarting at
+        # the first page, which would repeat records to the caller.
+        assert response.status_code == 400, (cursor, response.text)
+        assert response.json()["error"]["message"] == "Invalid Entry cursor"
+
+
+def _scope_audit_state(client, work_id: str) -> list[dict[str, str | None]]:
+    """Snapshot every persisted lifecycle fact for one work scope."""
+    audit = client.get(
+        "/api/v1/entries",
+        params={
+            "include_history": "true",
+            "scope": "work",
+            "scope_id": work_id,
+            "type": "story.fact",
+            "limit": 100,
+        },
+    )
+    assert audit.status_code == 200, audit.text
+    return sorted(
+        (
+            {
+                "id": item["id"],
+                "content": item["content"],
+                "status": item["status"],
+                "superseded_by_entry_id": item["superseded_by_entry_id"],
+                "accepted_at": item["accepted_at"],
+                "superseded_at": item["superseded_at"],
+            }
+            for item in audit.json()["items"]
+        ),
+        key=lambda item: cast(str, item["id"]),
+    )
+
+
+def test_failed_correction_does_not_persist_the_replacement(client) -> None:
+    anchors = _run(client, _seed_owned_and_foreign_anchors)
+    scoped = partial(
+        _authoring_payload,
+        scope_kind="work",
+        scope_id=anchors["work_id"],
+        type="story.fact",
+    )
+
+    original = client.post("/api/v1/entries", json=scoped(content="Rollback origin fact."))
+    assert original.status_code == 201, original.text
+    original_id = original.json()["id"]
+
+    accepted_correction = client.post(
+        "/api/v1/entries",
+        json=scoped(content="Rollback first correction.", supersedes_entry_id=original_id),
+    )
+    assert accepted_correction.status_code == 201, accepted_correction.text
+
+    before = _scope_audit_state(client, anchors["work_id"])
+
+    # The original is superseded now, so a second correction against it must be
+    # refused by the same atomic lifecycle implementation.
+    rejected_correction = client.post(
+        "/api/v1/entries",
+        json=scoped(
+            content="Rollback orphaned replacement.",
+            supersedes_entry_id=original_id,
+        ),
+    )
+    assert rejected_correction.status_code == 400, rejected_correction.text
+    assert "canon" in rejected_correction.json()["error"]["message"]
+
+    after = _scope_audit_state(client, anchors["work_id"])
+    # A failed correction must leave no partially written replacement behind and
+    # must not mutate the existing lifecycle records.
+    assert after == before
+    contents = [cast(str, item["content"]) for item in after]
+    assert "Rollback orphaned replacement." not in contents
+    assert sorted(contents) == ["Rollback first correction.", "Rollback origin fact."]
+
+    detail = client.get(f"/api/v1/entries/{original_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["status"] == EntryStatus.SUPERSEDED.value
+    assert detail.json()["superseded_by_entry_id"] == accepted_correction.json()["id"]
+
+
+def test_same_cursor_replay_returns_the_identical_page(client) -> None:
+    anchors = _run(client, _seed_owned_and_foreign_anchors)
+    for index in range(3):
+        response = client.post(
+            "/api/v1/entries",
+            json=_authoring_payload(
+                scope_kind="work",
+                scope_id=anchors["work_id"],
+                type="story.fact",
+                content=f"Cursor replay fact {index}.",
+            ),
+        )
+        assert response.status_code == 201, response.text
+
+    params = {
+        "scope": "work",
+        "scope_id": anchors["work_id"],
+        "type": "story.fact",
+        "limit": 2,
+    }
+    first_page = client.get("/api/v1/entries", params=params)
+    assert first_page.status_code == 200, first_page.text
+    cursor = first_page.json()["next_cursor"]
+    assert cursor is not None
+    first_ids = [item["id"] for item in first_page.json()["items"]]
+    assert len(first_ids) == 2
+
+    replayed = [
+        client.get("/api/v1/entries", params={**params, "cursor": cursor}) for _ in range(2)
+    ]
+    for response in replayed:
+        assert response.status_code == 200, response.text
+    bodies = [response.json() for response in replayed]
+    # Re-requesting with an unchanged cursor is a read, so it must be repeatable
+    # and must never hand back records the caller already consumed.
+    assert bodies[0] == bodies[1]
+    assert [item["id"] for item in bodies[0]["items"]] not in ([], first_ids)
+    assert not set(first_ids) & {item["id"] for item in bodies[0]["items"]}
+    assert bodies[0]["next_cursor"] is None
+
+
+def test_cursor_beyond_all_records_returns_empty_page_not_the_first_page(client) -> None:
+    anchors = _run(client, _seed_owned_and_foreign_anchors)
+    created = client.post(
+        "/api/v1/entries",
+        json=_authoring_payload(
+            scope_kind="work",
+            scope_id=anchors["work_id"],
+            type="story.fact",
+            content="Far future cursor must not wrap around to this record.",
+        ),
+    )
+    assert created.status_code == 201, created.text
+
+    params = {
+        "scope": "work",
+        "scope_id": anchors["work_id"],
+        "type": "story.fact",
+        "limit": 10,
+    }
+    baseline = client.get("/api/v1/entries", params=params)
+    assert baseline.status_code == 200, baseline.text
+    assert [item["id"] for item in baseline.json()["items"]] == [created.json()["id"]]
+
+    exhausted = client.get(
+        "/api/v1/entries",
+        params={**params, "cursor": encode_cursor("2999-01-01T00:00:00", "zzzzzzzz")},
+    )
+    assert exhausted.status_code == 200, exhausted.text
+    # An exhausted cursor stops cleanly; it must not silently restart the page
+    # sequence, which would re-deliver already consumed records.
+    assert exhausted.json()["items"] == []
+    assert exhausted.json()["next_cursor"] is None
