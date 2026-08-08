@@ -137,6 +137,8 @@ A single-process, layered **modular monolith**: a reusable **substrate** (provid
 
 **P1-3 implementation note:** [Repository Prompt Assets](prompt-assets.md) records the stable asset root, loader contract, and boundary between architecture-owned bodies, runtime inputs, and legacy user template data.
 
+**P1-6 implementation note:** [Entry Context Integration](entry-context-integration.md) records how `retrieve()` → Context Assembly reaches real Chat/Novel generation: the distinct `entry` PromptBlock kind and its priority rationale, the OFF-by-default feature flag, the knowledge-slice budget, the separated retrieval/assembly trace, and the error policy.
+
 **Build order (from ADR-001 / `architecture-final-minimal.md` §8):**
 1. Entry store + `retrieve()`; migrate character/world/lore fields → Entries.
 2. Writer loop runner with the smallest pipeline (plan → draft → assemble).

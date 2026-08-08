@@ -12,7 +12,12 @@ from typing import Literal
 
 from app.engines.prompt.blocks import DEFAULT_PRIORITY, PromptBlock
 from app.engines.prompt.tokenizer import Tokenizer, default_tokenizer
-from app.schemas.entry import EntryRetrievalItem, EntryRetrievalResult, EntryRetrievalTrace
+from app.schemas.entry import (
+    EntryRetrievalItem,
+    EntryRetrievalResult,
+    EntryRetrievalTrace,
+    EntryRetrieveRequest,
+)
 
 ENTRY_STORE_SOURCE = "entry_store"
 ASSEMBLY_POLICY_VERSION = "entry-prompt-block-v1"
@@ -110,10 +115,12 @@ def entry_retrieval_item_to_prompt_block(
     return PromptBlock(
         id=f"entry:{entry.id}",
         role="system",
-        kind="memory",
+        kind="entry",
         content=content,
-        priority=DEFAULT_PRIORITY["memory"],
+        priority=DEFAULT_PRIORITY["entry"],
         token_count=token_count,
+        # Whole-Entry only: a partially rendered Entry is a fabricated fact, so
+        # the final BudgetManager drops the block instead of trimming it.
         truncatable=False,
         metadata=metadata,
     )
@@ -166,3 +173,93 @@ def assemble_entry_context(
             assembly_exclusions=exclusions,
         ),
     )
+
+
+def disabled_entry_context_trace() -> dict[str, object]:
+    """Trace for a request where the Entry context feature flag was OFF.
+
+    The flag being off is itself an observable state: a reader must be able to
+    tell "no canon was retrieved" apart from "canon was retrieved and nothing
+    was eligible" (P1-6 trace contract).
+    """
+
+    return {"feature_enabled": False, "retrieval_invoked": False}
+
+
+def build_entry_context_trace(
+    *,
+    request: EntryRetrieveRequest,
+    result: EntryRetrievalResult,
+    assembled: EntryContextAssemblyResult,
+) -> dict[str, object]:
+    """Flatten the retrieval and assembly stages into one prompt-trace section.
+
+    The two stages stay separately attributable: ``retrieval`` records why the
+    Store refused a candidate, ``assembly`` records why an already-selected
+    Entry did not survive rendered-block budgeting (RFC-003 §12).
+    """
+
+    retrieval_trace = result.trace
+    retrieval_excluded = (
+        list(retrieval_trace.excluded_orphaned_entry_ids)
+        + list(retrieval_trace.budget_rejected_entry_ids)
+        + list(retrieval_trace.limit_rejected_entry_ids)
+    )
+    return {
+        "feature_enabled": True,
+        "retrieval_invoked": True,
+        "task_kind": request.task_kind.value,
+        "requested_scopes": [
+            {"scope_kind": selector.scope_kind.value, "scope_id": selector.scope_id}
+            for selector in request.scopes
+        ],
+        "requested_entry_types": (
+            [entry_type.value for entry_type in request.entry_types]
+            if request.entry_types is not None
+            else None
+        ),
+        "requested_subjects": [
+            {
+                "subject_type": subject.subject_type.value,
+                "subject_id": subject.persisted_subject_id,
+            }
+            for subject in request.subject_filters
+        ],
+        "requested_cast": list(request.cast),
+        "requested_statuses": (
+            [status.value for status in request.status_filters]
+            if request.status_filters is not None
+            else ["canon"]
+        ),
+        "retrieval_budget": result.requested_budget,
+        "retrieval_policy_version": result.policy_version,
+        "assembly_budget": assembled.requested_budget,
+        "assembly_policy_version": assembled.assembly_policy_version,
+        # Post-filter candidates the ranker actually considered. Records rejected
+        # by ownership/scope/type/subject/status never become candidates at all.
+        "considered_candidate_count": len(result.items) + len(retrieval_trace.excluded_orphaned_entry_ids),
+        "selected_count": len(result.items),
+        "excluded_count": len(retrieval_excluded) + len(assembled.assembly_excluded_entry_ids),
+        "selected_entry_ids": [item.entry.id for item in result.items],
+        "block_count": len(assembled.blocks),
+        "blocks_created": bool(assembled.blocks),
+        "entry_block_tokens": assembled.budget_used,
+        "no_eligible_entries": not result.items,
+        "retrieval_exclusions": {
+            "orphaned_entry_ids": list(retrieval_trace.excluded_orphaned_entry_ids),
+            "retrieval_budget_rejected_entry_ids": list(
+                retrieval_trace.budget_rejected_entry_ids
+            ),
+            "limit_rejected_entry_ids": list(retrieval_trace.limit_rejected_entry_ids),
+        },
+        "assembly_exclusions": [
+            {
+                "entry_id": exclusion.entry_id,
+                "reason": exclusion.reason,
+                "stage": exclusion.stage,
+                "rendered_tokens": exclusion.rendered_tokens,
+                "budget_remaining": exclusion.budget_remaining,
+            }
+            for exclusion in assembled.trace.assembly_exclusions
+        ],
+    }

@@ -27,6 +27,10 @@ from app.models.character import Character, Persona
 from app.models.chat import ChatSession, Message
 from app.models.world import Lorebook, LoreEntry, World
 from app.schemas.chat import ChatCreate, MessageCreate
+from app.services.entry_generation_context import (
+    build_chat_retrieve_request,
+    load_entry_context,
+)
 from app.services.provider_resolve import resolve_provider_request
 
 log = get_logger("chat")
@@ -161,9 +165,25 @@ class ChatService:
                 s, self.settings, self.registry,
                 user_id=user_id, model_config_id=chat.model_config_id, purpose="chat",
             )
+            # Entry Store canon is retrieved exactly once per turn, inside T1,
+            # before streaming starts (P1-6). Chat declares only the anchors it
+            # actually holds — no work scope is inferred (RFC-003 §13.3).
+            entry_context = await load_entry_context(
+                s,
+                settings=self.settings,
+                request_factory=lambda: build_chat_retrieve_request(
+                    user_id=user_id,
+                    character=character,
+                    world=world,
+                    user_message=user_text,
+                    context_window=req.context_window,
+                ),
+            )
             prompt = await self.engine.assemble_for_chat(
                 s, chat_id=chat_id, character=character, persona=persona,
                 world=world, lore_entries=lore, user_message=user_text, req=req,
+                entry_blocks=entry_context.blocks,
+                entry_context_trace=entry_context.trace,
             )
             await s.commit()
 
