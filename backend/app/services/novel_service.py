@@ -24,6 +24,10 @@ from app.schemas.novel import (
     WorkCreate,
     WorkUpdate,
 )
+from app.services.entry_generation_context import (
+    build_novel_retrieve_request,
+    load_entry_context,
+)
 from app.services.provider_resolve import resolve_provider_request
 
 _active_continue: set[str] = set()
@@ -213,7 +217,29 @@ class NovelService:
             )
             req.max_tokens = min(req.max_tokens, words_to_tokens(dto.target_words))
             base_version = chapter.version
-            prompt = self.engine.assemble_continue(ctx, instruction=dto.instruction, req=req)
+            # Entry Store canon is retrieved exactly once per request, inside T1,
+            # before any token is streamed (P1-6). Flag OFF short-circuits before
+            # any Entry query is issued.
+            entry_context = await load_entry_context(
+                s,
+                settings=self.settings,
+                request_factory=lambda: build_novel_retrieve_request(
+                    user_id=user_id,
+                    work=work,
+                    world=ctx.world,
+                    characters=ctx.characters,
+                    chapter=chapter,
+                    instruction=dto.instruction,
+                    context_window=req.context_window,
+                ),
+            )
+            prompt = self.engine.assemble_continue(
+                ctx,
+                instruction=dto.instruction,
+                req=req,
+                entry_blocks=entry_context.blocks,
+                entry_context_trace=entry_context.trace,
+            )
 
         buffer = ""
         try:

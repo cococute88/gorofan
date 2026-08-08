@@ -121,6 +121,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** GPT-5.6 Terra / High.
 
 #### P1-6 retrieve() → Context Assembly를 실제 생성 경로에 연결 (flag 기반, 추가만)
+- **상태:** 완료 — `feature/entry-context-integration`에서 `services/entry_generation_context.py`(유일한 프로덕션 호출 지점)를 추가하고 Chat/Novel 양쪽을 결선했다. 독립 `entry` BlockKind(priority 65, LAYER_ORDER는 `lore`와 `memory` 사이), `FEATURES["entry_store_context"]` 기본 OFF 플래그, `AssembleInput.entry_blocks`/`entry_context_trace` seam, retrieval/assembly 분리 trace를 구현했다. 결정 근거는 `docs/architecture/entry-context-integration.md`. 로컬 전체 pytest **149 passed**, Ruff 통과, 전체 MyPy는 baseline과 동일한 36 errors/11 files, Alembic head 불변(`0002_entry_store`), 마이그레이션·프론트 변경 0. 플래그 OFF/ON·work 추측 금지·비-canon 제외·whole-Entry·호출 1회 6개 불변식은 mutation 검증으로 테스트 검출력을 확인했다.
 - **목적:** 현재 `EntryService.retrieve()`와 `assemble_entry_context()`의 호출자는 테스트뿐이다. 실사용 경로에 **추가 블록**으로 주입해 Store가 실제로 작동하게 한다. 레거시 lore 키워드 스캔은 **유지**한다(RFC-003 §16.8: 두 경로 공존은 승인된 마이그레이션 시점까지 잠정 허용).
 - **선행 의존성:** P1-5 (검증 데이터 작성 경로), 권장 P1-3.
 - **예상 변경 범위:** `services/chat_service.py`·`services/novel_service.py`(retrieval 호출 + Entry 블록 병합), `engines/prompt/engine.py`(외부 블록 수용 지점), `config.py`(기능 플래그 기본 OFF), 통합/골든 테스트.

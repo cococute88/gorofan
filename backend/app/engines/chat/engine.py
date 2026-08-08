@@ -15,6 +15,7 @@ from app.adapters.base import AssembledPrompt, ProviderRequest, StreamEvent
 from app.adapters.registry import ProviderRegistry
 from app.engines.memory.engine import MemoryEngine
 from app.engines.prompt.assets import PromptAssetLoader
+from app.engines.prompt.blocks import PromptBlock
 from app.engines.prompt.engine import AssembleInput, PromptEngine
 
 
@@ -37,6 +38,8 @@ class ChatEngine:
         user_message: str | None,
         req: ProviderRequest,
         template_body: str | None = None,
+        entry_blocks: list[PromptBlock] | None = None,
+        entry_context_trace: dict[str, object] | None = None,
     ) -> AssembledPrompt:
         if template_body:
             body = template_body
@@ -62,6 +65,8 @@ class ChatEngine:
                 memory_short=mem.short_term,
                 memory_long=mem.long_term,
                 history=[],
+                entry_blocks=entry_blocks,
+                entry_context_trace=entry_context_trace,
                 user_message=user_message,
                 context_window=req.context_window,
                 max_tokens=req.max_tokens,

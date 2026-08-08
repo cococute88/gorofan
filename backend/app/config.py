@@ -15,6 +15,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _BACKEND_DIR = Path(__file__).resolve().parent.parent  # backend/
 _REPO_ROOT = _BACKEND_DIR.parent  # project root (holds the documented `.env`)
 
+# Entry Store canon injection into Chat/Novel generation (P1-6). OFF by default:
+# with the flag unset, generation keeps the legacy character/world/lore context
+# path and performs zero Entry retrieval.
+FEATURE_ENTRY_STORE_CONTEXT = "entry_store_context"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -67,6 +72,18 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    def feature_enabled(self, name: str) -> bool:
+        """Read one flag out of the untyped ``FEATURES`` map, defaulting to OFF.
+
+        Deliberately minimal: the map already exists in Settings, so P1-6 adds a
+        typed read boundary rather than a flag framework.
+        """
+        return self.FEATURES.get(name, False) is True
+
+    @property
+    def entry_store_context_enabled(self) -> bool:
+        return self.feature_enabled(FEATURE_ENTRY_STORE_CONTEXT)
 
     @property
     def is_sqlite(self) -> bool:
