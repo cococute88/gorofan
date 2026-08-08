@@ -483,6 +483,30 @@ def test_chat_keeps_lore_memory_and_entry_as_separate_blocks(make_client) -> Non
     assert not set(entry_ids) & set(memory_ids)
 
 
+def test_regenerate_also_retrieves_exactly_once(make_client, retrieve_calls) -> None:
+    """Regenerate shares the T1 path, so it must not double- or skip-retrieve."""
+
+    client = make_client(entry_context=True)
+    _, character_id, chat_id = _chat_setup(client, character_name="아린", world_name="설원")
+    entry_id = _write(
+        _entry(
+            content="아린은 눈보라 속에서 자랐다.",
+            scope_kind=EntryScope.CHARACTER,
+            scope_id=character_id,
+            entry_type=EntryType.CHARACTER_IDENTITY,
+        )
+    )[0]
+
+    client.post(f"/api/v1/chats/{chat_id}/messages", json={"content": "아린 얘기 해줘"})
+    assert len(retrieve_calls) == 1
+
+    regen = client.post(f"/api/v1/chats/{chat_id}/regenerate")
+    assert regen.status_code == 200, regen.text
+
+    assert len(retrieve_calls) == 2, "one retrieval for the turn, one for the regenerate"
+    assert entry_id in _CAPTURED[1].trace["entry_context"]["selected_entry_ids"]
+
+
 def test_chat_sse_contract_and_single_persist_survive_entry_injection(
     make_client,
 ) -> None:
