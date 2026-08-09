@@ -130,7 +130,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** Claude Opus 5 / High.
 
 #### P1-7 edit-diff capture (day-one 데이터 수집)
-- **상태:** **설계 제안 — 검토 중. 구현은 미착수다.** `docs/architecture/edit-diff-capture-design.md`가 capture 술어(§4.1), 두 capture 경로(Review Card edit / 이어쓰기), edit-diff가 Entry가 아니라 비-Entry 운영 기록이라는 논증, additive `0003_edit_diff_capture` 테이블 형태, 트랜잭션·실패 3단계 정책, 크기·보존·삭제 한계, P1-9 경계, 구현 단계 acceptance criteria를 제안한다. 프로덕션 코드·모델·컬럼·마이그레이션·API 변경 0. 설계 승인(§5.3 ratification, §19 open questions) 전에는 구현에 착수하지 않는다.
+- **상태:** **설계 승인됨 (2026-08-09 독립 아키텍처 리뷰). 구현은 미착수다.** `docs/architecture/edit-diff-capture-design.md`가 capture 술어(§4.1), 두 capture 경로(Review Card edit / 이어쓰기), edit-diff가 Entry가 아니라 비-Entry 운영 기록이라는 논증, additive `0003_edit_diff_capture` 테이블 형태, 트랜잭션·실패 3단계 정책, 크기·보존·삭제 한계, P1-9 경계, 구현 단계 acceptance criteria를 확정한다. 프로덕션 코드·모델·컬럼·마이그레이션·API 변경 0. 리뷰에서 §5.3(escape valve)·§9.2(atomic capture)·§19-Q1(settle trigger)이 ratify되었고 §19의 8개 open question이 모두 종결되었다(BLOCKING 0). 리뷰가 확정한 설계 수정 4건: `payload_state`를 직교하는 `before_state`/`after_state`로 분리, Path B `sequence` 도출 시 chapter row lock(`with_for_update`) 필수, ORM relationship/`passive_deletes` 삭제 cascade 위험 명시, 미정착(unsettled) chapter row를 정상 종료 상태로 재정의(after-side는 read time에 해석).
 - **목적:** ADR-010·RFC-001 §8.8 — draft ↔ 사용자 확정본의 차이는 **소급 수집이 불가능**하다. 분석(distillation)은 미루되 **capture는 지금 시작**한다. 현재는 provenance 열거값만 존재한다.
 - **선행 의존성:** 없음 (단, 영속 설계 승인 필요).
 - **예상 변경 범위:** 신규 additive 마이그레이션 `0003_*`(diff capture 테이블 — Entry가 아닌 **운영 기록**이므로 aggregate로 취급), `models/`·`services/novel_service.py`(이어쓰기 확정 시 캡처), `services/chat_service.py`(선택), 통합 테이블 테스트.

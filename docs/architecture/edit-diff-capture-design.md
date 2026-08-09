@@ -1,7 +1,10 @@
 # Edit-diff capture persistence (P1-7 design proposal)
 
-- **Status:** **Proposed — design under review. Not implemented.** No production code,
-  ORM model, column, table, Alembic revision, or API exists for anything in this document.
+- **Status:** **Approved design — implementation not started.** Independently reviewed
+  against the ADR/RFC set and the production call paths on 2026-08-09; the three items this
+  document had left for ratification (§5.3, §9.2, §19-Q1) are decided, and every §19 open
+  question is now RESOLVED or DEFERRED-WITH-SAFE-DEFAULT. No production code, ORM model,
+  column, table, Alembic revision, or API exists for anything in this document.
 - **Scope:** Where and when the system persists the difference between AI-produced text
   and the human's replacement of that text, so a later Analyst pass can distill it.
 - **Governed by:** ADR-003, ADR-010, ADR-011, ADR-015, ADR-017; RFC-001 §5, §8.6, §8.8,
@@ -19,10 +22,28 @@
 |---|---|
 | Task | P1-7 — edit-diff capture, day-one data collection |
 | This deliverable | Persistence design + architecture review only |
+| Design status | **Approved.** Independent architecture review, 2026-08-09 |
 | Implementation | **Not started, and deliberately not started by this PR** |
 | Current code | `ProvenanceSourceKind.EDIT_DIFF` exists in `backend/app/schemas/entry.py` as one enum value. Nothing computes, stores, or exposes a diff. |
 | Alembic head | `0002_entry_store`, unchanged by this PR |
-| Blocking on | Human ratification of §7 (storage choice), §9 (transaction policy), and the §19 open questions |
+| Blocking on | **Nothing.** §7 (storage), §9 (transaction policy), and all eight §19 questions are decided. The next step is the separately approved implementation task. |
+
+### 1.1 Decisions fixed by the independent review
+
+The review verified each of these against the ADR/RFC originals **and** the executed
+production paths, not against this document's own prose. The four schema/lifecycle
+corrections it produced are folded into §6.3, §8, §10, §12, and §13 rather than left as
+review commentary.
+
+| Decision | Outcome |
+|---|---|
+| Entry vs non-Entry (§5) | **Non-Entry operational record.** Confirmed. |
+| Storage (§7) | **Option 2 — one additive `edit_diff_captures` table.** Confirmed. |
+| Escape-valve ratification (§5.3) | **Ratified.** A non-knowledge operational table does not consume the ADR-003 §6 promote-a-type valve. |
+| Pre-image failure policy (§9.2) | **Ratified: atomic (policy A).** Capture failure rolls the destructive write back. |
+| Path B settle trigger (§19-Q1) | **Resolved.** Next continuation on the write path, plus read-time resolution of the trailing row (§6.3, §13). |
+| §19 Q2–Q8 | Resolved, or deferred with a safe default recorded here. None blocks implementation. |
+| Corrections applied | `payload_state` split into orthogonal `before_state` / `after_state` (§8); Path B sequence derivation now requires an explicit chapter row lock (§10); ORM-relationship/`passive_deletes` hazard recorded (§12); trailing `pending` redefined as a normal terminal state (§6.3, §13). |
 
 ---
 
@@ -215,7 +236,19 @@ Two rules could be read to forbid it, and both are about knowledge:
   are all about a deterministic consumer straining to parse Entry prose. None applies,
   because no Entry type is being promoted and no knowledge is moving.
 
-Three things positively permit it:
+Four things positively permit it:
+
+0. **The architecture already classifies edit-diff capture as infrastructure, by name.**
+   RFC-001's governing rule reads: *"Code that is written once — the loop runner, the entry
+   store, the retrieval function, **edit-diff capture** — is code. Everything that will be
+   tuned weekly … is a versioned prompt file or a typed entry."* ADR-015 §1 quotes the same
+   sentence as its primary expansion principle. Edit-diff capture is listed alongside the
+   entry store and the retrieval function — the substrate — and explicitly *opposite* the
+   "new knowledge kind = a new `type` string" branch. The rule ADR-015 §1 is guarding
+   against is a table named `dialogue_library` or `character_dna_attributes`: a **knowledge**
+   library smuggled into a migration. `edit_diff_captures` is the other category the same
+   sentence names.
+
 
 1. **ADR-015 §2.2** states the rule for schema evolution directly: *"Non-destructive schema
    evolution … nullable columns / **new tables** via forward-only migrations; never break or
@@ -237,9 +270,17 @@ is promoted, no second retrieval path appears, and nothing in the Store changes.
 warning that *"a new type does not justify a new table by itself"* is respected precisely
 because no new type is proposed.
 
-**Ratification asked of the reviewer:** confirm that adding a non-knowledge operational
-table does not consume the ADR-003 §6 promote-a-type escape valve. If a reviewer disagrees,
-the decision becomes an ADR, not an implementation note (§21).
+**Ratified (independent architecture review, 2026-08-09).** Adding a non-knowledge
+operational table does **not** consume the ADR-003 §6 promote-a-type escape valve. The
+valve's five preconditions in RFC-002 §10 are, without exception, statements about *a
+deterministic consumer parsing Entry prose or bounded `data`* — "graph/timeline
+reconstruction," "Entry remains the compatibility/retrieval boundary during migration."
+None of them can even be evaluated for a record that was never an Entry and never enters
+retrieval. The valve governs **moving knowledge out of `entries`**; ADR-015 §2.2 separately
+and unconditionally sanctions **new tables** as non-destructive schema evolution, and
+RFC-001 names edit-diff capture as substrate code (item 0 above). Because no ADR-level
+decision is being made, this remains an implementation note rather than becoming an ADR
+(§21).
 
 ### 5.4 Where Entries *do* appear in this story
 
@@ -306,18 +347,18 @@ author does not "accept" a continuation; the text is appended and they simply ke
 So the draft side and the settled side are captured at two different moments.
 
 **Draft side — at `_append_chapter()`, same transaction as the chapter write.**
-The streamed buffer is in hand and is about to lose its boundary. The row is written with
-`payload_state = "pending"`: `before_text` = the AI segment, `after_*` unknown.
+The streamed buffer is in hand and is about to lose its boundary. The row is written
+unsettled (`settled_at IS NULL`): `before_text` = the AI segment, `after_*` unknown.
 `context` records the insertion offset (`len(chapter.content_text)` before concatenation),
 the resulting `chapter.version`, the prompt asset identity, and whether the stream ended
 partially (the existing error path at
 [`novel_service.py:251`](../../backend/app/services/novel_service.py#L251) appends a partial
 buffer — those rows must be marked, because a truncated generation is not a style signal).
 
-**Settled side — recommended trigger: the next continuation of the same chapter.**
-At T1 of `_continue_impl()`, before any token is streamed, if the chapter has a `pending`
-capture, write the chapter's current `content_text` as its `after_text` and set
-`settled_at`. Rationale:
+**Settled side — decided: the next continuation of the same chapter, and nothing else on
+the write path.** At T1 of `_continue_impl()`, before any token is streamed, if the chapter
+has an unsettled capture, write the chapter's current `content_text` as its `after_text` and
+set `settled_at` and `context.settle_trigger = "next-continuation"`. Rationale:
 
 - Requesting more prose is an unambiguous author signal that everything above it is what
   they want continued from. It is the closest thing to "accepted" the current UX has.
@@ -327,13 +368,48 @@ capture, write the chapter's current `content_text` as its `after_text` and set
 - It runs in a session the request already opens, next to the existing P1-6 Entry-context
   call, before streaming.
 
-Its weakness is honest and stated: a chapter whose last continuation is never followed by
-another stays `pending` forever, and the settled snapshot is the *whole* chapter rather than
-the corresponding segment. Both are acceptable — the pair is preserved either way, and
-segment alignment is a distillation-time problem the stored offsets support. Alternative
-triggers (an explicit "finalize chapter" action, a debounce timer after the last autosave,
-settling on chapter close) are compared in §19-Q1, which is the one place a human product
-decision is genuinely required.
+#### 6.3.1 The trailing unsettled row is a normal terminal state, not a gap
+
+The obvious objection to that trigger — *the last continuation of a chapter is usually never
+followed by another, so its row stays unsettled forever* — is real, and it is not a rare
+edge: it is how every finished chapter ends. It is answered by observing what is actually at
+risk.
+
+**Only the before-side is irrecoverable.** The after-side is `chapters.content_text`, which
+is a live, durable column that no capture path destroys. The settle snapshot therefore does
+not *rescue* the after-side; its only job is **bracketing** — freezing the chapter as it
+stood at the boundary between AI segment *N* and segment *N+1*, so segment *N*'s pair is not
+contaminated by prose written after *N+1* arrived.
+
+For the trailing segment there is no later boundary, so the correct bracket is *the chapter's
+current state* — which a reader can obtain for free, at any time, forever:
+
+> **Rule.** An unsettled `chapter-continuation` row whose chapter still exists is
+> **complete**, not pending-in-error. Its after-side is defined as `chapters.content_text`
+> resolved **at read time**, together with the row's stored `insert_offset` and
+> `chapter_version`. §13 rule 2 makes such rows eligible; only rows whose chapter is gone or
+> whose Work is soft-deleted are excluded.
+
+This is why the alternatives are rejected rather than merely deferred:
+
+| Alternative trigger | Verdict |
+|---|---|
+| Author's chapter save (`update_chapter`, the existing 1.2 s autosave in [`chapters/[chapterId]/page.tsx:84`](../../frontend/src/app/(main)/novels/[id]/chapters/[chapterId]/page.tsx#L84)) | **Rejected — it would poison the dataset.** The endpoint genuinely exists and fires on every edit, so coverage would be near-total. But the *first* save after an append lands ~1.2 s into revision, when the author has changed almost nothing. Settling there would systematically record "the human kept the AI text" for a corpus whose entire purpose is measuring how the human changes it. Missing data is honest; biased data is not. |
+| Repeatedly refreshing the after-side on *every* save until some close event | Rejected. It makes an append-only table mutate on a 1.2 s timer, rewriting the full chapter text per keystroke burst, and it buys nothing that read-time resolution does not already give. |
+| Explicit "finalize chapter" action | Rejected. It is new UX for a benefit read-time resolution already provides, and RFC-011 §6 warns against adding gates to the author's own writing. |
+| Debounce timer after the last autosave | Rejected. Arbitrary, timer-dependent, and it settles at a moment with no product meaning. |
+| Settle on chapter close | Not available. The frontend emits no close/unmount event, and no endpoint receives one. |
+
+The remaining coarseness is honest and unchanged: a settled snapshot is the *whole* chapter,
+not the isolated segment. Aligning segment to snapshot is a distillation-time problem, and
+`insert_offset` + `before_sha256` + `chapter_version` are stored precisely so P2-5 can do it
+(§13 rule 7). Choosing an alignment algorithm now would be the guess §8.4 already refuses to
+make.
+
+**Consequence for observability:** the §9.3 health counter must *not* treat unsettled rows as
+a failure. A useful alarm is "unsettled rows on a chapter that has since received another
+continuation" — that state is genuinely impossible unless the settle path is broken. A plain
+count of unsettled rows measures how many chapters are still being written.
 
 ### 6.4 What never triggers capture
 
@@ -427,7 +503,8 @@ RFC-008 §5 states that *"capture timing and the substrate that records diffs ar
 the Learning Capture RFC,"* and ADR-003 §2 says of itself that it *"writes no columns, keys,
 or DDL — those belong to an RFC."* The *decision* being honored is "capture the pair from
 day one"; the column-pair phrasing is illustrative sizing, written before the Entry model
-and the Review Card edit path existed. §19-Q5 flags this for the reviewer.
+and the Review Card edit path existed. **§19-Q5 confirms this reading** — decisively, because
+ADR-010 §2.2's column pair is scoped *"per chapter"* and so cannot express Path A at all.
 
 ### Recommendation
 
@@ -457,17 +534,29 @@ Inherits the repository's `BaseModel` conventions (`id` `String(36)` UUID PK,
 | `entry_id` | `String(36)` FK `entries.id` `ON DELETE CASCADE` | yes | Set for `entry-review-edit` |
 | `chapter_id` | `String(36)` FK `chapters.id` `ON DELETE CASCADE` | yes | Set for `chapter-continuation` |
 | `sequence` | `Integer` | no | 0-based ordinal within one source; the idempotency anchor (§10) |
-| `payload_state` | `String(16)` | no | `stored` \| `pending` \| `oversize` (§12) |
-| `before_text` | `Text` | yes | The AI-produced text, verbatim |
-| `after_text` | `Text` | yes | The human's replacement, verbatim; NULL while `pending` |
+| `before_state` | `String(16)` | no | `stored` \| `oversize` — whether the before-text is retained (§11.2) |
+| `after_state` | `String(16)` | yes | `stored` \| `oversize`; **NULL means not settled** |
+| `before_text` | `Text` | yes | The AI-produced text, verbatim; NULL when `before_state='oversize'` |
+| `after_text` | `Text` | yes | The human's replacement, verbatim; NULL while unsettled or `oversize` |
 | `before_sha256` | `String(64)` | no | Lowercase hex of SHA-256 over the UTF-8 bytes |
-| `after_sha256` | `String(64)` | yes | Same; NULL while `pending` |
+| `after_sha256` | `String(64)` | yes | Same; NULL while unsettled |
 | `before_chars` | `Integer` | no | Code-point length, retained even when `oversize` |
-| `after_chars` | `Integer` | yes | Same |
+| `after_chars` | `Integer` | yes | Same; NULL while unsettled |
 | `producer` | `String(120)` | yes | What generated the before-text, e.g. `novel.continue.v1` |
 | `context` | portable `JSON`/`JSONB` | no | Bounded, documented keys only (§8.3); default `{}` |
-| `settled_at` | `DateTime(timezone=True)` | yes | When the after-side was recorded; NULL while `pending` |
+| `settled_at` | `DateTime(timezone=True)` | yes | When the after-side was recorded; NULL while unsettled |
 | `created_at`, `updated_at` | `DateTime(timezone=True)` | no | `BaseModel` |
+
+> **Review correction — why there is no single `payload_state`.** The earlier draft used one
+> `payload_state ∈ {stored, pending, oversize}`. That column conflated two **orthogonal**
+> facts: *is the pair complete yet?* and *is the text retained or was it too large?* The
+> conflation is not cosmetic — it made a legal row unrepresentable. A Path B row whose AI
+> segment exceeds the cap is written at `_append_chapter` time as **both** oversize **and**
+> not-yet-settled, and the earlier `ck_..._settled` constraint would have rejected it by
+> demanding `settled_at IS NOT NULL` for any non-`pending` state. The two axes are therefore
+> separate columns, and "pending" is not a state value at all — it is `settled_at IS NULL`
+> (§6.3.1). This is exactly the class of mistake that is cheap to fix in a design document
+> and expensive to fix in a shipped `0003`.
 
 ### 8.2 Constraints and indexes
 
@@ -475,8 +564,11 @@ Inherits the repository's `BaseModel` conventions (`id` `String(36)` UUID PK,
 CHECK ck_edit_diff_captures_source_kind
       source_kind IN ('entry-review-edit','chapter-continuation')
 
-CHECK ck_edit_diff_captures_payload_state
-      payload_state IN ('stored','pending','oversize')
+CHECK ck_edit_diff_captures_before_state
+      before_state IN ('stored','oversize')
+
+CHECK ck_edit_diff_captures_after_state
+      after_state IS NULL OR after_state IN ('stored','oversize')
 
 CHECK ck_edit_diff_captures_one_source          -- exactly one anchor
       (entry_id IS NOT NULL AND chapter_id IS NULL)
@@ -486,21 +578,38 @@ CHECK ck_edit_diff_captures_sequence            sequence >= 0
 CHECK ck_edit_diff_captures_before_chars        before_chars >= 0
 CHECK ck_edit_diff_captures_after_chars         after_chars IS NULL OR after_chars >= 0
 
-CHECK ck_edit_diff_captures_stored_payload      -- 'stored' implies both texts present
-      payload_state <> 'stored'
-   OR (before_text IS NOT NULL AND after_text IS NOT NULL)
+-- text presence follows the retention state on each side, independently
+CHECK ck_edit_diff_captures_before_payload
+      (before_state = 'stored'   AND before_text IS NOT NULL)
+   OR (before_state = 'oversize' AND before_text IS NULL)
 
-CHECK ck_edit_diff_captures_settled             -- non-pending implies a resolved after-side
-      payload_state = 'pending'
-   OR (after_sha256 IS NOT NULL AND after_chars IS NOT NULL AND settled_at IS NOT NULL)
+CHECK ck_edit_diff_captures_after_payload
+      after_state IS NULL
+   OR (after_state = 'stored'   AND after_text IS NOT NULL)
+   OR (after_state = 'oversize' AND after_text IS NULL)
+
+-- settledness is one fact expressed by three columns; they move together
+CHECK ck_edit_diff_captures_settled
+      (settled_at IS NULL
+         AND after_state IS NULL AND after_sha256 IS NULL AND after_chars IS NULL)
+   OR (settled_at IS NOT NULL
+         AND after_state IS NOT NULL AND after_sha256 IS NOT NULL AND after_chars IS NOT NULL)
+
+-- only a chapter-continuation row may be unsettled (§6.3); Path A is born complete
+CHECK ck_edit_diff_captures_entry_settled
+      source_kind <> 'entry-review-edit' OR settled_at IS NOT NULL
 
 UNIQUE uq_edit_diff_captures_entry_sequence     (entry_id, sequence)
 UNIQUE uq_edit_diff_captures_chapter_sequence   (chapter_id, sequence)
 
 INDEX  ix_edit_diff_captures_user_id            (user_id)
 INDEX  ix_edit_diff_captures_owner_created      (user_id, created_at)
-INDEX  ix_edit_diff_captures_owner_kind_state   (user_id, source_kind, payload_state)
+INDEX  ix_edit_diff_captures_owner_kind_settled (user_id, source_kind, settled_at)
 ```
+
+All predicates use plain comparison, `IS NULL`, `IS NOT NULL`, `AND`/`OR`, and `IN` — no
+`IS DISTINCT FROM`, no dialect functions, no expression or partial indexes. Every form above
+parses identically on SQLite and PostgreSQL (C9).
 
 The two `UNIQUE` constraints work without partial indexes because both SQLite and
 PostgreSQL treat `NULL`s as distinct in a unique index: chapter rows all have
@@ -525,7 +634,7 @@ and never a place for prose (C12 in spirit). Validation must reject unknown keys
 | `insert_offset` | B | Code-point offset in `content_text` where the segment was appended |
 | `chapter_version` | B | `Chapter.version` after the append |
 | `partial_stream` | B | `true` when the append came from the stream error path — **excluded from distillation** |
-| `settle_trigger` | B | Which event settled the row (e.g. `next-continuation`) |
+| `settle_trigger` | B | Which event settled the row. §6.3 defines exactly one write-path value: `next-continuation`. The key is absent while unsettled. It exists so that a future additional trigger is distinguishable in the data, not because one is planned. |
 
 ### 8.4 Format decision — full before/after text, not a structured diff
 
@@ -572,7 +681,37 @@ the author's flow. These are reconciled by separating **cost** from **correctnes
 |---|---|---|---|
 | **1. Atomic** | The pre-image in Path A (§6.2 step 6) | **Same transaction as the destructive write. If the INSERT fails, the edit fails and rolls back.** No swallowing. | The pre-image exists nowhere else. A failed edit loses nothing — the proposal is untouched and the user retries. Failing loudly is strictly safer than succeeding while destroying data. This does not gate canon (C4): the accept path is untouched, and RFC-011 §12.3's "the user's own writing is never gated" concerns prose, not a knowledge-proposal edit. |
 | **2. Atomic** | The draft side in Path B (§6.3) | **Same transaction as `_append_chapter`.** | The segment boundary is destroyed by the same statement. The existing partial-append error path is preserved unchanged; capture rides the transaction that is already required to be correct. |
-| **3. Best-effort** | The settle/pairing snapshot in Path B (§6.3) | **May fail without failing the request.** Must log a structured warning with `request_id`, increment a counter, and leave the row `pending` so a later settle or a maintenance pass can complete it. | The after-side still exists in `chapters.content_text`; nothing is lost by retrying. This is the one genuinely optional piece, and it is optional *because* the data survives — not because failures are convenient to ignore. |
+| **3. Best-effort** | The settle/pairing snapshot in Path B (§6.3) | **May fail without failing the request.** Must log a structured warning with `request_id`, increment a counter, and leave the row unsettled so a later continuation — or read-time resolution (§6.3.1) — completes it. | The after-side still exists in `chapters.content_text`; nothing is lost by retrying, and §6.3.1 makes an unsettled row readable anyway. This is the one genuinely optional piece, and it is optional *because* the data survives — not because failures are convenient to ignore. |
+
+**Ratified (independent architecture review, 2026-08-09): policy A — atomic — is correct,
+and the alternatives are worse.** Verified against what each failure actually costs the
+author in the real code:
+
+- **Tier 1 (Path A).** A failed edit leaves the AI proposal untouched, and the author's typed
+  replacement is still in React local state (`editContent` in
+  [`review-card.tsx:109`](../../frontend/src/components/review/review-card.tsx#L109)), with
+  the error surfaced through the existing `actionError` path. Nothing the human wrote is
+  lost; they press the button again. Under best-effort, the same failure destroys the AI
+  original permanently and reports success.
+- **Tier 2 (Path B).** A rollback means the generation the author just watched stream is not
+  persisted; `reloadFromServer()` then restores the pre-generation text and the segment
+  visibly disappears. That cost is real and must be stated plainly to whoever implements it
+  — but re-requesting a continuation costs one call and destroys nothing the author wrote,
+  whereas the alternative silently merges the segment with its boundary erased, which is the
+  precise loss P1-7 exists to stop.
+- **Implementation note for the error branch.** `_append_chapter(..., partial=True)` is
+  invoked from inside the `except` block at
+  [`novel_service.py:251`](../../backend/app/services/novel_service.py#L251). A capture
+  failure there must not mask the original provider error; the provider error is the one the
+  author needs to see. Chain or log the capture failure, and still emit the provider error
+  event.
+- **Option C (a durable queue/outbox) is rejected for Phase 1.** ADR-015 §2.4 lists
+  `JobQueue` as a *seam whose second implementation is deliberately not built* until a
+  concrete trigger fires. An outbox would add a table, a writer, a drainer, and a retry
+  policy to make a single local INSERT — in a transaction the request already opens — more
+  reliable than the write it is protecting. It cannot be more reliable than that write: if
+  the INSERT fails, the outbox insert in the same transaction fails identically. It is
+  strictly more machinery for strictly no additional durability.
 
 The dividing rule, stated once: **capture that holds the only copy is atomic with the write
 that would destroy it; capture that duplicates surviving data is best-effort and
@@ -588,8 +727,10 @@ retryable.**
   bodies are never"* logged. Captured author prose joins that list.
 - Tier-1 failures surface as ordinary API errors; they must not be reported as a partial
   success.
-- A counter of `pending` rows older than a threshold is the health signal that Tier 3 is
-  silently failing. Without it, a broken settle trigger is undetectable.
+- The health signal for Tier 3 is **an unsettled row on a chapter that has since received a
+  later continuation** — a state that is impossible unless the settle path is broken. A bare
+  count of unsettled rows is *not* an alarm: per §6.3.1 it counts chapters still being
+  written.
 
 ### 9.4 Explicitly forbidden
 
@@ -607,13 +748,43 @@ retryable.**
 | Mechanism | Behavior |
 |---|---|
 | `UNIQUE (entry_id, sequence)` / `UNIQUE (chapter_id, sequence)` | The database-level guarantee. A replayed write cannot create a duplicate ordinal. |
-| `sequence` derivation | Computed inside the already-locked transaction: `MAX(sequence) + 1` for that source, or `0`. Path A holds the Entry row lock from `_get_for_update()`; Path B holds the chapter row it is updating. SQLite's single-writer model and PostgreSQL's row locks both make this safe (ADR-017 §2.1, and the existing `_lock_active_owner()` precedent). |
+| `sequence` derivation | Computed inside a transaction that **already holds a row lock on the source**: `MAX(sequence) + 1` for that source, or `0`. See the correction below — Path A satisfies this today; Path B does not and the implementation must add the lock. |
 | No-op suppression | `before_sha256 == after_sha256` writes no row. A duplicated identical edit request is therefore inert. |
-| Settle guard | The settle update is conditional on `settled_at IS NULL` and `payload_state = 'pending'`. A second settle attempt affects zero rows and is not an error. |
+| Settle guard | The settle update is conditional on `settled_at IS NULL`. A second settle attempt affects zero rows and is not an error. |
 | No client-supplied key | Capture is a server-side effect of a human action, never a client-addressable resource. Introducing a client idempotency key would create an API surface P1-7 must not have. |
 
 A unique-violation on insert is a **bug signal**, not a retry path: it means two writers
 believed they held the same source lock. It must raise, not be swallowed.
+
+### 10.1 Review correction — Path B does not hold the lock this design assumed
+
+The earlier draft asserted that "Path B holds the chapter row it is updating." **It does
+not.** `NovelService._owned_chapter()`
+([`novel_service.py:309`](../../backend/app/services/novel_service.py#L309)) loads the row
+with a plain `session.get(Chapter, chapter_id)` — there is no `with_for_update()` anywhere in
+the Novel service. The only serialization on the continuation path is `_active_continue`
+([`novel_service.py:198`](../../backend/app/services/novel_service.py#L198)), a
+**module-level in-process set**, which does not survive multiple Uvicorn workers and is not a
+database lock at all.
+
+Consequence if implemented as drafted: two concurrent continuations of one chapter can both
+read `MAX(sequence)` before either commits, both compute the same ordinal, and the second
+INSERT hits `uq_edit_diff_captures_chapter_sequence`. Under §9.2 Tier 2 that unique violation
+raises, and the chapter append rolls back — so a race in the *capture* bookkeeping would
+discard the author's generated prose. That is the wrong failure for the wrong reason.
+
+**Required by this design, and an acceptance criterion (§20.24):** `_append_chapter()` must
+load the chapter with an explicit `with_for_update()` — mirroring
+`EntryRepository.get_for_update()`
+([`entry_repository.py:24`](../../backend/app/repositories/entry_repository.py#L24)) — before
+deriving the sequence, and must hold it through the INSERT and the chapter update. The same
+lock must be taken by the §6.3 settle path. On PostgreSQL this serializes the two writers; on
+SQLite the clause is ignored and single-writer semantics already hold (ADR-017 §2.1). This is
+the existing, proven pattern in this repository, not a new mechanism.
+
+Path A needs no change: `edit_review_entry()` already calls `_get_for_update()`
+([`entry_service.py:289`](../../backend/app/services/entry_service.py#L289)), which does emit
+`FOR UPDATE` on the Entry row.
 
 ---
 
@@ -626,18 +797,27 @@ believed they held the same source lock. It must raise, not be swallowed.
   of headroom while bounding a pathological paste. Worst case ≈ 300 KB UTF-8 per row for
   both sides; a typical Path A row is a few hundred bytes.
 - The constant lives in code, not in the schema, so it can be raised without a migration.
+  **The number is a configuration default, not a schema contract.** No column length, CHECK,
+  or index depends on it; `before_state` / `after_state` record only the *outcome* of the
+  comparison, never the threshold. Rows written under one value therefore remain valid and
+  correctly interpretable after the constant changes, and changing it is a code edit with no
+  `0003` amendment and no data migration. 100 000 is chosen for headroom against a realistic
+  Korean web-novel chapter (~5 000–10 000 characters), not because the architecture depends
+  on that figure.
 
 ### 11.2 Oversize handling — never truncate
 
-If either side exceeds the cap, the row is written with `payload_state = 'oversize'`,
-`before_text` / `after_text` **NULL**, and `*_sha256` / `*_chars` retained.
+If a side exceeds the cap, that side is written with its state column set to `'oversize'` and
+its text column **NULL**, while its `*_sha256` / `*_chars` are retained. The two sides are
+evaluated independently: an oversize before-text does not force the after-text to be
+discarded, and vice versa (§8.2).
 
 Truncation is prohibited, and this is a correctness decision rather than a storage one: a
 diff computed from a truncated pair looks complete and is wrong. It would report deletions
 the author never made at the truncation point, and it would silently bias any style
 statistic toward chapter openings. A row that honestly says "this pair was too large to
 keep" is analyzable; a quietly truncated one poisons the dataset the whole feature exists
-to build. §19-Q4 asks whether oversize rows should be kept at all.
+to build. **§19-Q4 confirms oversize rows are kept.**
 
 ### 11.3 Retention policy
 
@@ -647,7 +827,8 @@ to build. §19-Q4 asks whether oversize rows should be kept at all.
 - Distillation does **not** delete what it consumes; a re-run must be possible, and P2-5
   output is reviewable and revertible (C3).
 - No automatic time-based expiry in P1-7. Any expiry policy is a product decision that
-  belongs with the P2-5 distillation UX, not with capture. §19-Q6.
+  belongs with the P2-5 distillation UX, not with capture. **§19-Q6 confirms this: indefinite
+  retention, no ceiling.**
 - Volume estimate for sanity: one continuation per writing session at ~10 KB, plus a handful
   of Path A rows, is single-digit megabytes per year at personal scale.
 
@@ -667,9 +848,32 @@ in the system. The design treats deletion as a first-class requirement, not an a
 | Owner requests deletion | Unconditional hard delete of the selected rows | The table has no dependents; nothing references a capture. Deleting captures must never affect canon, chapters, or Entry history. |
 | Export | Captures are **excluded by default** from any future JSON export | They are internal telemetry about the author's process, not their work product. Opt-in only. |
 
+All four cascade/soft-delete behaviors above were verified against the code, not assumed:
+`Work` carries `SoftDeleteMixin` and `delete_work()` soft-deletes; `Chapter` does **not**, and
+`delete_chapter()` performs a real `session.delete()`; `entries.user_id` is an
+`ON DELETE CASCADE` FK to `users.id`; and SQLite runs with `PRAGMA foreign_keys=ON`
+([`db/session.py:61`](../../backend/app/db/session.py#L61)), so the cascades are enforced on
+both engines.
+
+> **Review correction — the cascades must stay at the database level.** `delete_chapter()`
+> issues an ORM `session.delete(chapter)`. If the implementation declares a SQLAlchemy
+> `relationship()` from `Chapter` (or `Entry`, or `User`) to the capture rows **without**
+> `passive_deletes=True`, SQLAlchemy's default behavior is to load the children and *null out
+> their foreign key* instead of letting the database cascade. Because `chapter_id` is
+> nullable, that would not raise — it would silently leave the author's captured prose in the
+> table as an unattributable orphan, violating both §12's deletion contract and
+> `ck_edit_diff_captures_one_source`. **Rule:** declare no ORM relationship to
+> `edit_diff_captures` at all, or declare it with `passive_deletes=True`. The DB-level
+> `ON DELETE CASCADE` is the mechanism. This is an acceptance criterion (§20.25).
+
 Additional rules:
 
 - Owner scoping is mandatory on every query (C10). There is no cross-user or unscoped read.
+- No `work_id` is denormalized onto the table. Excluding soft-deleted Works (§13 rule 4) is a
+  read-time join — `chapters → works` for Path B, and the Entry's own scope anchor for
+  Path A, which `_exclude_orphaned_candidates()` already resolves. Adding a fifth
+  denormalized column to avoid one join would create a consistency obligation for no measured
+  benefit.
 - Captured text is never returned by an existing API. P1-7 adds **no HTTP endpoint at all**;
   §13's contract is a service-level read used by a future in-process pass. Any future UI
   exposure is a separate decision.
@@ -696,9 +900,18 @@ Contractual obligations:
 
 1. **Owner-scoped.** `user_id` is required and injected by the caller, exactly as
    `EntryRetrieveRequest` does today.
-2. **Complete pairs only.** Default filter `payload_state = 'stored'` and
-   `settled_at IS NOT NULL`. `pending` and `oversize` rows are excluded unless explicitly
-   requested by maintenance tooling.
+2. **Complete pairs only — with the after-side resolved, not merely stored.** A row is
+   eligible when `before_state = 'stored'` and an after-side is obtainable:
+   - `settled_at IS NOT NULL AND after_state = 'stored'` — the snapshot case; or
+   - `settled_at IS NULL AND source_kind = 'chapter-continuation'` and the chapter still
+     exists — the trailing-segment case of §6.3.1, where the after-side is
+     `chapters.content_text` read live and the row is returned with
+     `after_source = "live-chapter"` so the consumer knows it is a read-time value.
+
+   `oversize` sides and rows with a missing chapter are excluded unless maintenance tooling
+   asks for them. **`settled_at IS NULL` is not by itself an exclusion**; treating it as one
+   would silently drop the final segment of every chapter, which is the systematic loss
+   §6.3.1 exists to prevent.
 3. **Endorsed corrections only.** For `entry-review-edit`, exclude rows whose Entry never
    reached `canon` (§4.2). For `chapter-continuation`, exclude `context.partial_stream = true`.
 4. **Live anchors only.** Exclude rows whose Work is soft-deleted (§12).
@@ -835,27 +1048,32 @@ Written now so the implementation PR cannot define its own success criteria afte
 - **Negative/mutation test:** deleting the capture call from `edit_review_entry` must fail a test. Without this, the suite does not actually protect the feature.
 
 **Capture — Path B**
-- A continuation writes one `pending` row whose `before_text` equals the streamed buffer exactly.
+- A continuation writes one unsettled row (`settled_at IS NULL`) whose `before_text` equals the streamed buffer exactly.
 - `context.insert_offset` correctly locates the segment in the pre-append `content_text`.
-- The stream error path marks `partial_stream = true`.
-- The next continuation settles the prior row exactly once and writes a new `pending` row.
+- The stream error path marks `partial_stream = true`, **and** a capture failure inside that branch does not replace the provider error the author needs to see (§9.2).
+- The next continuation settles the prior row exactly once and writes a new unsettled row.
 - A second settle attempt is a no-op, not an error.
+- An author `update_chapter()` save writes **no** capture row and settles nothing (§6.3.1).
+- A chapter whose last continuation is never followed by another keeps exactly one unsettled row, and §13 still returns it with a live-resolved after-side.
+- An oversize before-text on an unsettled row is representable: `before_state='oversize'`, `before_text IS NULL`, `after_state IS NULL`, `settled_at IS NULL`. **This row is the regression test for the constraint defect §8.2 corrects** — it must insert successfully.
 
 **Transaction semantics**
 - Tier 1: an induced INSERT failure rolls the edit back — the Entry content is unchanged and the API returns an error. Assert the pre-image survived.
 - Tier 2: an induced failure rolls the chapter append back.
-- Tier 3: an induced settle failure leaves the row `pending`, logs a warning, and returns a successful response.
+- Tier 3: an induced settle failure leaves the row unsettled, logs a warning, and returns a successful response.
 - Grep-style assertion that no bare `except Exception: pass` exists around capture calls.
 
 **Idempotency / concurrency**
 - Concurrent edits of one Entry never produce duplicate `sequence` values (unique violation asserted, not swallowed).
 - Replayed settle affects zero rows.
+- `_append_chapter()` emits `FOR UPDATE` for the chapter row before deriving `sequence` (§10.1). Assert the lock is taken — a test that only exercises SQLite proves nothing here, because SQLite ignores the clause; assert on the compiled statement or the repository call.
 
 **Size and privacy**
-- A `> EDIT_DIFF_MAX_CHARS` side yields `payload_state = 'oversize'`, NULL text, correct hash and length.
+- A `> EDIT_DIFF_MAX_CHARS` side yields that side's state `= 'oversize'` with NULL text and correct hash and length, **independently of the other side's state**.
 - **No truncated text is ever stored** — assert `before_text` is either the full string or NULL.
-- Deleting a chapter cascades its captures away.
+- Deleting a chapter cascades its captures away, **through the database**, with no ORM relationship nulling `chapter_id` first (§12). Assert zero rows remain, not merely zero rows with a non-null `chapter_id`.
 - Deleting a user cascades all captures away.
+- Soft-deleting a Work retains rows and excludes them from §13 reads.
 - No captured text appears in any log record (assert against a capturing log handler).
 
 **Non-interference**
@@ -865,7 +1083,7 @@ Written now so the implementation PR cannot define its own success criteria afte
 - Regression items R6 (continuation) and R9 (lossless migration) from the milestone checklist.
 
 **Read contract**
-- `list_edit_diff_captures` is owner-scoped, excludes `pending` / `oversize` / non-canon / partial / soft-deleted-work rows, and paginates deterministically.
+- `list_edit_diff_captures` is owner-scoped, excludes `oversize` / non-canon / partial / soft-deleted-work / missing-chapter rows, **includes** a trailing unsettled `chapter-continuation` row with its after-side resolved live and labelled `after_source = "live-chapter"`, and paginates deterministically.
 
 ---
 
@@ -876,17 +1094,17 @@ Written now so the implementation PR cannot define its own success criteria afte
 1. Migration `0003_edit_diff_capture` only — no behavior change. Verify head and a clean test run.
 2. Path A capture (Entry review edit). Smallest surface, sharpest data loss, no UX effect.
 3. Path B draft capture (`_append_chapter`).
-4. Path B settle trigger (§6.3), once §19-Q1 is answered.
+4. Path B settle trigger (§6.3 — next continuation; §19-Q1 is answered and needs no further decision).
 5. The §13 read contract, when P2-5 begins.
 
 Steps 2–4 are separate PRs over one migration. Splitting the migration would create three
 revisions for one table.
 
-**Feature flag?** Recommended **no**, and this differs deliberately from P1-6. A flag that
+**Feature flag? Decided: none** (§19-Q7), and this differs deliberately from P1-6. A flag that
 defaults OFF on a *capture* feature means collecting nothing, which is the failure mode
-ADR-010 §4-C names. A flag that defaults ON is not a flag. If the reviewer wants a kill
-switch for the write path, it should be an explicit opt-*out* that defaults to capturing,
-and the decision should be recorded. §19-Q7.
+ADR-010 §4-C names. A flag that defaults ON is not a flag. The divergence from P1-6 is
+principled rather than inconsistent: P1-6's flag guarded a change to what reached a live
+generation prompt, whereas P1-7 changes nothing the author or the model can observe.
 
 **Rollback**
 
@@ -898,49 +1116,98 @@ and the decision should be recorded. §19-Q7.
 
 ---
 
-## 19. Open questions
+## 19. Open questions — resolved
 
-These need a human architecture or product decision. They are **not** assumed resolved.
+All eight are closed by the independent architecture review of 2026-08-09. Each carries one
+of three dispositions: **RESOLVED** (decided here), **DEFERRED WITH SAFE DEFAULT** (a later
+task owns it; a default that cannot hurt is recorded), or **BLOCKING HUMAN DECISION** (nothing
+may be implemented until a person answers). **There are no BLOCKING items.**
 
-**Q1 — What settles a Path B capture?** §6.3 recommends "the next continuation of the same
-chapter" because it needs no new UX. Alternatives: an explicit "finalize chapter" action
-(cleanest signal, but new UX and RFC-011 §12.3 warns against gating the author's own
-writing); a debounce after the last autosave (no UX, but arbitrary and timer-dependent);
-settle on chapter close (the frontend has no such event today). **This is the one genuine
-product decision in the design.** A wrong choice here does not lose the draft side — it only
-delays or coarsens the pairing.
+| | Question | Disposition |
+|---|---|---|
+| Q1 | Path B settle trigger | **RESOLVED** — next continuation + read-time resolution |
+| Q2 | `EDIT_DIFF` provenance validator | **DEFERRED WITH SAFE DEFAULT** — P2-5 owns it; P1-7 touches nothing |
+| Q3 | Capture on supersession | **RESOLVED** — no capture |
+| Q4 | Keep oversize rows | **RESOLVED** — keep, metadata-only |
+| Q5 | ADR-010's "one column pair" | **RESOLVED** — illustrative, not binding DDL |
+| Q6 | Retention ceiling | **RESOLVED** — indefinite, no automatic expiry in P1-7 |
+| Q7 | Kill switch | **RESOLVED** — no feature flag |
+| Q8 | Table name | **RESOLVED** — `edit_diff_captures` |
 
-**Q2 — Does `ProvenanceSourceKind.EDIT_DIFF` still fit its own validator?**
+**Q1 — What settles a Path B capture? → RESOLVED.** The write-path trigger is **the next
+continuation of the same chapter**, exactly as §6.3 proposed, and the trailing unsettled row
+is resolved **at read time** from live `chapters.content_text` (§6.3.1, §13 rule 2). This was
+the one question the design called a genuine product decision, and the review closes it
+rather than escalating it, because the repository does contain the information needed to
+decide: the four candidate triggers were each checked against the real editor page, the real
+`PATCH /works/chapters/{id}` endpoint, and the real 1.2-second autosave, and the comparison in
+§6.3.1 is decisive. The decisive facts are that (a) only the before-side is irrecoverable, so
+the settle snapshot is a bracketing convenience rather than a rescue, and (b) the one
+high-coverage alternative — settling on the author's own save — would systematically record
+"the human changed nothing," biasing the corpus in exactly the dimension it exists to
+measure. Choosing it would have been the wrong decision, not merely a different one.
+
+**Q2 — Does `ProvenanceSourceKind.EDIT_DIFF` still fit its own validator? → DEFERRED WITH
+SAFE DEFAULT.**
 `EntryService._validate_provenance()` ([`entry_service.py:835`](../../backend/app/services/entry_service.py#L835))
 requires an `EDIT_DIFF` provenance `source_id` to be an owned **Chapter**. But ADR-010 §2.3
 describes the distilled Entry's provenance as a *"diff batch"*, and a preference distilled
-from many chapters has no single chapter. The existing validator will not fit P2-5's output.
-This is a P2-5 problem, not P1-7's — flagged so it is not discovered late. **P1-7 changes
-nothing here.**
+from many chapters has no single chapter. The review confirmed the mismatch is real in code:
+the `EDIT_DIFF` branch shares the `CHAPTER` branch's `_assert_owned_record(..., Chapter, ...)`
+call, so a distilled preference with no single source chapter cannot be persisted today.
+**Safe default: change nothing.** P1-7 writes no Entry at all (§5.4), so the validator is
+never exercised by this feature, and any fix now would be speculation about a P2-5 output
+shape nobody has designed. Recorded so P2-5 does not discover it late.
 
-**Q3 — Is a canon supersession a learning signal?** §4.2 says no: the pair already survives
-via `superseded_by_entry_id`, and it is usually a factual revision rather than a style
-correction. If the reviewer disagrees, no capture row is needed anyway — a read-side query
-over the supersession chain produces the pair, which is strictly better than duplicating it.
+**Q3 — Is a canon supersession a learning signal? → RESOLVED: no capture.** §4.2's reasoning
+holds and was re-checked against `EntryService.supersede()`: the old canon survives as a
+`superseded` row linked by `superseded_by_entry_id`, so predicate (b) of §4.1 — *completing
+the write makes one text unrecoverable* — is simply false. The pair is queryable forever
+without a capture row, and a read-side query over the supersession chain reconstructs it
+exactly. Writing a row would duplicate durable data into a table whose whole justification is
+holding data that exists nowhere else. If a future pass wants this signal, it reads the
+supersession chain; that requires no schema change and no decision now.
 
-**Q4 — Keep oversize rows at all?** §11.2 keeps a metadata-only row so the gap is visible and
-countable. The alternative is writing nothing, which is simpler but makes systematic loss
-invisible. Recommendation: keep them; they are tiny.
+**Q4 — Keep oversize rows at all? → RESOLVED: keep them, metadata-only.** A metadata-only row
+costs on the order of a hundred bytes and makes systematic loss countable; writing nothing
+makes it invisible, and an invisible gap in a corpus is worse than a measured one. This
+matters more under the split state columns of §8.2, where a row can now be oversize on one
+side and fully stored on the other — which is genuinely useful data, not a stub.
 
-**Q5 — Does Option 2 satisfy ADR-010 §2.2's "one column pair on the substrate"?** §7 Option 4
-argues the phrase is illustrative sizing from before the Entry model and the Review Card edit
-path existed, and that the binding decision is "capture the pair from day one." If the
-reviewer reads it as binding DDL, ADR-010 needs a v3 revision — not a worse schema.
+**Q5 — Does Option 2 satisfy ADR-010 §2.2's "one column pair on the substrate"? → RESOLVED:
+the phrase is illustrative, not binding DDL.** Three independent confirmations: ADR-003 §2
+says of the ADR layer that it *"writes no columns, keys, or DDL — those belong to an RFC"*;
+RFC-008 §5 and §7 both state that *"capture timing and the substrate that records diffs are
+Defined in the Learning Capture RFC"*, explicitly deferring the substrate away from ADR-010;
+and ADR-010 §2.2's own wording scopes the column pair to *"per chapter"*, which contains no
+provision at all for the Entry-level Review Card correction of §2.2 Path A. Reading it as
+binding DDL would therefore not merely produce a worse schema — it would **discard one of the
+two capture paths entirely**. The binding decision in ADR-010 is *capture the pair from day
+one*, and Option 2 honors it on both paths. No ADR-010 revision is required; if one is ever
+written for other reasons, aligning the illustrative sentence is a documentation cleanup.
 
-**Q6 — Any retention ceiling?** §11.3 proposes indefinite retention. If the reviewer wants a
-cap (row count, age, or total bytes), it should be decided before capture begins, because a
-retroactive purge destroys data that cannot be recollected.
+**Q6 — Any retention ceiling? → RESOLVED: indefinite retention, no automatic expiry in
+P1-7.** ADR-010 §2.2 is explicit that this data cannot be recollected, and §5-Future-risks'
+*"retention stays local and minimal"* is already satisfied by the per-row cap (§11.1), the
+cascades (§12), and the owner's unconditional delete path — not by a purge. A time- or
+size-based ceiling would destroy unrecoverable data on a schedule nobody has a use case for;
+the §11.3 volume estimate is single-digit megabytes per year at personal scale, so no
+pressure exists. Any expiry policy is a P2-5 product decision made *after* there is a
+consumer, and adding one later is additive.
 
-**Q7 — Kill switch?** §18 recommends no feature flag. If one is wanted, it must default to
-capturing.
+**Q7 — Kill switch? → RESOLVED: no feature flag.** §18's reasoning is adopted. A capture
+feature behind a default-OFF flag collects nothing, which is ADR-010 §4-C's rejected
+alternative reached by accident, and a default-ON flag is not a flag. The rollback story is
+already sufficient: revert the code PR and capture stops, leaving inert rows that nothing
+reads (§18). This is a deliberate and recorded divergence from P1-6's flag posture, and the
+reason is that P1-6 changed what reached a live prompt whereas P1-7 changes nothing the
+author or the model can observe.
 
-**Q8 — Table name.** `edit_diff_captures` is proposed because the table serves both Entry and
-Chapter sources; `entry_edit_diffs` would be misleading. Naming is the reviewer's call.
+**Q8 — Table name. → RESOLVED: `edit_diff_captures`.** It is source-neutral, which the
+schema requires: one table serves both an Entry anchor and a Chapter anchor, so
+`entry_edit_diffs` would misdescribe half its rows. It matches the plural snake_case of
+`entries` / `chapters` / `work_characters`, and `0003_edit_diff_capture` matches the
+`000N_<snake_case>` revision convention.
 
 ---
 
@@ -959,12 +1226,12 @@ The P1-7 implementation conforms only if **all** of the following hold.
 6. Every §4.2 "Yes" path writes exactly one row per qualifying event; every "No" path writes none.
 7. The first Path A `before_text` for an Entry is the pristine AI-proposed content, byte-exact.
 8. Path B `before_text` equals the streamed provider output, byte-exact.
-9. No text is ever truncated. Oversize means NULL text plus retained hash and length.
+9. No text is ever truncated. Oversize means NULL text plus retained hash and length, decided per side.
 10. `before_sha256 == after_sha256` writes no row.
 
 **Transaction and failure**
 11. Tier-1 and Tier-2 captures are in the same transaction as the write they protect; an induced failure rolls that write back and returns an error.
-12. Tier-3 settle failure leaves the row `pending`, logs a structured warning, and does not fail the request.
+12. Tier-3 settle failure leaves the row unsettled, logs a structured warning, and does not fail the request.
 13. No bare exception swallowing around any capture call.
 14. No captured text reaches any log, trace, error response, or Bench fixture.
 
@@ -978,6 +1245,13 @@ The P1-7 implementation conforms only if **all** of the following hold.
 **Privacy and lifecycle**
 20. User and Chapter deletion cascade captures away; Work soft-delete retains rows but excludes them from reads.
 21. Every query is owner-scoped; no unscoped or cross-user read path exists.
+
+**Corrections carried from the architecture review — implementation must satisfy these**
+24. `_append_chapter()` (and the §6.3 settle path) load the chapter with `with_for_update()` before deriving `sequence` (§10.1). The in-process `_active_continue` set is not accepted as the serialization mechanism.
+25. Deletion cascades are enforced by the database. No ORM `relationship()` to `edit_diff_captures` exists without `passive_deletes=True` (§12).
+26. `before_state` and `after_state` are independent columns; there is no single `payload_state`, and "pending" is expressed only as `settled_at IS NULL` (§8.2).
+27. An unsettled `chapter-continuation` row is a valid terminal state. Nothing treats it as an error, and the §13 read path returns it with a live-resolved after-side (§6.3.1).
+28. `EDIT_DIFF_MAX_CHARS` is a code constant with no schema dependency; changing it requires no migration and does not invalidate existing rows (§11.1).
 
 **Verification**
 22. The §17 test plan passes, including the mutation checks that prove the tests detect removal of the capture calls.
@@ -1002,8 +1276,10 @@ This document deliberately does not claim it, for three reasons:
    numbered RFC permanently incomplete.
 2. **No ADR-level decision is being made.** Every choice here is made *inside* the space
    ADR-003, ADR-010, ADR-011, and ADR-017 already fixed. The one place that brushes a hard
-   rule — a non-knowledge table under RFC-001 §8.10 — is raised for explicit ratification in
-   §5.3 rather than decided unilaterally.
+   rule — a non-knowledge table under RFC-001 §8.10 — was raised for explicit ratification in
+   §5.3 rather than decided unilaterally, and the independent review ratified it on the
+   ground that the valve governs knowledge promotion while ADR-015 §2.2 separately sanctions
+   new tables. No ADR is therefore required.
 3. **Precedent.** [`prompt-assets.md`](prompt-assets.md) (P1-3),
    [`review-card-api.md`](review-card-api.md) (P1-1), and
    [`entry-context-integration.md`](entry-context-integration.md) (P1-6) are all
@@ -1011,10 +1287,10 @@ This document deliberately does not claim it, for three reasons:
 
 **When this should become RFC-013 (Learning Capture & Distillation):** when P2-5 is scoped.
 At that point the capture contract here becomes its §-on-capture, distillation is designed
-alongside it, and the five deferring RFCs get a real cross-reference. If the reviewer decides
-in §5.3 that the new table *is* an architecture decision, then an ADR must come first —
-before any implementation, not after.
+alongside it, and the five deferring RFCs get a real cross-reference. §5.3's ratification
+means no ADR is required before implementation.
 
 ---
 
-*End of the P1-7 edit-diff capture design proposal. Nothing in this document is implemented.*
+*End of the P1-7 edit-diff capture design. The design is approved; nothing in it is
+implemented.*
