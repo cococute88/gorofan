@@ -5,9 +5,11 @@ assertion here is about what the production write path actually persisted.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import AsyncIterator
 from functools import partial
+from itertools import count
 from typing import Any, cast
 
 import pytest
@@ -272,16 +274,27 @@ def test_the_chapter_lock_is_a_real_row_lock() -> None:
 def test_the_append_path_locks_before_deriving_the_sequence(
     novel_client, monkeypatch
 ) -> None:
-    order: list[str] = []
+    # Session identity matters: the settle pass also locks the chapter, so a
+    # bare "a lock happened" assertion would still pass with the append's own
+    # lock removed. The sequence must be derived in a session that holds it.
+    order: list[tuple[str, int]] = []
     original_lock = ChapterRepository.get_for_update
     original_sequence = EditDiffCaptureRepository.next_sequence
+    counter = count()
+
+    def _key(session) -> int:  # noqa: ANN001
+        # session.info is per-instance, so this survives address reuse between
+        # a closed session and the next one.
+        if "lock_spy" not in session.info:
+            session.info["lock_spy"] = next(counter)
+        return session.info["lock_spy"]
 
     async def _spy_lock(self, session, chapter_id, *, user_id):  # noqa: ANN001
-        order.append("lock")
+        order.append(("lock", _key(session)))
         return await original_lock(self, session, chapter_id, user_id=user_id)
 
     async def _spy_sequence(self, session, **kwargs):  # noqa: ANN001
-        order.append("sequence")
+        order.append(("sequence", _key(session)))
         return await original_sequence(self, session, **kwargs)
 
     monkeypatch.setattr(ChapterRepository, "get_for_update", _spy_lock)
@@ -290,8 +303,16 @@ def test_the_append_path_locks_before_deriving_the_sequence(
     _work_id, chapter_id = _setup(novel_client, title="락순서")
     assert _continue(novel_client, chapter_id).status_code == 200
 
-    assert "lock" in order and "sequence" in order
-    assert order.index("lock") < order.index("sequence")
+    sequence_events = [i for i, (kind, _) in enumerate(order) if kind == "sequence"]
+    assert sequence_events, "the append path must derive a capture sequence"
+    for index in sequence_events:
+        _kind, session_id = order[index]
+        held = [
+            other
+            for other, (kind, other_session) in enumerate(order[:index])
+            if kind == "lock" and other_session == session_id
+        ]
+        assert held, "MAX(sequence)+1 was derived without holding the chapter lock"
 
 
 def test_the_capture_calls_are_not_wrapped_in_bare_swallows() -> None:
@@ -300,3 +321,163 @@ def test_the_capture_calls_are_not_wrapped_in_bare_swallows() -> None:
     source = inspect.getsource(NovelService._append_chapter)
     assert "capture_chapter_continuation" in source
     assert "except Exception" not in source
+
+
+# --- settle (design §6.3, Tier 3) -------------------------------------------
+
+
+def test_the_next_continuation_settles_the_previous_capture(novel_client) -> None:
+    work_id, chapter_id = _setup(novel_client, title="정착")
+    assert _continue(novel_client, chapter_id).status_code == 200
+
+    # The author revises before asking for more prose — this is the signal.
+    current = _chapter(novel_client, work_id, chapter_id)
+    revised = "그는 문을 부수듯 열었다.\n\n작가가 다듬은 문장."
+    assert (
+        novel_client.patch(
+            f"/api/v1/works/chapters/{chapter_id}",
+            json={"content_text": revised, "version": current["version"]},
+        ).status_code
+        == 200
+    )
+
+    assert _continue(novel_client, chapter_id).status_code == 200
+
+    rows = _run(novel_client, _captures_for, chapter_id)
+    assert len(rows) == 2
+    first, second = rows
+
+    assert first.settled_at is not None
+    assert first.after_state == "stored"
+    assert first.after_text == revised
+    assert first.after_chars == len(revised)
+    assert first.after_sha256 == hashlib.sha256(revised.encode("utf-8")).hexdigest()
+    assert first.context["settle_trigger"] == "next-continuation"
+    # The before-side is untouched by settling.
+    assert first.before_text == SEGMENT
+
+    # The new row is the one now pending.
+    assert second.sequence == 1
+    assert second.settled_at is None
+
+
+def test_a_replayed_settle_changes_nothing(novel_client) -> None:
+    """The `settled_at IS NULL` guard makes a second settle affect zero rows."""
+    _work_id, chapter_id = _setup(novel_client, title="재정착")
+    assert _continue(novel_client, chapter_id).status_code == 200
+
+    service = cast(Any, novel_client.app).state.novel_service
+    user_id = get_settings().DEFAULT_USER_ID
+    assert novel_client.portal is not None
+    settle = partial(service._settle_chapter_captures, user_id, chapter_id)
+
+    novel_client.portal.call(settle)
+    first = _run(novel_client, _captures_for, chapter_id)[0]
+    assert first.settled_at is not None
+
+    novel_client.portal.call(settle)
+    second = _run(novel_client, _captures_for, chapter_id)[0]
+    assert second.settled_at == first.settled_at
+    assert second.after_sha256 == first.after_sha256
+
+
+def test_the_trailing_capture_stays_pending(novel_client) -> None:
+    """A chapter whose last continuation is never followed keeps one pending row.
+
+    That is a normal terminal state, not a gap: the after-side lives in
+    `chapters.content_text` and is resolved at read time (design §6.3.1).
+    """
+    work_id, chapter_id = _setup(novel_client, title="마지막")
+    assert _continue(novel_client, chapter_id).status_code == 200
+
+    rows = _run(novel_client, _captures_for, chapter_id)
+    assert len(rows) == 1
+    assert rows[0].settled_at is None
+    # The after-side is obtainable for free, forever.
+    assert _chapter(novel_client, work_id, chapter_id)["content_text"].endswith(SEGMENT)
+
+
+def test_a_settle_failure_does_not_block_the_continuation(
+    novel_client, monkeypatch, caplog
+) -> None:
+    """Tier 3 is best effort — but reported, and the row stays pending."""
+    _work_id, chapter_id = _setup(novel_client, title="정착실패")
+    assert _continue(novel_client, chapter_id).status_code == 200
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("induced settle failure")
+
+    monkeypatch.setattr(EditDiffCaptureService, "settle_chapter_captures", _boom)
+
+    with caplog.at_level(logging.WARNING):
+        response = _continue(novel_client, chapter_id)
+    assert response.status_code == 200
+    assert "event: done" in response.text
+
+    rows = _run(novel_client, _captures_for, chapter_id)
+    assert len(rows) == 2
+    assert rows[0].settled_at is None, "a failed settle must leave the row pending"
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "edit_diff.settle_failed"
+    ]
+    assert len(warnings) == 1
+    assert warnings[0].meta["chapter_id"] == chapter_id
+    assert warnings[0].meta["failure_class"] == "RuntimeError"
+    _assert_no_prose(warnings)
+
+
+def test_a_later_continuation_can_still_settle_a_missed_row(
+    novel_client, monkeypatch
+) -> None:
+    _work_id, chapter_id = _setup(novel_client, title="재시도")
+    assert _continue(novel_client, chapter_id).status_code == 200
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("induced settle failure")
+
+    monkeypatch.setattr(EditDiffCaptureService, "settle_chapter_captures", _boom)
+    assert _continue(novel_client, chapter_id).status_code == 200
+    monkeypatch.undo()
+
+    assert _continue(novel_client, chapter_id).status_code == 200
+
+    rows = _run(novel_client, _captures_for, chapter_id)
+    assert len(rows) == 3
+    assert [row.settled_at is not None for row in rows] == [True, True, False]
+
+
+def test_the_settle_path_takes_the_chapter_lock(novel_client, monkeypatch) -> None:
+    order: list[str] = []
+    original_lock = ChapterRepository.get_for_update
+    original_settle = EditDiffCaptureService.settle_chapter_captures
+
+    async def _spy_lock(self, session, chapter_id, *, user_id):  # noqa: ANN001
+        order.append("lock")
+        return await original_lock(self, session, chapter_id, user_id=user_id)
+
+    async def _spy_settle(self, session, **kwargs):  # noqa: ANN001
+        order.append("settle")
+        return await original_settle(self, session, **kwargs)
+
+    _work_id, chapter_id = _setup(novel_client, title="정착락")
+    assert _continue(novel_client, chapter_id).status_code == 200
+
+    monkeypatch.setattr(ChapterRepository, "get_for_update", _spy_lock)
+    monkeypatch.setattr(EditDiffCaptureService, "settle_chapter_captures", _spy_settle)
+    assert _continue(novel_client, chapter_id).status_code == 200
+
+    assert order[0] == "lock"
+    assert order[1] == "settle"
+
+
+def test_the_settle_call_is_reported_not_swallowed() -> None:
+    import inspect
+
+    source = inspect.getsource(NovelService._settle_chapter_captures)
+    assert "settle_chapter_captures" in source
+    # Tier 3 may catch, but never silently.
+    assert "pass" not in source.split("except Exception")[-1].split("\n")[1]
+    assert "_logger.warning" in source

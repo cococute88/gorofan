@@ -248,6 +248,10 @@ class NovelService:
                 entry_context_trace=entry_context.trace,
             )
 
+        # Settle the previous continuation before this one destroys the
+        # boundary, and before any token is streamed (design §6.3).
+        await self._settle_chapter_captures(user_id, chapter_id)
+
         asset = prompt.trace.get("prompt_asset") or {}
         asset_id = asset.get("id")
         asset_version = asset.get("version")
@@ -296,6 +300,47 @@ class NovelService:
             capture_context=capture_context, producer=producer,
         )
         yield StreamEvent(event="done", finish_reason="stop", token_count=len(buffer))
+
+    async def _settle_chapter_captures(self, user_id: str, chapter_id: str) -> None:
+        """Bracket this chapter's pending captures against the next segment.
+
+        Requesting more prose is the author's clearest signal that everything
+        above it is what they want continued from — the closest thing to
+        "accepted" the chapter UX has, and it needs no new endpoint, gesture,
+        or UI. The 1.2s autosave is deliberately **not** a settle trigger: the
+        first save lands seconds into revision, so settling there would
+        systematically record "the human changed nothing" in a corpus whose
+        purpose is measuring how the human changes it (design §6.3.1).
+
+        **Tier 3 — best effort.** The after-side still lives in
+        ``chapters.content_text``, which nothing destroys, so a failure loses
+        no data: the row stays unsettled, a later continuation can settle it,
+        and a trailing unsettled row is a normal terminal state resolved at
+        read time. A failure must therefore never block the new continuation —
+        but it is reported, never silently swallowed, and the warning carries
+        ids and a failure class only, never captured prose (design §9.3).
+        """
+        try:
+            async with self.sm() as s:
+                chapter = await self._locked_chapter(s, user_id, chapter_id)
+                await self.captures.settle_chapter_captures(
+                    s,
+                    user_id=user_id,
+                    chapter_id=chapter_id,
+                    after_text=chapter.content_text,
+                )
+                await s.commit()
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "edit_diff.settle_failed",
+                extra={
+                    "user_id": user_id,
+                    "meta": {
+                        "chapter_id": chapter_id,
+                        "failure_class": type(exc).__name__,
+                    },
+                },
+            )
 
     async def _append_chapter(
         self, user_id, chapter_id, text, base_version, *, partial,  # noqa: ANN001
