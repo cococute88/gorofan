@@ -139,6 +139,8 @@ A single-process, layered **modular monolith**: a reusable **substrate** (provid
 
 **P1-6 implementation note:** [Entry Context Integration](entry-context-integration.md) records how `retrieve()` → Context Assembly reaches real Chat/Novel generation: the distinct `entry` PromptBlock kind and its priority rationale, the OFF-by-default feature flag, the knowledge-slice budget, the separated retrieval/assembly trace, and the error policy.
 
+**P1-7 design proposal (under review, NOT implemented):** [Edit-diff Capture Persistence](edit-diff-capture-design.md) proposes where and when the draft↔human-edited text pair is captured (ADR-010, RFC-001 §8.8): the capture predicate, the two capture paths, why an edit diff is a non-Entry operational record rather than an Entry type, an additive `0003_*` table, the transaction/failure tiers, size and retention bounds, and the P1-9 boundary. Nothing in it is built; it is awaiting architecture review.
+
 **Build order (from ADR-001 / `architecture-final-minimal.md` §8):**
 1. Entry store + `retrieve()`; migrate character/world/lore fields → Entries.
 2. Writer loop runner with the smallest pipeline (plan → draft → assemble).
