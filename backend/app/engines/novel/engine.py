@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from app.adapters.base import AssembledPrompt, ProviderRequest, StreamEvent
 from app.adapters.registry import ProviderRegistry
 from app.engines.prompt.assets import PromptAssetLoader
+from app.engines.prompt.blocks import PromptBlock
 from app.engines.prompt.engine import AssembleInput, PromptEngine
 
 
@@ -42,6 +43,8 @@ class NovelEngine:
         *,
         instruction: str,
         req: ProviderRequest,
+        entry_blocks: list[PromptBlock] | None = None,
+        entry_context_trace: dict[str, object] | None = None,
     ) -> AssembledPrompt:
         asset = self.prompt_assets.load("novel.continue")
         cap = self.registry.capabilities(req.provider, req.model_name)
@@ -66,6 +69,8 @@ class NovelEngine:
                 lore_entries=ctx.lore_entries or [],
                 chapter_prior_summaries=ctx.prior_summaries,
                 history=[],
+                entry_blocks=entry_blocks,
+                entry_context_trace=entry_context_trace,
                 user_message=(f"[현재 챕터 끝부분]\n{tail}" if tail else None),
                 instruction=instruction or "자연스럽게 다음 장면을 이어써라.",
                 context_window=req.context_window,

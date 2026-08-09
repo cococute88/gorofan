@@ -38,6 +38,10 @@ class AssembleInput:
     memory_long: list = None  # list[Memory-like]
     history: list = None  # list[Message-like]
     chapter_prior_summaries: list[str] = None
+    # Already-assembled Entry Store blocks (P1-6). The caller owns retrieval and
+    # Context Assembly; the engine only collects, orders, and budgets them.
+    entry_blocks: list[PromptBlock] | None = None
+    entry_context_trace: dict[str, object] | None = None
     user_message: str | None = None
     instruction: str | None = None
     user_display_name: str = "창작자"
@@ -138,6 +142,9 @@ class PromptEngine:
             w = inp.world
             add("world", "system", f"세계관: {getattr(w, 'name', '')}\n{getattr(w, 'description', '')}")
         blocks.extend(self._make_lore_blocks(inp))
+        # Entry Store canon joins as its own kind, alongside — never merged into —
+        # the legacy lore blocks above and the chat-private memory blocks below.
+        blocks.extend(inp.entry_blocks or [])
         for mem in inp.memory_long or []:
             add("memory", "system", getattr(mem, "content", ""), priority=60)
         for s in inp.chapter_prior_summaries or []:
@@ -177,7 +184,13 @@ class PromptEngine:
         ctx = self._ctx(inp)
         blocks = self._collect(inp)
         for b in blocks:
-            b.content = self._resolve(b.content, ctx)
+            # Entry content is stored canon, not an authored template. Running
+            # variable substitution over it would let `{{...}}` inside a user's
+            # own knowledge silently rewrite the fact being injected, so Entry
+            # blocks are collected verbatim. Tokens are still recounted here
+            # because the engine owns the final budget (RFC-003 §12).
+            if b.kind != "entry":
+                b.content = self._resolve(b.content, ctx)
             b.token_count = self.tok.count(b.content)
         ordered = self._order(blocks)
         budget = self.budget.compute_budget(inp.context_window, inp.max_tokens, inp.safety_ratio)
@@ -210,6 +223,8 @@ class PromptEngine:
                 "version": inp.prompt_asset_version,
                 "sha256": inp.prompt_asset_sha256,
             }
+        if inp.entry_context_trace is not None:
+            trace["entry_context"] = inp.entry_context_trace
         # Property 7 defensive assertion
         assert token_count <= inp.context_window, "Property 7 violated"
         return AssembledPrompt(

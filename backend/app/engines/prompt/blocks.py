@@ -6,14 +6,18 @@ from typing import Literal
 
 BlockKind = Literal[
     "system", "persona", "character", "world", "lore",
-    "memory", "history", "chapter", "user", "instruction",
+    "entry", "memory", "history", "chapter", "user", "instruction",
 ]
 BlockRole = Literal["system", "user", "assistant"]
 
 # Layer ordering (design 9.8). Lower index renders earlier.
+# `entry` sits with the other knowledge layers, between legacy `lore` and
+# chat-private `memory`. Inserting it there leaves every pre-existing kind in
+# its original relative position, so a prompt without Entry blocks renders
+# exactly as before (P1-6).
 LAYER_ORDER: list[BlockKind] = [
     "system", "character", "persona", "world", "lore",
-    "memory", "chapter", "history", "user", "instruction",
+    "entry", "memory", "chapter", "history", "user", "instruction",
 ]
 
 # Default priorities (design 9.6). Higher = kept longer (dropped/trimmed last).
@@ -25,6 +29,14 @@ DEFAULT_PRIORITY: dict[BlockKind, int] = {
     "persona": 80,
     "world": 70,
     "chapter": 75,
+    # Entry Store canon is human-gated shared knowledge (ADR-003/RFC-002), so it
+    # outranks chat-private `memory` and the legacy keyword `lore` scan. It stays
+    # below the structural identity/continuity blocks because P1-6 is additive:
+    # legacy Character/World/Lore/chapter context remains authoritative until the
+    # separately approved P1-8 cutover. Total Entry volume is bounded by the
+    # retrieval knowledge-slice budget (RFC-003 §11.1), not by this priority, so
+    # Entry cannot unboundedly displace `memory`.
+    "entry": 65,
     "memory": 60,
     "history": 30,
     "lore": 50,
