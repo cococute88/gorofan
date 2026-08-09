@@ -116,6 +116,41 @@ def _result(items: list[EntryRetrievalItem], *, budget: int = 4096) -> EntryRetr
     )
 
 
+def _traced_result(
+    items: list[EntryRetrievalItem],
+    *,
+    orphaned: list[str] | None = None,
+    budget_rejected: list[str] | None = None,
+    limit_rejected: list[str] | None = None,
+    budget: int = 4096,
+) -> EntryRetrievalResult:
+    """A retrieval result carrying each exclusion class `retrieve()` can report."""
+
+    return EntryRetrievalResult(
+        items=items,
+        total_estimated_tokens=sum(item.estimated_tokens for item in items),
+        requested_budget=budget,
+        policy_version="entry-keyword-v1",
+        trace=EntryRetrievalTrace(
+            excluded_orphaned_entry_ids=orphaned or [],
+            budget_rejected_entry_ids=budget_rejected or [],
+            limit_rejected_entry_ids=limit_rejected or [],
+        ),
+    )
+
+
+def _trace_for(result: EntryRetrievalResult, *, budget: int = 4096) -> dict[str, Any]:
+    """Drive the real assembly + trace path, never a re-implemented formula."""
+
+    assembled = assemble_entry_context(EntryContextAssemblyRequest(result, budget=budget))
+    request = EntryRetrieveRequest(
+        user_id="owner",
+        scopes=[EntryScopeSelector(scope_kind=EntryScope.WORK, scope_id="work-1")],
+        budget=budget,
+    )
+    return build_entry_context_trace(request=request, result=result, assembled=assembled)
+
+
 def _blocks(items: list[EntryRetrievalItem], *, budget: int = 4096) -> list[PromptBlock]:
     return list(
         assemble_entry_context(
@@ -366,6 +401,75 @@ def test_retrieval_and_assembly_exclusions_stay_separately_attributable() -> Non
     assert [e["entry_id"] for e in assembly_exclusions] == ["entry-large"]
     assert assembly_exclusions[0]["stage"] == "context_assembly"
     assert "entry-large" not in retrieval_exclusions["retrieval_budget_rejected_entry_ids"]
+
+
+# --- considered_candidate_count ---------------------------------------------
+#
+# `retrieve()` filters orphaned anchors *before* `rank_entries()` and applies
+# budget/limit rejection *after* it, so the ranker's candidate set is exactly
+# selected + budget-rejected + limit-rejected.
+
+
+def test_considered_candidate_count_is_the_selected_set_when_nothing_was_rejected() -> None:
+    trace = _trace_for(_traced_result([_item("entry-1"), _item("entry-2")]))
+
+    assert trace["considered_candidate_count"] == 2
+    assert trace["selected_count"] == 2
+
+
+def test_considered_candidate_count_includes_retrieval_budget_rejections() -> None:
+    trace = _trace_for(
+        _traced_result([_item("entry-1")], budget_rejected=["too-big-1", "too-big-2"])
+    )
+
+    # Budget rejection happens after ranking, so those candidates were scored.
+    assert trace["considered_candidate_count"] == 3
+
+
+def test_considered_candidate_count_includes_limit_rejections() -> None:
+    trace = _trace_for(_traced_result([_item("entry-1")], limit_rejected=["over-limit-1"]))
+
+    assert trace["considered_candidate_count"] == 2
+
+
+def test_considered_candidate_count_excludes_orphaned_entries() -> None:
+    """Orphaned anchors are filtered ahead of ranking, so they were never scored."""
+
+    without_orphans = _trace_for(_traced_result([_item("entry-1")]))
+    with_orphans = _trace_for(
+        _traced_result([_item("entry-1")], orphaned=["orphan-1", "orphan-2"])
+    )
+
+    assert with_orphans["considered_candidate_count"] == 1
+    assert with_orphans["considered_candidate_count"] == (
+        without_orphans["considered_candidate_count"]
+    )
+    # The orphans stay visible as a retrieval exclusion, just not as candidates.
+    assert with_orphans["retrieval_exclusions"]["orphaned_entry_ids"] == [
+        "orphan-1",
+        "orphan-2",
+    ]
+
+
+def test_considered_candidate_count_sums_every_ranked_outcome() -> None:
+    result = _traced_result(
+        [_item("entry-1"), _item("entry-2")],
+        orphaned=["orphan-1"],
+        budget_rejected=["budget-1", "budget-2"],
+        limit_rejected=["limit-1", "limit-2", "limit-3"],
+    )
+
+    trace = _trace_for(result)
+
+    assert trace["considered_candidate_count"] == 2 + 2 + 3
+    exclusions = _section(trace, "retrieval_exclusions")
+    assert trace["considered_candidate_count"] == (
+        trace["selected_count"]
+        + len(exclusions["retrieval_budget_rejected_entry_ids"])
+        + len(exclusions["limit_rejected_entry_ids"])
+    )
+    # Assembly-stage rejection is a later stage and must not shrink the count.
+    assert trace["considered_candidate_count"] >= trace["selected_count"]
 
 
 def test_trace_reports_no_eligible_entries_distinctly_from_disabled() -> None:

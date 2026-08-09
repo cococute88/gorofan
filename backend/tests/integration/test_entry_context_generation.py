@@ -21,6 +21,7 @@ from app.config import FEATURE_ENTRY_STORE_CONTEXT, get_settings
 from app.models.entry import Entry
 from app.models.user import User
 from app.schemas.entry import EntryScope, EntryStatus, EntryType
+from app.services.entry_generation_context import ENTRY_CONTEXT_LIMIT
 from app.services.entry_service import EntryService
 
 _CAPTURED: list[AssembledPrompt] = []
@@ -505,6 +506,50 @@ def test_regenerate_also_retrieves_exactly_once(make_client, retrieve_calls) -> 
 
     assert len(retrieve_calls) == 2, "one retrieval for the turn, one for the regenerate"
     assert entry_id in _CAPTURED[1].trace["entry_context"]["selected_entry_ids"]
+
+
+def test_considered_candidate_count_matches_what_the_real_ranker_scored(
+    make_client, retrieve_calls
+) -> None:
+    """Seed past the retrieval limit so production really rejects ranked candidates.
+
+    Drives the actual endpoint, so the count is checked against the trace that
+    `EntryService.retrieve()` itself produced rather than a re-derived formula.
+    """
+
+    client = make_client(entry_context=True)
+    _, character_id, chat_id = _chat_setup(client, character_name="하람", world_name="다우림")
+    _write(
+        *[
+            _entry(
+                content=f"하람에 대한 사실 {index}.",
+                scope_kind=EntryScope.CHARACTER,
+                scope_id=character_id,
+                entry_type=EntryType.CHARACTER_IDENTITY,
+            )
+            for index in range(ENTRY_CONTEXT_LIMIT + 5)
+        ]
+    )
+
+    client.post(f"/api/v1/chats/{chat_id}/messages", json={"content": "하람 얘기 해줘"})
+
+    assert len(retrieve_calls) == 1
+    trace = _CAPTURED[0].trace["entry_context"]
+    exclusions = trace["retrieval_exclusions"]
+
+    # The limit is a real, exercised path here, not a hypothetical.
+    assert trace["selected_count"] == ENTRY_CONTEXT_LIMIT
+    assert exclusions["limit_rejected_entry_ids"]
+
+    assert trace["considered_candidate_count"] == (
+        trace["selected_count"]
+        + len(exclusions["retrieval_budget_rejected_entry_ids"])
+        + len(exclusions["limit_rejected_entry_ids"])
+    )
+    # Orphan filtering runs before ranking, so it never inflates the count.
+    for orphan_id in exclusions["orphaned_entry_ids"]:
+        assert orphan_id not in trace["selected_entry_ids"]
+    assert trace["considered_candidate_count"] >= trace["selected_count"]
 
 
 def test_chat_sse_contract_and_single_persist_survive_entry_injection(

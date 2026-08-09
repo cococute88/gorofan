@@ -200,6 +200,14 @@ def build_entry_context_trace(
     """
 
     retrieval_trace = result.trace
+    # Ranked candidates: `retrieve()` drops orphaned anchors *before* ranking,
+    # then budget/limit rejection happens *after* it. So the set the ranker
+    # actually scored is exactly selected + budget-rejected + limit-rejected.
+    ranked_candidate_count = (
+        len(result.items)
+        + len(retrieval_trace.budget_rejected_entry_ids)
+        + len(retrieval_trace.limit_rejected_entry_ids)
+    )
     retrieval_excluded = (
         list(retrieval_trace.excluded_orphaned_entry_ids)
         + list(retrieval_trace.budget_rejected_entry_ids)
@@ -235,9 +243,10 @@ def build_entry_context_trace(
         "retrieval_policy_version": result.policy_version,
         "assembly_budget": assembled.requested_budget,
         "assembly_policy_version": assembled.assembly_policy_version,
-        # Post-filter candidates the ranker actually considered. Records rejected
-        # by ownership/scope/type/subject/status never become candidates at all.
-        "considered_candidate_count": len(result.items) + len(retrieval_trace.excluded_orphaned_entry_ids),
+        # Candidates the ranker actually scored. Records rejected by ownership/
+        # scope/type/subject/status never become candidates at all, and orphaned
+        # anchors are filtered ahead of ranking, so neither is counted here.
+        "considered_candidate_count": ranked_candidate_count,
         "selected_count": len(result.items),
         "excluded_count": len(retrieval_excluded) + len(assembled.assembly_excluded_entry_ids),
         "selected_entry_ids": [item.entry.id for item in result.items],
