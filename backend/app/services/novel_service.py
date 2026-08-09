@@ -10,12 +10,14 @@ from app.adapters.base import StreamEvent
 from app.adapters.registry import ProviderRegistry
 from app.config import Settings
 from app.core.errors import Conflict, NotFound, ValidationAppError
+from app.core.logging import get_logger
 from app.core.pagination import Page, PageParams
 from app.engines.novel.engine import ChapterContext, NovelEngine, words_to_tokens
 from app.models.character import Character
 from app.models.novel import Chapter, Work, WorkCharacter
 from app.models.world import Lorebook, LoreEntry, World
 from app.repositories.base import BaseRepository
+from app.repositories.chapter_repository import ChapterRepository
 from app.schemas.novel import (
     ChapterCreate,
     ChapterUpdate,
@@ -24,6 +26,7 @@ from app.schemas.novel import (
     WorkCreate,
     WorkUpdate,
 )
+from app.services.edit_diff_capture import EditDiffCaptureService
 from app.services.entry_generation_context import (
     build_novel_retrieve_request,
     load_entry_context,
@@ -31,6 +34,8 @@ from app.services.entry_generation_context import (
 from app.services.provider_resolve import resolve_provider_request
 
 _active_continue: set[str] = set()
+
+_logger = get_logger("app.edit_diff")
 
 
 class NovelService:
@@ -46,6 +51,8 @@ class NovelService:
         self.registry = registry
         self.engine = novel_engine
         self.repo = BaseRepository(Work)
+        self.chapters = ChapterRepository()
+        self.captures = EditDiffCaptureService()
 
     # ----- works -----
     async def create_work(self, user_id: str, dto: WorkCreate) -> Work:
@@ -241,6 +248,19 @@ class NovelService:
                 entry_context_trace=entry_context.trace,
             )
 
+        asset = prompt.trace.get("prompt_asset") or {}
+        asset_id = asset.get("id")
+        asset_version = asset.get("version")
+        capture_context = {
+            "asset_id": asset_id,
+            "asset_version": asset_version,
+            "provider": req.provider,
+            "model": req.model_name,
+        }
+        producer = (
+            f"{asset_id}.{asset_version}" if asset_id and asset_version else asset_id
+        )
+
         buffer = ""
         try:
             async for evt in self.engine.continue_stream(prompt, req):
@@ -248,25 +268,78 @@ class NovelService:
                     buffer += evt.delta
                 yield evt
         except Exception as exc:  # noqa: BLE001
-            await self._append_chapter(user_id, chapter_id, buffer, base_version, partial=True)
             code = getattr(exc, "code", "PROVIDER_ERROR")
+            try:
+                await self._append_chapter(
+                    user_id, chapter_id, buffer, base_version, partial=True,
+                    capture_context=capture_context, producer=producer,
+                )
+            except Exception as append_exc:  # noqa: BLE001
+                # The provider error is the one the author needs to see; a
+                # failure here must not replace it (design §9.2). The append
+                # itself still rolled back, so no untraceable segment merged.
+                _logger.warning(
+                    "edit_diff.partial_append_failed",
+                    extra={
+                        "user_id": user_id,
+                        "meta": {
+                            "chapter_id": chapter_id,
+                            "failure_class": type(append_exc).__name__,
+                        },
+                    },
+                )
             yield StreamEvent(event="error", code=code, message=str(exc))
             return
 
-        await self._append_chapter(user_id, chapter_id, buffer, base_version, partial=False)
+        await self._append_chapter(
+            user_id, chapter_id, buffer, base_version, partial=False,
+            capture_context=capture_context, producer=producer,
+        )
         yield StreamEvent(event="done", finish_reason="stop", token_count=len(buffer))
 
     async def _append_chapter(
-        self, user_id, chapter_id, text, base_version, *, partial  # noqa: ANN001
+        self, user_id, chapter_id, text, base_version, *, partial,  # noqa: ANN001
+        capture_context: dict | None = None,
+        producer: str | None = None,
     ) -> int:
+        """Merge the streamed segment into the chapter, capturing it first.
+
+        This concatenation is what erases the segment boundary: afterwards no
+        query can tell what the model wrote from what the author changed. The
+        capture is **Tier 2 — atomic** with the append, so a capture failure
+        rolls the append back rather than merging an untraceable segment.
+
+        The chapter is loaded ``with_for_update()``. The previous plain
+        ``session.get()`` took no lock, and ``_active_continue`` is an
+        in-process set that does not survive multiple workers, so two
+        concurrent continuations could derive the same capture ``sequence``
+        and collide on the unique constraint (design §10.1).
+        """
         async with self.sm() as s:
-            chapter = await self._owned_chapter(s, user_id, chapter_id)
+            chapter = await self._locked_chapter(s, user_id, chapter_id)
             # optimistic concurrency: if changed during stream, still append to latest (design 11.6)
+            insert_offset = len(chapter.content_text)
             new_text = (chapter.content_text + ("\n\n" if chapter.content_text else "") + text).strip()
             chapter.content_text = new_text
             chapter.content_doc = _text_to_doc(new_text)
             chapter.word_count = _word_count(new_text)
             chapter.version += 1
+            if text:
+                # An empty buffer is not "a text produced by the AI"; there is
+                # nothing to compare a human revision against (design §4.1a).
+                await self.captures.capture_chapter_continuation(
+                    s,
+                    user_id=user_id,
+                    chapter_id=chapter_id,
+                    segment_text=text,
+                    producer=producer,
+                    context={
+                        **(capture_context or {}),
+                        "insert_offset": insert_offset,
+                        "chapter_version": chapter.version,
+                        "partial_stream": partial,
+                    },
+                )
             await s.commit()
             return chapter.version
 
@@ -309,6 +382,13 @@ class NovelService:
     async def _owned_chapter(self, s, user_id, chapter_id) -> Chapter:  # noqa: ANN001
         chapter = await s.get(Chapter, chapter_id)
         if chapter is None or chapter.user_id != user_id:
+            raise NotFound("Chapter not found")
+        return chapter
+
+    async def _locked_chapter(self, s, user_id, chapter_id) -> Chapter:  # noqa: ANN001
+        """Owner-scoped chapter load holding the row lock (design §10.1)."""
+        chapter = await self.chapters.get_for_update(s, chapter_id, user_id=user_id)
+        if chapter is None:
             raise NotFound("Chapter not found")
         return chapter
 
