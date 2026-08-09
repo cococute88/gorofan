@@ -248,6 +248,22 @@ def test_an_author_save_captures_nothing(novel_client) -> None:
     assert _run(novel_client, _captures_for, chapter_id) == []
 
 
+def test_soft_deleting_a_work_retains_its_captures(novel_client) -> None:
+    """Soft delete is reversible, so destroying the data would be wrong.
+
+    Exclusion from reads belongs to the §13 read contract, which P2-5 owns.
+    Retention is the part P1-7 must get right (design §12).
+    """
+    work_id, chapter_id = _setup(novel_client, title="소프트삭제")
+    assert _continue(novel_client, chapter_id).status_code == 200
+
+    assert novel_client.delete(f"/api/v1/works/{work_id}").status_code in (200, 204)
+
+    rows = _run(novel_client, _captures_for, chapter_id)
+    assert len(rows) == 1
+    assert rows[0].before_text == SEGMENT
+
+
 def test_deleting_a_chapter_removes_its_captures(novel_client) -> None:
     _work_id, chapter_id = _setup(novel_client, title="삭제")
     assert _continue(novel_client, chapter_id).status_code == 200

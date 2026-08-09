@@ -68,7 +68,7 @@
 |---|---|---|
 | G6 | **legacy Character/World/Lore ↔ Entry Store 동등성 미확보** | 유효. `Character.personality`/`speech_style`, `World` 배열, `Lorebook`/`LoreEntry`가 여전히 **권위 있는** 생성 컨텍스트 소스이며 `PromptEngine._make_lore_blocks()`도 실사용 중이다. P1-6은 Entry를 *추가* 블록으로 주입했을 뿐 authority를 옮기지 않았다. Entry 백필/듀얼리드/동등성 비교는 여전히 없다(P1-8). |
 | ~~G7~~ | ~~**retrieve()/Context Assembly가 실사용 경로에 미연결**~~ | **해소됨 (P1-6).** `services/entry_generation_context.py`가 유일한 프로덕션 호출 지점으로서 Chat/Novel 양쪽에서 `EntryService.retrieve()` → `assemble_entry_context()` → PromptEngine을 결선한다. 단 기본 OFF 플래그 뒤에 있으므로, 플래그를 켜기 전까지 실제 생성 프롬프트는 종전과 동일하다. RFC-003 §16.8의 "두 개의 권위 있는 검색 경로" 문제는 **의도적으로 미해소** 상태이며 P1-8에서 다룬다. |
-| G8 | **edit-diff capture 미구현 (설계 승인 완료, 구현 미착수)** | 확인됨. `edit-diff`는 `schemas/entry.py`의 provenance source-kind **열거값으로만** 존재한다(`ProvenanceSourceKind.EDIT_DIFF`). draft↔accepted diff를 계산·저장하는 코드/컬럼/테이블 없음. ADR-010·RFC-001 §8.8의 "day-one capture, 소급 수집 불가" 요구 미충족 — **잔여 gap 중 유일하게 시간이 지날수록 데이터가 영구 손실되는 항목.** 손실 지점 2곳을 코드로 확인했다: `EntryService.edit_review_entry()`가 AI 제안 `content`를 제자리 덮어쓰고(사본 없음, 프론트는 edit→accept를 별개 요청 2건으로 수행하므로 accept 시점에는 원문이 이미 소실), `NovelService._append_chapter()`가 스트림 결과를 `Chapter.content_text`에 경계 표시 없이 병합한다. **P1-7 영속 설계는 `docs/architecture/edit-diff-capture-design.md`로 확정·승인되었으며(2026-08-09 독립 아키텍처 리뷰, open question 8건 전부 종결, blocker 0), 구현·마이그레이션은 여전히 미착수다.** 확정된 핵심 결정: 별도 additive `edit_diff_captures` 테이블(비-Entry 운영 기록), pre-image capture는 파괴적 쓰기와 동일 트랜잭션에서 atomic(실패 시 rollback), Path B settle은 동일 chapter의 다음 이어쓰기 + 잔여 row의 read-time 해석, 보존은 무기한·자동 만료 없음, feature flag 없음. |
+| G8 | ~~edit-diff capture 미구현~~ → **구현 완료** | `docs/architecture/edit-diff-capture-design.md`의 승인된 계약이 구현되었다. 추가된 것: 마이그레이션 `0003_edit_diff_capture`(신규 `edit_diff_captures` 테이블만 생성, 기존 테이블 ALTER 0, `0001`·`0002` 무수정, 백필 없음 — 소급 수집은 불가능하다), `models/edit_diff.py`, `repositories/edit_diff_repository.py`, `repositories/chapter_repository.py`, `services/edit_diff_capture.py`. 손실 지점 2곳이 모두 막혔다: (1) Path A — `EntryService.edit_review_entry()`가 AI pre-image를 파괴적 쓰기와 **동일 트랜잭션**에서 capture하며, content hash가 같으면 row를 쓰지 않는다(Tier 1 atomic, 실패 시 edit rollback). (2) Path B — `NovelService._append_chapter()`가 스트림 세그먼트를 병합 전에 capture한다(Tier 2 atomic). Path B settle은 **동일 chapter의 다음 이어쓰기** T1에서 수행되며 best-effort(Tier 3)다 — 실패해도 요청을 막지 않고 structured warning만 남기며 row는 pending으로 유지된다. `settled_at IS NULL`인 마지막 row는 정상 종료 상태다(after-side는 살아 있는 `chapters.content_text`). `_append_chapter()`와 settle 경로 모두 chapter를 `with_for_update()`로 잠근 뒤 `sequence`를 도출한다. `before_state`/`after_state`는 직교 컬럼이고 `payload_state`는 존재하지 않는다. capture 테이블을 가리키는 ORM relationship이 없으므로 삭제 cascade는 DB가 수행한다. 초과 크기(`EDIT_DIFF_MAX_CHARS = 100_000`/side, 코드 상수 — 스키마 의존 없음)는 절대 truncate하지 않고 해당 side를 NULL + hash/length 유지로 기록한다. HTTP endpoint·DTO·프론트 변경 0, Entry 생성/변경 0. **미구현(의도적):** 설계 §13 read contract `list_edit_diff_captures`는 P2-5 소유다. |
 | G10 | **review 감사 필드 미결정** | 확인됨. `accepted_at`/`rejected_at`/`superseded_at`/`human-edited` provenance는 있으나 review actor·action history·edit diff·되돌림 메타데이터가 없다. `review-card-api.md`가 별도 승인된 persistence 설계 필요로 명시. |
 
 ---
@@ -126,11 +126,11 @@
 | 영역 | 진행도 |
 |---|---|
 | Substrate (M0~M7 기반) | 약 90% — 잔여는 Prompt Cache, 메타 요약 상한, refresh 회전/denylist, JSON Export |
-| Architecture Phase 1 (Store/Retrieval/Review gate) | 약 85% — 계약·영속·생명주기·검색·브리지·Review API·supersede API·Review 프론트·프롬프트 자산·P1-5 authoring/audit read API·P1-6 실사용 결선 완료 / edit-diff(P1-7)·레거시 동등성(P1-8)·review 감사 persistence(P1-9) 미완 |
+| Architecture Phase 1 (Store/Retrieval/Review gate) | 약 90% — 계약·영속·생명주기·검색·브리지·Review API·supersede API·Review 프론트·프롬프트 자산·P1-5 authoring/audit read API·P1-6 실사용 결선·P1-7 edit-diff capture 완료 / 레거시 동등성(P1-8)·review 감사 persistence(P1-9) 미완 |
 | Phase 2 Analyst | 0% |
 | Phase 3 Writer | 0% (기존 single-pass 이어쓰기는 substrate로 보존) |
 | Phase 4 Story Bible | 0% (별도 스토어 없음 = 의도된 상태) |
 | Phase 5 Character Chat 공유 지식 통합 | 약 25% — P1-6이 character/world/user canon 주입 경로를 열었다. 명시적 work 선택·relationship.state·북마크 승격은 미구현 |
 | Phase 6 Bench | 약 15% — retrieval/context 골든 픽스처만 |
 
-전체적으로 **"substrate는 서 있고, Store가 제품 생성 경로에 연결되었으나 아직 기본 OFF 플래그 뒤에 있고 레거시 컨텍스트가 여전히 권위를 갖는 상태"** 다. 다음 결정 지점은 (a) edit-diff capture 시작(P1-7, 데이터가 소급 수집 불가), (b) 레거시 ↔ Entry 동등성 확보 후 플래그 상시 ON 판단(P1-8)이다.
+전체적으로 **"substrate는 서 있고, Store가 제품 생성 경로에 연결되었으나 아직 기본 OFF 플래그 뒤에 있고 레거시 컨텍스트가 여전히 권위를 갖는 상태"** 다. edit-diff capture(P1-7)가 들어가면서 시간이 지날수록 데이터가 영구 손실되던 유일한 gap은 닫혔다. 다음 결정 지점은 (a) 레거시 ↔ Entry 동등성 확보 후 플래그 상시 ON 판단(P1-8), (b) review 감사 persistence 결정(P1-9)이다.

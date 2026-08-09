@@ -130,12 +130,12 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** Claude Opus 5 / High.
 
 #### P1-7 edit-diff capture (day-one 데이터 수집)
-- **상태:** **설계 승인됨 (2026-08-09 독립 아키텍처 리뷰). 구현은 미착수다.** `docs/architecture/edit-diff-capture-design.md`가 capture 술어(§4.1), 두 capture 경로(Review Card edit / 이어쓰기), edit-diff가 Entry가 아니라 비-Entry 운영 기록이라는 논증, additive `0003_edit_diff_capture` 테이블 형태, 트랜잭션·실패 3단계 정책, 크기·보존·삭제 한계, P1-9 경계, 구현 단계 acceptance criteria를 확정한다. 프로덕션 코드·모델·컬럼·마이그레이션·API 변경 0. 리뷰에서 §5.3(escape valve)·§9.2(atomic capture)·§19-Q1(settle trigger)이 ratify되었고 §19의 8개 open question이 모두 종결되었다(BLOCKING 0). 리뷰가 확정한 설계 수정 4건: `payload_state`를 직교하는 `before_state`/`after_state`로 분리, Path B `sequence` 도출 시 chapter row lock(`with_for_update`) 필수, ORM relationship/`passive_deletes` 삭제 cascade 위험 명시, 미정착(unsettled) chapter row를 정상 종료 상태로 재정의(after-side는 read time에 해석).
+- **상태:** **구현 완료 (설계 승인 2026-08-09 독립 아키텍처 리뷰 → 구현 PR).** 마이그레이션 `0003_edit_diff_capture`(additive, `0001`·`0002` 무수정, ALTER 0, 백필 없음), `models/edit_diff.py`, `repositories/edit_diff_repository.py`·`repositories/chapter_repository.py`, `services/edit_diff_capture.py`, Path A capture(`EntryService.edit_review_entry()`, Tier 1 atomic), Path B draft capture(`NovelService._append_chapter()`, Tier 2 atomic, chapter row lock), Path B settle(`_continue_impl()` T1, Tier 3 best-effort)이 모두 들어갔다. HTTP endpoint·DTO·프론트 변경 0, Entry 생성/변경 0, P1-6 결정 무변경. §13 read contract(`list_edit_diff_captures`)는 설계대로 **P2-5에서** 구현한다. 아래는 승인된 설계의 요약이다 — `docs/architecture/edit-diff-capture-design.md`가 capture 술어(§4.1), 두 capture 경로(Review Card edit / 이어쓰기), edit-diff가 Entry가 아니라 비-Entry 운영 기록이라는 논증, additive `0003_edit_diff_capture` 테이블 형태, 트랜잭션·실패 3단계 정책, 크기·보존·삭제 한계, P1-9 경계, 구현 단계 acceptance criteria를 확정한다. 프로덕션 코드·모델·컬럼·마이그레이션·API 변경 0. 리뷰에서 §5.3(escape valve)·§9.2(atomic capture)·§19-Q1(settle trigger)이 ratify되었고 §19의 8개 open question이 모두 종결되었다(BLOCKING 0). 리뷰가 확정한 설계 수정 4건: `payload_state`를 직교하는 `before_state`/`after_state`로 분리, Path B `sequence` 도출 시 chapter row lock(`with_for_update`) 필수, ORM relationship/`passive_deletes` 삭제 cascade 위험 명시, 미정착(unsettled) chapter row를 정상 종료 상태로 재정의(after-side는 read time에 해석).
 - **목적:** ADR-010·RFC-001 §8.8 — draft ↔ 사용자 확정본의 차이는 **소급 수집이 불가능**하다. 분석(distillation)은 미루되 **capture는 지금 시작**한다. 현재는 provenance 열거값만 존재한다.
 - **선행 의존성:** 없음 (단, 영속 설계 승인 필요).
 - **예상 변경 범위:** 신규 additive 마이그레이션 `0003_*`(diff capture 테이블 — Entry가 아닌 **운영 기록**이므로 aggregate로 취급), `models/`·`services/novel_service.py`(이어쓰기 확정 시 캡처), `services/chat_service.py`(선택), 통합 테이블 테스트.
-- **완료 조건:** `0001`·`0002` 미수정 · 다운그레이드 가능 · 캡처 실패가 사용자 작성 흐름을 깨지 않음(비차단) · 캡처 데이터는 Entry가 아니며 canon 경로에 진입하지 않음 · Analyst 소비 계약(입력 형태) 문서화.
-- **회귀 테스트:** `test_migrations.py`(체인·PG 컴파일·라운드트립), R6(이어쓰기), R9(마이그레이션 무손실).
+- **완료 조건:** `0001`·`0002` 미수정 · 다운그레이드 가능 · 캡처 실패가 사용자 작성 흐름을 깨지 않음(비차단) · 캡처 데이터는 Entry가 아니며 canon 경로에 진입하지 않음 · Analyst 소비 계약(입력 형태) 문서화. **→ 전부 충족.** "비차단"은 설계 §9.1 정의(추가 UI 단계·왕복·LLM 호출·큐 대기 없음)이며 `except Exception: pass`가 아니다: Tier 1·2는 파괴적 쓰기와 atomic이고, best-effort는 데이터가 다른 곳에 남는 Tier 3 settle뿐이다.
+- **회귀 테스트:** `test_migrations.py`(체인·PG 컴파일·라운드트립·기존 DDL 무변경), `test_edit_diff_capture_schema.py`(제약·cascade), `test_edit_diff_capture_entry.py`(Path A), `test_edit_diff_capture_novel.py`(Path B draft/settle/lock), R6(이어쓰기), R9(마이그레이션 무손실).
 - **추천 모델/effort:** Claude Opus 5 / High (스키마 결정이 되돌리기 어려우므로 설계 리뷰 필수).
 
 #### P1-8 legacy Character/World/Lore ↔ Entry 동등성 브릿지 (읽기 비교, 백필 없음)
@@ -356,10 +356,10 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 | 순서 | 작업 | 근거 | 추천 모델 / effort |
 |---|---|---|---|
 | 1 | **P1-6** retrieve() → Context Assembly 실사용 경로 연결 | P1-5의 검증 데이터 작성/조회 경로가 준비되었다. flag 기본 OFF로 기존 Chat/Novel 동작을 보존하면서 Entry 지식을 실제 생성 경로에 추가할 수 있다. | Claude Opus 5 / High |
-| 2 | **P1-7** edit-diff capture | 승인 전후 차이는 소급 수집할 수 없다. 영속 설계 승인 뒤 P1-6과 병행해 비차단 capture를 시작해야 한다. | Claude Opus 5 / High |
+| 2 | ~~**P1-7** edit-diff capture~~ | **완료.** 설계 승인 후 구현되어 `0003_edit_diff_capture` + Path A/Path B capture + Path B settle이 프로덕션 경로에 들어갔다. | Claude Opus 5 / High |
 | 3 | **P1-8** legacy Character/World/Lore ↔ Entry 동등성 브릿지 | P1-6의 실제 주입 경로가 확보된 뒤, 백필 없이 기존 컨텍스트와 Entry 투영을 비교해 안전한 전환 근거를 만든다. | GPT-5.6 Sol / High |
 
-**병행 가능:** P1-7(edit-diff capture)은 P1-6과 독립적으로 착수할 수 있지만, 신규 운영 기록의 영속 설계는 되돌리기 어렵다. 사용자 승인과 additive migration 설계 리뷰를 선행한다.
+**P1-6·P1-7 완료 후 남은 순서:** P1-8(레거시 동등성) → P1-9(review 감사 persistence). P1-7이 모은 capture의 소비(§13 read contract + 증류)는 P2-5가 소유한다.
 
 ---
 
