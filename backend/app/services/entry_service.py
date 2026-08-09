@@ -38,6 +38,7 @@ from app.schemas.entry import (
     ProvenanceCaptureMethod,
     ProvenanceSourceKind,
 )
+from app.services.edit_diff_capture import EditDiffCaptureService
 from app.services.entry_retrieval import (
     RETRIEVAL_POLICY_VERSION,
     rank_entries,
@@ -63,6 +64,7 @@ SINGLE_CURRENT_ENTRY_TYPES: frozenset[EntryType] = frozenset(
 class EntryService:
     def __init__(self) -> None:
         self.repo = EntryRepository()
+        self.captures = EditDiffCaptureService()
 
     async def create(self, session: AsyncSession, user_id: str, dto: EntryCreate) -> Entry:
         await self._assert_active_owner(session, user_id)
@@ -285,15 +287,48 @@ class EntryService:
         entry_id: str,
         dto: EntryReviewEdit,
     ) -> Entry:
-        """Edit a proposed Entry without allowing lifecycle or ownership changes."""
+        """Edit a proposed Entry without allowing lifecycle or ownership changes.
+
+        This is the write that destroys the AI pre-image: the submitted fields
+        are assigned onto the persisted row, and nothing else in the schema
+        holds a copy. P1-7 therefore captures the pair here, in this
+        transaction, before the commit that would make the original
+        unrecoverable (edit-diff-capture-design §6.2).
+
+        The capture is **Tier 1 — atomic**. A failure propagates and rolls the
+        edit back; it is never swallowed. A failed edit costs the author one
+        retry with their text still in the client, whereas a swallowed failure
+        would destroy the AI original permanently and report success.
+
+        Only a pending Review Card reaches this method, and the Review Card
+        queue holds AI proposals — ``_require_proposed_review`` below is what
+        keeps this off human-authored canon, which never enters ``proposed``
+        in a committed state.
+        """
         entry = await self._get_for_update(session, user_id, entry_id)
         self._require_proposed_review(entry)
-        for field, value in dto.model_dump(exclude_unset=True).items():
+        submitted = dto.model_dump(exclude_unset=True)
+        before_content = entry.content
+        producer = entry.provenance.get("producer")
+        for field, value in submitted.items():
             setattr(entry, field, value)
         entry.provenance = {
             **entry.provenance,
             "capture_method": ProvenanceCaptureMethod.HUMAN_EDITED.value,
         }
+        # Same transaction as the destructive write above. The row lock taken
+        # by _get_for_update() is what serializes the sequence derivation.
+        # Identical content writes no row, which also makes a replayed request
+        # inert (§10).
+        await self.captures.capture_entry_review_edit(
+            session,
+            user_id=user_id,
+            entry_id=entry.id,
+            before_content=before_content,
+            after_content=entry.content,
+            producer=producer if isinstance(producer, str) else None,
+            fields_changed=list(submitted),
+        )
         await session.commit()
         await session.refresh(entry)
         return entry
