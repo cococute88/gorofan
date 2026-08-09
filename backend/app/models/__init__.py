@@ -2,6 +2,7 @@
 from app.models.ai_config import ModelConfig, PromptTemplate, ProviderCredential
 from app.models.character import Character, Persona
 from app.models.chat import ChatSession, Memory, Message
+from app.models.edit_diff import EditDiffCapture
 from app.models.entry import Entry
 from app.models.novel import Chapter, Work, WorkCharacter
 from app.models.user import OAuthAccount, User
@@ -20,6 +21,7 @@ __all__ = [
     "Message",
     "Memory",
     "Entry",
+    "EditDiffCapture",
     "Work",
     "Chapter",
     "WorkCharacter",
