@@ -1,6 +1,6 @@
 # Implementation Plan: AI Native Creative Workspace (Architecture Frozen 기준 재확정)
 
-- **재확정 시각:** 2026-07-27 · **기준 커밋:** `bdc2cfb` (로컬 `main` == `origin/main`)
+- **재확정 시각:** 2026-08-30 · **기준 main:** `10683313321be4ee9d81d634943d55fa67f3f4cb` (로컬 `main` == `origin/main`)
 - **상태 근거 문서:** [`implementation-status.md`](./implementation-status.md) — 파일 존재가 아닌 *실행 코드 경로 · API 노출 · 통과 테스트*로 판정한 검증 스냅샷.
 - **단일 진실 공급원(우선순위):** `docs/architecture/adr/*` → `docs/architecture/rfc/RFC-001` → `RFC-002…RFC-012` → `docs/architecture/README.md` → **본 문서** → (참고 이력) `design.md` · `requirements.md`.
 
@@ -59,7 +59,7 @@
 ## 2. Architecture Phase 로드맵
 
 ```
-Phase 1  잔여 Core 정리          ← 지금 여기 (약 75%)
+Phase 1  잔여 Core 정리          ← 지금 여기 (필수 9개 중 7개 완료, 77.8%)
   └→ Phase 2  Analyst (text → proposed Entries)
        ├→ Phase 3  Writer (loop over declarative stages)
        │    └→ Phase 4  Story Bible (canonical view + continuity loop)
@@ -70,6 +70,14 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 **작업 규칙:** 1 작업 = 1 PR. PR은 additive·되돌릴 수 있어야 하며, 기능 구현과 상태정리/문서 정리를 섞지 않는다. 모든 텍스트 파일은 UTF-8.
 
 **모델/effort 표기 규칙:** Architecture·cross-cutting·대규모 multi-file → **Claude Opus 5** · bounded 구현/UI/API → **GPT-5.6 Terra** · 복잡한 terminal 조사/디버깅/대규모 검증 → **GPT-5.6 Sol**. 기본 effort **High**, 위험도가 매우 높은 아키텍처 변경만 **XHigh**.
+
+### 2.1 Personal Author OS 최단 제품 경로
+
+기존 Phase 1~6은 architecture capability 순서로 보존한다. 실제 사용자 milestone은 [`docs/architecture/personal-author-os-roadmap.md`](../../../docs/architecture/personal-author-os-roadmap.md)의 dependency track을 따른다.
+
+`P1-8 design → P1-8 implementation → AOS-1 Prompt Packet contract → Scene Brief → explicit Taste → Voice → deterministic compiler/API → preview·Context Inspector·전체 복사 → result import → edit-diff read → Taste/Voice candidate Analyst`
+
+이 순서에서 Prompt Packet preparation은 RFC-009의 provider-neutral composition seam에 놓이고, 기존 RFC-004 Writer와 Chat provider execution은 삭제하거나 재정의하지 않는다. Taste는 Story Canon이 아니고, Voice는 Taste가 아니며, Scene Brief는 operation-local working state다. 🍰 별식은 generation별 Taste 제외 모드이며 데이터를 변경하지 않는다.
 
 ---
 
@@ -121,7 +129,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** GPT-5.6 Terra / High.
 
 #### P1-6 retrieve() → Context Assembly를 실제 생성 경로에 연결 (flag 기반, 추가만)
-- **상태:** 완료 — `feature/entry-context-integration`에서 `services/entry_generation_context.py`(유일한 프로덕션 호출 지점)를 추가하고 Chat/Novel 양쪽을 결선했다. 독립 `entry` BlockKind(priority 65, LAYER_ORDER는 `lore`와 `memory` 사이), `FEATURES["entry_store_context"]` 기본 OFF 플래그, `AssembleInput.entry_blocks`/`entry_context_trace` seam, retrieval/assembly 분리 trace를 구현했다. 결정 근거는 `docs/architecture/entry-context-integration.md`. 로컬 전체 pytest **156 passed**, Ruff 통과, 전체 MyPy는 baseline과 동일한 36 errors/11 files, Alembic head 불변(`0002_entry_store`), 마이그레이션·프론트 변경 0. 플래그 OFF/ON·work 추측 금지·비-canon 제외·whole-Entry·호출 1회 6개 불변식은 mutation 검증으로 테스트 검출력을 확인했다.
+- **상태:** 완료 — `services/entry_generation_context.py`(유일한 프로덕션 호출 지점)를 추가하고 Chat/Novel 양쪽을 결선했다. 독립 `entry` BlockKind(priority 65, LAYER_ORDER는 `lore`와 `memory` 사이), `FEATURES["entry_store_context"]` 기본 OFF 플래그, `AssembleInput.entry_blocks`/`entry_context_trace` seam, retrieval/assembly 분리 trace를 구현했다. 결정 근거는 `docs/architecture/entry-context-integration.md`. P1-6 당시 156 passed였고, P1-7 병합 후 current-main baseline은 **199 passed**다. 전체 MyPy는 baseline 36 errors/11 files, 현재 Alembic head는 `0003_edit_diff_capture`다. 플래그 OFF/ON·work 추측 금지·비-canon 제외·whole-Entry·호출 1회 6개 불변식은 mutation 검증으로 테스트 검출력을 확인했다.
 - **목적:** 현재 `EntryService.retrieve()`와 `assemble_entry_context()`의 호출자는 테스트뿐이다. 실사용 경로에 **추가 블록**으로 주입해 Store가 실제로 작동하게 한다. 레거시 lore 키워드 스캔은 **유지**한다(RFC-003 §16.8: 두 경로 공존은 승인된 마이그레이션 시점까지 잠정 허용).
 - **선행 의존성:** P1-5 (검증 데이터 작성 경로), 권장 P1-3.
 - **예상 변경 범위:** `services/chat_service.py`·`services/novel_service.py`(retrieval 호출 + Entry 블록 병합), `engines/prompt/engine.py`(외부 블록 수용 지점), `config.py`(기능 플래그 기본 OFF), 통합/골든 테스트.
@@ -139,9 +147,10 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** Claude Opus 5 / High (스키마 결정이 되돌리기 어려우므로 설계 리뷰 필수).
 
 #### P1-8 legacy Character/World/Lore ↔ Entry 동등성 브릿지 (읽기 비교, 백필 없음)
+- **상태:** **설계 PR 진행 중.** `docs/architecture/legacy-entry-equivalence-design.md`가 coverage projection과 concrete runtime selection comparison을 분리하고, strict result states·legacy source mapping·known gaps·lore scanner cutover gate를 제안한다. 구현은 설계 승인 후 별도 PR이다.
 - **목적:** RFC-002 §12의 안전 순서 중 4단계(레거시 ↔ Entry 투영 비교)를 먼저 확보한다. 전환 스위치·삭제는 하지 않는다.
 - **선행 의존성:** P1-5, P1-6.
-- **예상 변경 범위:** `backend/app/services/`(레거시 → Entry 투영 순수 함수), `tests/golden/`(레거시/Entry 컨텍스트 동등성 픽스처), 문서(전환 기준·잔여 격차 목록).
+- **예상 변경 범위:** `backend/app/services/`(레거시 → Entry 투영/비교 순수 함수와 owner-safe read service), `schemas/entry.py`·`api/v1/entries.py`(authenticated non-mutating diagnostic caller), `tests/golden/`·통합 테스트(레거시/Entry coverage와 runtime-selection 동등성), 문서(전환 기준·잔여 격차 목록).
 - **완료 조건:** `Character.personality`/`speech_style`, `World` 배열, `Lorebook`/`LoreEntry`, `Chapter.summary`의 Entry 투영이 결정적으로 생성됨 · 레거시 컨텍스트와의 차이가 테스트로 가시화됨 · **DB 쓰기 0, 삭제 0, 마이그레이션 0** · lore 스캐너 비활성화 조건을 문서화.
 - **회귀 테스트:** 신규 동등성 골든 + `test_api.py`(world/character CRUD) + R1/R2.
 - **추천 모델/effort:** GPT-5.6 Sol / High (대규모 대조·검증 성격).
@@ -355,11 +364,11 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 
 | 순서 | 작업 | 근거 | 추천 모델 / effort |
 |---|---|---|---|
-| 1 | **P1-6** retrieve() → Context Assembly 실사용 경로 연결 | P1-5의 검증 데이터 작성/조회 경로가 준비되었다. flag 기본 OFF로 기존 Chat/Novel 동작을 보존하면서 Entry 지식을 실제 생성 경로에 추가할 수 있다. | Claude Opus 5 / High |
-| 2 | ~~**P1-7** edit-diff capture~~ | **완료.** 설계 승인 후 구현되어 `0003_edit_diff_capture` + Path A/Path B capture + Path B settle이 프로덕션 경로에 들어갔다. | Claude Opus 5 / High |
-| 3 | **P1-8** legacy Character/World/Lore ↔ Entry 동등성 브릿지 | P1-6의 실제 주입 경로가 확보된 뒤, 백필 없이 기존 컨텍스트와 Entry 투영을 비교해 안전한 전환 근거를 만든다. | GPT-5.6 Sol / High |
+| 1 | **P1-8 design** | legacy stored coverage와 concrete runtime selection의 의미가 다르고 Lore/summary 정책도 다르므로 비교 계약을 먼저 고정한다. | GPT-5.6 Sol / High |
+| 2 | **P1-8 implementation** | 승인된 projection/report 계약을 순수 함수·owner-safe read seam·golden/integration test로 구현한다. 백필/전환/flag 변경은 없다. | GPT-5.6 Sol / High |
+| 3 | **AOS-1 Prompt Packet architecture contract** | P1-8 evidence 위에서 preparation/execution seam과 Story/Taste/Voice/Scene/Packet/import 경계를 고정한다. | Claude Opus 5 / High |
 
-**P1-6·P1-7 완료 후 남은 순서:** P1-8(레거시 동등성) → P1-9(review 감사 persistence). P1-7이 모은 capture의 소비(§13 read contract + 증류)는 P2-5가 소유한다.
+**현재 순서:** P1-8 설계 승인 → P1-8 구현 → AOS-1 Prompt Packet contract. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
 
 ---
 

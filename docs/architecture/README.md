@@ -139,7 +139,11 @@ A single-process, layered **modular monolith**: a reusable **substrate** (provid
 
 **P1-6 implementation note:** [Entry Context Integration](entry-context-integration.md) records how `retrieve()` → Context Assembly reaches real Chat/Novel generation: the distinct `entry` PromptBlock kind and its priority rationale, the OFF-by-default feature flag, the knowledge-slice budget, the separated retrieval/assembly trace, and the error policy.
 
-**P1-7 design (APPROVED, NOT implemented):** [Edit-diff Capture Persistence](edit-diff-capture-design.md) fixes where and when the draft↔human-edited text pair is captured (ADR-010, RFC-001 §8.8): the capture predicate, the two capture paths, why an edit diff is a non-Entry operational record rather than an Entry type, an additive `0003_*` table, the transaction/failure tiers, size and retention bounds, and the P1-9 boundary. Independently reviewed and approved on 2026-08-09 with all eight open questions closed; the implementation is a separate task and no code, column, table, or migration exists yet.
+**P1-7 design and implementation:** [Edit-diff Capture Persistence](edit-diff-capture-design.md) fixes where and when the draft↔human-edited text pair is captured (ADR-010, RFC-001 §8.8). The design was approved in PR #23 and implemented in PR #25 as additive migration `0003_edit_diff_capture` plus the Review Card and Novel continuation capture paths. The read/distillation consumer remains deferred.
+
+**P1-8 proposed design:** [Legacy Context ↔ Entry Equivalence Bridge](legacy-entry-equivalence-design.md) fixes the read-only projection, strict comparison states, runtime-selection trace, and later lore-scanner cutover gate. It authorizes no backfill, migration, read cutover, or feature-flag change.
+
+**Product delivery roadmap:** [Personal AI Author OS Roadmap](personal-author-os-roadmap.md) maps Story Canon, Taste, Voice, Scene Brief, Prompt Packet, result import, learning, Writer, and Bench onto the frozen architecture. It prioritizes a no-provider-API Prompt Packet milestone while preserving direct generation.
 
 **Build order (from ADR-001 / `architecture-final-minimal.md` §8):**
 1. Entry store + `retrieve()`; migrate character/world/lore fields → Entries.
