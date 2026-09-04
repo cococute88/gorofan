@@ -6,7 +6,7 @@ import json
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from app.config import get_settings
 from app.models.character import Character
@@ -255,19 +255,32 @@ def test_chat_diagnostic_is_typed_deterministic_and_read_only(
         "stream_with_resilience",
         provider_forbidden,
     )
-    before = (_run(_chat_state(client, ids["chat"])), _run(_table_counts(client)))
-    first = _compare_chat(
-        client, ids["chat"], mode="new_message", message="달빛의 진실을 말해줘"
-    )
-    second = _compare_chat(
-        client, ids["chat"], mode="new_message", message="달빛의 진실을 말해줘"
-    )
-    after = (_run(_chat_state(client, ids["chat"])), _run(_table_counts(client)))
+    writes: list[str] = []
+
+    def capture_statement(_conn, _cursor, statement, *_args):  # noqa: ANN001, ANN202
+        verb = statement.lstrip().split(None, 1)[0].upper()
+        if verb in {"INSERT", "UPDATE", "DELETE", "REPLACE"}:
+            writes.append(statement)
+
+    engine = cast(Any, client.app).state.db_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", capture_statement)
+    try:
+        before = (_run(_chat_state(client, ids["chat"])), _run(_table_counts(client)))
+        first = _compare_chat(
+            client, ids["chat"], mode="new_message", message="달빛의 진실을 말해줘"
+        )
+        second = _compare_chat(
+            client, ids["chat"], mode="new_message", message="달빛의 진실을 말해줘"
+        )
+        after = (_run(_chat_state(client, ids["chat"])), _run(_table_counts(client)))
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_statement)
 
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
     assert first.json() == second.json()
     assert before == after
+    assert writes == []
     assert len(retrieve_calls) == 2, "exactly one retrieval per diagnostic call"
 
     report = first.json()
@@ -290,6 +303,9 @@ def test_chat_diagnostic_is_typed_deterministic_and_read_only(
     personality = coverage[f"character:{ids['character']}:personality:0"]
     assert personality["coverage_state"] == "equivalent"
     assert personality["eligible_exact_entry_ids"] == [personality_id]
+    assert personality["projection"]["expected"]["normalized_length"] == len(
+        "위기에도 침착하다."
+    )
     glossary = coverage[f"glossary_term:{ids['glossary']}:definition:0"]
     assert glossary["coverage_state"] == "equivalent"
     runtime = {row["source_key"]: row for row in report["runtime"]["records"] if row["source_key"]}
@@ -501,6 +517,35 @@ def test_lore_keyword_matching_remains_case_sensitive(client) -> None:  # noqa: 
     assert disabled_runtime["legacy"]["exclusion_code"] == "legacy_disabled_entry"
 
 
+def test_lore_shadow_uses_full_keywords_and_preserves_user_message_whitespace(
+    client,
+) -> None:  # noqa: ANN001
+    ids = _chat_fixture(client, "lore-full-keywords")
+    books = client.get(f"/api/v1/worlds/{ids['world']}/lorebooks").json()
+    keywords = [f"miss-{index}" for index in range(10)] + [" needle "]
+    lore = client.post(
+        f"/api/v1/worlds/lorebooks/{books[0]['id']}/entries",
+        json={
+            "keywords": keywords,
+            "content": "열한 번째 키워드로 선택되는 로어",
+            "priority": 60,
+            "enabled": True,
+        },
+    ).json()
+
+    report = _compare_chat(
+        client, ids["chat"], mode="new_message", message=" needle "
+    ).json()
+    runtime = next(
+        row
+        for row in report["runtime"]["records"]
+        if row["source_key"] == f"lore_entry:{lore['id']}:content:0"
+    )
+    assert runtime["legacy"]["selected"] is True
+    assert runtime["legacy"]["exclusion_code"] is None
+    assert "legacy_keyword_miss" not in runtime["diagnostic_codes"]
+
+
 @pytest.mark.parametrize(
     ("content", "override", "expected_code"),
     [
@@ -710,7 +755,7 @@ def test_novel_reports_prior_and_future_summary_without_mutation(client) -> None
         entry_type="story.summary",
         content=summaries[chapters[0]["id"]],
         data={"level": "chapter"},
-        created_at_chapter_id=chapters[0]["id"],
+        created_at_chapter_id=chapters[2]["id"],
     )
     future_entry = _canon(
         client,
@@ -775,11 +820,64 @@ def test_novel_reports_prior_and_future_summary_without_mutation(client) -> None
     assert future_runtime["runtime_state"] == "selection_mismatch"
     assert "future_story_position_selected" in future_runtime["diagnostic_codes"]
     assert "database_timestamp_recency" in future_runtime["diagnostic_codes"]
+    prior_runtime = next(
+        row
+        for row in report["runtime"]["records"]
+        if row["source_key"] == f"chapter:{chapters[0]['id']}:summary:0"
+    )
+    assert prior_runtime["entry"]["selected"] is True
+    assert "future_story_position_selected" in prior_runtime["diagnostic_codes"]
+    character_runtime = next(
+        row
+        for row in report["runtime"]["records"]
+        if row["source_key"] == f"character:{character['id']}:personality:0"
+    )
+    assert character_runtime["legacy"]["selected"] is True
     unknown_runtime = next(
         row for row in report["runtime"]["records"] if row["entry_id"] == unknown_entry
     )
     assert unknown_runtime["entry"]["selected"] is True
     assert "unknown_story_position" in unknown_runtime["diagnostic_codes"]
+
+
+def test_novel_lore_shadow_uses_effective_default_instruction(client) -> None:  # noqa: ANN001
+    world = client.post("/api/v1/worlds", json={"name": "기본지시세계"}).json()
+    book = client.post(
+        f"/api/v1/worlds/{world['id']}/lorebooks",
+        json={"name": "기본 지시 로어", "enabled": True},
+    ).json()
+    lore = client.post(
+        f"/api/v1/worlds/lorebooks/{book['id']}/entries",
+        json={
+            "keywords": ["자연스럽게"],
+            "content": "기본 지시문에서 선택되는 로어",
+            "priority": 50,
+            "enabled": True,
+        },
+    ).json()
+    work = client.post(
+        "/api/v1/works", json={"title": "기본 지시 작품", "world_id": world["id"]}
+    ).json()
+    chapter = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "1화", "content_text": "키워드 없는 본문"},
+    ).json()
+
+    response = client.post(
+        "/api/v1/entries/equivalence:compare",
+        json={
+            "novel": {"chapter_id": chapter["id"], "instruction": ""},
+            "budget_override": _OVERRIDE,
+        },
+    )
+    assert response.status_code == 200, response.text
+    runtime = next(
+        row
+        for row in response.json()["runtime"]["records"]
+        if row["source_key"] == f"lore_entry:{lore['id']}:content:0"
+    )
+    assert runtime["legacy"]["selected"] is True
+    assert runtime["legacy"]["exclusion_code"] is None
 
 
 def test_novel_foreign_and_missing_chapter_are_not_found(client) -> None:  # noqa: ANN001

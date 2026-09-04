@@ -24,7 +24,7 @@ from app.core.errors import NotFound, ValidationAppError
 from app.engines.memory.engine import RETRIEVE_K, SHORT_WINDOW, MemoryEngine
 from app.engines.novel.engine import words_to_tokens
 from app.engines.prompt.assets import PromptAssetLoader
-from app.engines.prompt.blocks import PromptBlock
+from app.engines.prompt.blocks import LAYER_ORDER, PromptBlock
 from app.engines.prompt.engine import AssembleInput, PromptEngine
 from app.engines.prompt.entry_context import (
     ASSEMBLY_POLICY_VERSION,
@@ -132,6 +132,7 @@ class EntrySnapshot:
     live_anchor: bool
     superseded_by_entry_id: str | None
     subject_story_position: int | None = None
+    created_at_chapter_id: str | None = None
     created_at_chapter_position: int | None = None
 
     @property
@@ -173,12 +174,14 @@ def _payload_summary(content: str, title: str | None = None) -> PayloadSummary:
     return PayloadSummary(
         sha256=sha256(normalized.encode("utf-8")).hexdigest(),
         preview=normalized[:_PREVIEW_LIMIT],
+        normalized_length=len(normalized),
         title_sha256=(
             sha256(title_normalized.encode("utf-8")).hexdigest()
             if title is not None
             else None
         ),
         title_preview=title_normalized[:_PREVIEW_LIMIT] if title is not None else None,
+        title_normalized_length=len(title_normalized) if title is not None else None,
     )
 
 
@@ -700,7 +703,6 @@ class LegacyEntryEquivalenceService:
             entry_prompt=entry_prompt,
             retrieval=retrieval,
             assembled_entry_ids=list(assembled.included_entry_ids),
-            lore_search_text=user_text,
             target_chapter_index=None,
         )
         return self._report(
@@ -713,6 +715,7 @@ class LegacyEntryEquivalenceService:
             runtime=runtime,
             entries=entries,
             candidates=candidates,
+            target_chapter_index=None,
         )
 
     async def _compare_novel(
@@ -833,11 +836,6 @@ class LegacyEntryEquivalenceService:
             budget=budget,
             entry_blocks=list(assembled.blocks),
         )
-        search_text = " ".join(
-            value
-            for value in ((chapter.content_text or "")[-1200:], dto.instruction)
-            if value
-        )
         runtime = self._runtime_report(
             surface="novel",
             projections=projections,
@@ -847,7 +845,6 @@ class LegacyEntryEquivalenceService:
             entry_prompt=entry_prompt,
             retrieval=retrieval,
             assembled_entry_ids=list(assembled.included_entry_ids),
-            lore_search_text=search_text,
             target_chapter_index=chapter.index,
         )
         return self._report(
@@ -860,6 +857,7 @@ class LegacyEntryEquivalenceService:
             runtime=runtime,
             entries=entries,
             candidates=candidates,
+            target_chapter_index=chapter.index,
         )
 
     async def _owned_world(
@@ -946,6 +944,7 @@ class LegacyEntryEquivalenceService:
                 live_anchor=entry.id in live_ids,
                 superseded_by_entry_id=entry.superseded_by_entry_id,
                 subject_story_position=chapter_positions.get(entry.subject_id or ""),
+                created_at_chapter_id=entry.created_at_chapter_id,
                 created_at_chapter_position=chapter_positions.get(
                     entry.created_at_chapter_id or ""
                 ),
@@ -1049,26 +1048,11 @@ class LegacyEntryEquivalenceService:
                 )
             )
         short: list[Any] = active[-SHORT_WINDOW:]
-        memories = list(
-            (
-                await session.execute(
-                    select(Memory)
-                    .where(Memory.chat_session_id == chat_id)
-                    .order_by(Memory.id)
-                )
-            ).scalars().all()
+        candidates = await self.memory_engine.retriever.search(
+            session, chat_id, user_text, RETRIEVE_K
         )
-        q_tokens = {token for token in user_text.lower().split() if len(token) > 1}
-        scored = [
-            (
-                sum(1 for token in q_tokens if token in (memory.content or "").lower()),
-                memory,
-            )
-            for memory in memories
-        ]
-        scored.sort(key=lambda pair: pair[0], reverse=True)
         ranked = self.memory_engine._rank(  # noqa: SLF001
-            [memory for _score, memory in scored[:RETRIEVE_K]], user_text
+            candidates, user_text
         )
         long = self.memory_engine._select_within_budget(  # noqa: SLF001
             ranked, max(256, int(context_window * 0.4))
@@ -1222,7 +1206,6 @@ class LegacyEntryEquivalenceService:
         entry_prompt: AssembledPrompt,
         retrieval: EntryRetrievalResult,
         assembled_entry_ids: list[str],
-        lore_search_text: str,
         target_chapter_index: int | None,
     ) -> RuntimeReport:
         coverage_by_key = {record.projection.source_key: record for record in coverage}
@@ -1232,15 +1215,23 @@ class LegacyEntryEquivalenceService:
         retrieval_trace = retrieval.trace
         final_entry_ids = _final_entry_ids(entry_prompt, assembled_entry_ids)
         entry_positions = {entry_id: index for index, entry_id in enumerate(final_entry_ids)}
-        legacy_messages = [normalize_comparison_text(message.content) for message in legacy_prompt.messages]
         legacy_trace_rows = list(legacy_prompt.trace.get("entries", []))
+        legacy_trace_by_id = {
+            str(item["block_id"]): item for item in legacy_trace_rows
+        }
+        ordered_included_rows = _ordered_included_trace_rows(legacy_prompt)
+        legacy_block_positions = {
+            str(item["block_id"]): index
+            for index, item in enumerate(ordered_included_rows)
+        }
+        legacy_block_contents = {
+            str(item["block_id"]): normalize_comparison_text(message.content)
+            for item, message in zip(
+                ordered_included_rows, legacy_prompt.messages, strict=True
+            )
+        }
         legacy_included_ids = {
             str(item["block_id"])
-            for item in legacy_trace_rows
-            if item.get("status") == "included"
-        }
-        legacy_included_kinds = {
-            str(item["kind"])
             for item in legacy_trace_rows
             if item.get("status") == "included"
         }
@@ -1263,8 +1254,8 @@ class LegacyEntryEquivalenceService:
             ),
             key=lambda item: int(str(item["block_id"]).rsplit(":", 1)[-1]),
         )
-        summary_included = {
-            projection.source_key: item.get("status") == "included"
+        summary_block_ids = {
+            projection.source_key: str(item["block_id"])
             for projection, item in zip(
                 summary_projections, summary_trace_rows, strict=False
             )
@@ -1276,12 +1267,8 @@ class LegacyEntryEquivalenceService:
             if projection.projection_kind is not ProjectionKind.LORE:
                 continue
             metadata = projection.selection_metadata
-            raw_keywords = metadata.get("keywords", [])
-            keywords = raw_keywords if isinstance(raw_keywords, (list, tuple)) else []
-            matched = bool(metadata.get("entry_enabled")) and any(
-                keyword and keyword in lore_search_text
-                for keyword in keywords
-                if isinstance(keyword, str)
+            matched = bool(metadata.get("entry_enabled")) and (
+                f"lore:{projection.source_id}" in legacy_trace_by_id
             )
             if matched:
                 lore_selected_by_priority.setdefault(projection.priority or 50, []).append(
@@ -1317,18 +1304,7 @@ class LegacyEntryEquivalenceService:
                     exclusion = "legacy_disabled_entry"
                     codes.add("legacy_disabled_entry")
                 else:
-                    raw_keywords = metadata.get("keywords", [])
-                    keyword_values = (
-                        raw_keywords
-                        if isinstance(raw_keywords, (list, tuple))
-                        else []
-                    )
-                    keywords = [
-                        value
-                        for value in keyword_values
-                        if isinstance(value, str)
-                    ]
-                    if not any(keyword and keyword in lore_search_text for keyword in keywords):
+                    if f"lore:{projection.source_id}" not in legacy_trace_by_id:
                         initially_selected = False
                         exclusion = "legacy_keyword_miss"
                         codes.add("legacy_keyword_miss")
@@ -1345,25 +1321,52 @@ class LegacyEntryEquivalenceService:
                 ProjectionKind.CHARACTER_PERSONALITY,
                 ProjectionKind.CHARACTER_SPEECH_STYLE,
             }:
-                trace_selected = "character" in legacy_included_kinds
+                legacy_block_id = next(
+                    (
+                        str(item["block_id"])
+                        for item in legacy_trace_rows
+                        if item.get("kind") == ("character" if surface == "chat" else "system")
+                    ),
+                    None,
+                )
             elif projection.projection_kind is ProjectionKind.WORLD_DESCRIPTION:
-                trace_selected = "world" in legacy_included_kinds
+                legacy_block_id = next(
+                    (
+                        str(item["block_id"])
+                        for item in legacy_trace_rows
+                        if item.get("kind") == "world"
+                    ),
+                    None,
+                )
             elif projection.projection_kind is ProjectionKind.LORE:
-                trace_selected = f"lore:{projection.source_id}" in legacy_included_ids
+                legacy_block_id = f"lore:{projection.source_id}"
             elif projection.projection_kind is ProjectionKind.CHAPTER_SUMMARY:
-                trace_selected = summary_included.get(projection.source_key, False)
+                legacy_block_id = summary_block_ids.get(projection.source_key)
             else:
-                trace_selected = False
-            legacy_positions = (
-                _content_positions(legacy_messages, projection.content)
-                if initially_selected and trace_selected
-                else []
+                legacy_block_id = None
+            trace_selected = (
+                legacy_block_id is not None
+                and legacy_block_id in legacy_included_ids
             )
-            legacy_final = initially_selected and trace_selected and bool(legacy_positions)
+            legacy_position = (
+                legacy_block_positions.get(legacy_block_id)
+                if legacy_block_id is not None
+                else None
+            )
+            block_content = (
+                legacy_block_contents.get(legacy_block_id, "")
+                if legacy_block_id is not None
+                else ""
+            )
+            legacy_final = (
+                initially_selected
+                and trace_selected
+                and projection.content in block_content
+            )
             if initially_selected and not legacy_final:
                 exclusion = "final_prompt_budget_drop"
                 codes.add("final_prompt_budget_drop")
-            legacy_position = legacy_positions[0] if legacy_final else None
+            legacy_position = legacy_position if legacy_final else None
             if legacy_final and legacy_position is not None:
                 legacy_sequence_pairs.append((legacy_position, projection.source_key))
 
@@ -1403,11 +1406,9 @@ class LegacyEntryEquivalenceService:
                 candidate = candidate_by_id[entry_id]
                 codes.add("database_timestamp_recency")
                 if projection.projection_kind is ProjectionKind.CHAPTER_SUMMARY:
-                    position = candidate.subject_story_position
-                    if position is None:
-                        codes.add("unknown_story_position")
-                    elif target_chapter_index is not None and position >= target_chapter_index:
-                        codes.add("future_story_position_selected")
+                    codes.update(
+                        _story_position_codes(candidate, target_chapter_index)
+                    )
 
             if not applicable:
                 state = RuntimeState.NOT_APPLICABLE
@@ -1509,11 +1510,9 @@ class LegacyEntryEquivalenceService:
                 entry_only_candidate is not None
                 and entry_only_candidate.entry_type == "story.summary"
             ):
-                position = entry_only_candidate.subject_story_position
-                if position is None:
-                    codes.add("unknown_story_position")
-                elif target_chapter_index is not None and position >= target_chapter_index:
-                    codes.add("future_story_position_selected")
+                codes.update(
+                    _story_position_codes(entry_only_candidate, target_chapter_index)
+                )
             records.append(
                 RuntimeRecord(
                     entry_id=entry_id,
@@ -1553,6 +1552,7 @@ class LegacyEntryEquivalenceService:
         runtime: RuntimeReport,
         entries: list[Entry],
         candidates: list[EntrySnapshot],
+        target_chapter_index: int | None,
     ) -> EquivalenceDiagnosticReport:
         exact_entry_ids = {
             candidate.entry_id
@@ -1567,6 +1567,7 @@ class LegacyEntryEquivalenceService:
             if record.entry.final_prompt_selected
         }
         eligible_ids = {candidate.id for candidate in candidates if candidate.eligible}
+        candidate_by_id = {candidate.id: candidate for candidate in candidates}
         entry_only: list[EntryOnlyEvidence] = []
         for entry in sorted(entries, key=lambda value: value.id):
             if (
@@ -1577,8 +1578,9 @@ class LegacyEntryEquivalenceService:
             ):
                 continue
             codes = ["database_timestamp_recency"]
-            if entry.type == "story.summary" and not entry.subject_id:
-                codes.append("unknown_story_position")
+            candidate = candidate_by_id[entry.id]
+            if entry.type == "story.summary":
+                codes.extend(_story_position_codes(candidate, target_chapter_index))
             entry_only.append(
                 EntryOnlyEvidence(
                     entry_id=entry.id,
@@ -1640,11 +1642,45 @@ def _enum_counts(values: Iterable[str]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def _content_positions(messages: list[str], content: str) -> list[int]:
-    needle = normalize_comparison_text(content)
-    if not needle:
-        return []
-    return [index for index, message in enumerate(messages) if needle in message]
+def _ordered_included_trace_rows(prompt: AssembledPrompt) -> list[dict[str, object]]:
+    rows = [
+        item
+        for item in prompt.trace.get("entries", [])
+        if item.get("status") == "included"
+    ]
+    order_index: dict[str, int] = {
+        str(kind): index for index, kind in enumerate(LAYER_ORDER)
+    }
+
+    def order_key(item: dict[str, object]) -> tuple[int, int]:
+        priority = item.get("priority")
+        return (
+            order_index.get(str(item.get("kind")), 99),
+            -(priority if isinstance(priority, int) else 0),
+        )
+
+    return sorted(rows, key=order_key)
+
+
+def _story_position_codes(
+    candidate: EntrySnapshot, target_chapter_index: int | None
+) -> set[str]:
+    if target_chapter_index is None:
+        return set()
+    codes: set[str] = set()
+    if candidate.subject_type == "chapter":
+        if candidate.subject_story_position is None:
+            codes.add("unknown_story_position")
+        elif candidate.subject_story_position >= target_chapter_index:
+            codes.add("future_story_position_selected")
+    else:
+        codes.add("unknown_story_position")
+    if candidate.created_at_chapter_id is not None:
+        if candidate.created_at_chapter_position is None:
+            codes.add("unknown_story_position")
+        elif candidate.created_at_chapter_position >= target_chapter_index:
+            codes.add("future_story_position_selected")
+    return codes
 
 
 def _final_entry_ids(prompt: AssembledPrompt, assembly_order: list[str]) -> list[str]:

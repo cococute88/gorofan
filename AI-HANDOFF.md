@@ -204,8 +204,8 @@ Run each command as a separate process with the stated working directory; do not
 
 | Check | Working directory | Command | Verified result at this handoff |
 |---|---|---|---|
-| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest -q` | **231 passed, 0 failed** on the P1-8 implementation branch. `main` before P1-8 was 199; P1-8 added 32 focused tests. |
-| P1-8 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **32 passed.** Covers all projection kinds and coverage states, runtime axes/exclusion stages/multiplicity, ownership, read-only/provider-free behavior, and deterministic golden reports. |
+| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest -q` | **233 passed, 0 failed** on the P1-8 implementation branch. `main` before P1-8 was 199; P1-8 added 34 focused tests. |
+| P1-8 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **34 passed.** Covers all projection kinds and coverage states, runtime axes/exclusion stages/multiplicity, ownership, read-only/provider-free behavior, and deterministic golden reports. |
 | P1-7 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/integration/test_edit_diff_capture_schema.py tests/integration/test_edit_diff_capture_entry.py tests/integration/test_edit_diff_capture_novel.py` | **41 passed** (schema 12, Path A 11, Path B 18). `tests/integration/test_migrations.py` grew from 3 to 5 for the remaining 2. |
 | P1-6 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_prompt_integration.py tests/unit/test_entry_generation_context.py tests/integration/test_entry_context_generation.py` | **41 passed.** The integration file drives the real SSE endpoints with a recording provider. |
 | Entry/retrieval/assembly target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_retrieval.py tests/unit/test_entry_context_assembly.py tests/integration/test_entry_retrieval.py tests/golden/test_retrieval_context_golden.py` | Repository command paths verified; use for Store/context work. |
@@ -361,11 +361,11 @@ The strongest correctness finding is that current Entry retrieval ranks by datab
 1. Read `AI-HANDOFF.md`, then the governing originals for the task at hand. For the next chronology gate, include ADR-003/004/017/018, RFC-002/003/005, the P1-8 contract, Entry retrieval, and Novel continuation code.
 2. Fetch and compare `origin/main`; if this handoff SHA (`9deb643`) is no longer current, re-validate GitHub state, code call sites, and status documents.
 3. Check the working tree and list stashes without modifying either. Keep user work, the local DB, and stashes untouched.
-4. Confirm the starting state yourself rather than trusting this snapshot: `alembic heads` should be `0003_edit_diff_capture`, this implementation branch should have 231 tests, and `FEATURES["entry_store_context"]` should still default OFF.
+4. Confirm the starting state yourself rather than trusting this snapshot: `alembic heads` should be `0003_edit_diff_capture`, this implementation branch should have 233 tests, and `FEATURES["entry_store_context"]` should still default OFF.
 5. Read the P1-8 diagnostic service and golden/integration evidence together with the production retrieval and Novel preparation path; do not treat the bridge as a new runtime authority.
 6. Create a new branch from current `origin/main`.
 7. Keep the story-summary correctness contract and implementation in separately reviewed PRs; do not fold it into P1-8 or AOS-1.
-8. Verify: Ruff clean, MyPy adds no error in the changed scope against the 36-errors-in-11-files baseline, full pytest passes with no reduction from 231 after P1-8 merges, `git diff --check` clean, all files UTF-8.
+8. Verify: Ruff clean, MyPy adds no error in the changed scope against the 36-errors-in-11-files baseline, full pytest passes with no reduction from 233 after P1-8 merges, `git diff --check` clean, all files UTF-8.
 9. Create a **Draft** PR and include the required completion report.
 10. Do not merge. Report results and wait for the requested review/merge decision.
 
@@ -410,7 +410,7 @@ Define the narrow eligibility, ordering, trace, owner-scope, and rollout contrac
 AOS-1 Generation Preparation. Do not implement the fix in the design PR.
 
 Confirm the starting state yourself before changing anything: alembic heads is
-0003_edit_diff_capture, the P1-8 implementation branch has 231 tests, Ruff is clean, MyPy reports 36 errors
+0003_edit_diff_capture, the P1-8 implementation branch has 233 tests, Ruff is clean, MyPy reports 36 errors
 in 11 files, and FEATURES["entry_store_context"] still defaults OFF. Then read the real
 legacy context path before touching it: NovelService._build_story_context(),
 PromptEngine._make_lore_blocks(), the Character / World / Lorebook / LoreEntry models, and
@@ -435,7 +435,7 @@ stashes. Do not auto-merge.
 
 Verify before opening the PR: Ruff clean; MyPy introduces no new error in the changed scope
 against the 36-errors-in-11-files baseline; backend pytest passes with no reduction from the
-231-test P1-8 implementation baseline; git diff --check clean; all files UTF-8. Use one PowerShell command per
+233-test P1-8 implementation baseline; git diff --check clean; all files UTF-8. Use one PowerShell command per
 process; if the wrapper corrupts a command, use Python subprocess.run(argv, cwd=...,
 shell=False) rather than retrying the same broken shell string.
 

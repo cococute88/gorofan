@@ -66,8 +66,7 @@ class ChatEquivalenceSituation(BaseModel):
     def normalize_message(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        value = value.strip()
-        if not value:
+        if not value.strip():
             raise ValueError("user_message must not be blank")
         return value
 
@@ -107,8 +106,10 @@ class EquivalenceCompareRequest(BaseModel):
 class PayloadSummary(BaseModel):
     sha256: str
     preview: str
+    normalized_length: int
     title_sha256: str | None = None
     title_preview: str | None = None
+    title_normalized_length: int | None = None
 
 
 class ProjectionSelectionEvidence(BaseModel):
