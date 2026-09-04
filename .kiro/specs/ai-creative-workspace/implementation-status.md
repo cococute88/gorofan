@@ -1,7 +1,7 @@
 # Implementation Status (검증 기준 스냅샷)
 
-- **확정 시각:** 2026-08-08 — P1-6 retrieve() → Context Assembly 실사용 결선 검증 완료 반영
-- **기준 main:** `941937e76612f89ab902a6ea86cdcb32d862d253` — PR #20(AI-HANDOFF 문서) merge commit. PR #19(P1-5) 이후 main의 production code 변경은 0이었다. P1-6은 `feature/entry-context-integration`에서 구현·검증되었다.
+- **확정 시각:** 2026-08-30 — 장기 중단 후 repository/GitHub/production path/baseline 전면 재검증
+- **기준 main:** `10683313321be4ee9d81d634943d55fa67f3f4cb` — PR #26 handoff merge commit. 로컬 `main`과 `origin/main`은 일치했고 ahead/behind는 `0/0`이었다.
 - **판정 기준:** 파일 존재만으로 완료 처리하지 않는다. **실행되는 코드 경로 + API 노출 + 통과하는 테스트**를 근거로 `완료 / 부분 완료 / 미구현`을 판정한다.
 - **문서 우선순위:** ADR → RFC-001 → RFC-002…RFC-012 → `docs/architecture/README.md` → 본 문서 → (참고용) 구 `.kiro/specs` M0~M7 계획.
 
@@ -13,7 +13,7 @@
 
 | 검증 항목 | 명령 | 결과 |
 |---|---|---|
-| 백엔드 전체 테스트 | `backend/.venv/Scripts/python -m pytest -q` | **156 passed, 0 failed** (exit 0; 기존 Starlette/Alembic deprecation warning만 발생). P1-6 이전 baseline은 115 passed였고 P1-6이 41건을 추가했다. |
+| 백엔드 전체 테스트 | `backend/.venv/Scripts/python -m pytest -q` | **199 passed, 0 failed** (exit 0; 기존 Starlette/Alembic deprecation warning만 발생). P1-7 테스트까지 포함한 current-main baseline. |
 | P1-6 대상 테스트 | `backend/.venv/Scripts/python -m pytest -q tests/unit/test_entry_prompt_integration.py tests/unit/test_entry_generation_context.py tests/integration/test_entry_context_generation.py` | **41건 통과** (exit 0) |
 | P1-6 회귀 테스트 | `backend/.venv/Scripts/python -m pytest -q tests/unit/test_entry_context_assembly.py tests/golden tests/property/test_prompt_budget.py tests/integration/test_streaming.py` | **통과** (exit 0) |
 | Ruff | `backend/.venv/Scripts/python -m ruff check app tests` | **All checks passed!** |
@@ -22,15 +22,15 @@
 | 프론트엔드 테스트 | `npm test` (vitest) | **3 files / 13 tests passed** (공유 Queue cache helper의 상태 전이·오류 메시지 처리 포함, exit 0) |
 | 프론트엔드 린트 | `npm run lint` | **No ESLint warnings or errors** (exit 0) |
 | 프론트엔드 빌드 | `npm run build` | **성공** (15 routes, exit 0) |
-| Alembic head | `backend/.venv/Scripts/python -m alembic heads` | `0002_entry_store (head)` |
-| Alembic chain | `alembic history` | `<base> → 0001_initial → 0002_entry_store` |
+| Alembic head | `backend/.venv/Scripts/python -m alembic heads` | `0003_edit_diff_capture (head)` |
+| Alembic chain | `alembic history` | `<base> → 0001_initial → 0002_entry_store → 0003_edit_diff_capture` |
 | 공백/개행 오류 | `git diff --check` | **오류 없음** |
 | Mutation 검증 | 6개 핵심 불변식(플래그 OFF·entry→memory 회귀·chat work 추측·비-canon 포함·whole-Entry 절단·retrieve 2회)에 의도적 결함 주입 | **6건 모두 테스트가 검출**, 전부 원복 확인 |
 | 작업 트리 | 검증 시점 `git status --porcelain` | 클린 |
 
 ### 1.1 로컬 환경에서만 발견된 이상 (커밋 대상 아님)
 
-1. **로컬 개발 DB의 alembic 스탬프 불일치.** `alembic current`가 `FAILED: Can't locate revision identified by '0002_story_bible'`를 반환한다. `backend/data/app.db`(gitignore 대상)가 저장소에 존재하지 않는 리비전으로 스탬프되어 있다. 이는 아래 2번 stash의 폐기된 작업 흔적이다. **저장소 마이그레이션 체인 자체는 정상**(`0001 → 0002_entry_store`)이며, 테스트는 격리된 임시 SQLite에서 수행되므로 영향이 없다. 조치는 로컬 DB 재생성 또는 `alembic stamp`가 필요하지만 **사용자 데이터가 들어있을 수 있어 이번 작업에서 건드리지 않았다.**
+1. **로컬 개발 DB의 alembic 스탬프 불일치.** 2026-08-30 재검증에서도 `alembic current`가 `FAILED: Can't locate revision identified by '0002_story_bible'`를 반환했다. 검사 전후 파일 SHA-256·길이·mtime이 동일해 DB는 수정되지 않았다. `backend/data/app.db`(gitignore 대상)가 저장소에 존재하지 않는 리비전으로 스탬프되어 있고, 이는 아래 2번 stash의 폐기된 작업 흔적이다. **저장소 마이그레이션 체인 자체는 정상**(`0001 → 0002_entry_store → 0003_edit_diff_capture`)이며, 테스트는 격리된 임시 SQLite에서 수행되므로 영향이 없다. 조치는 로컬 DB 재생성 또는 `alembic stamp`가 필요하지만 **사용자 데이터가 들어있을 수 있어 이번 작업에서 건드리지 않았다.**
 2. **stash 2건 존재.**
    - `stash@{0}` (`codex/phase1-review-card-api`): Review Card API 작업본 — 내용이 이미 `bdc2cfb`로 main에 병합됨. 사실상 중복.
    - `stash@{1}` (`codex/new`): **Architecture Frozen 이전의 폐기 노선** — `engines/reference/*`, `engines/planning/*`, `models/reference.py`, `models/planning.py`, 마이그레이션 `0002_story_bible.py` / `0003_reference.py`, 프론트 `reference/`·`plan/` 화면 등 43파일 5,081줄. ADR-002/ADR-003(엔진·per-도메인 테이블 금지), ADR-004(별도 Story Bible 스토어 금지)와 정면 충돌한다. **병합하지 말 것.** 필요한 개념은 Entry `type` + Analyst facet + 프롬프트 파일로 재구현한다.
@@ -66,10 +66,29 @@
 
 | # | gap | 확인 결과 |
 |---|---|---|
-| G6 | **legacy Character/World/Lore ↔ Entry Store 동등성 미확보** | 유효. `Character.personality`/`speech_style`, `World` 배열, `Lorebook`/`LoreEntry`가 여전히 **권위 있는** 생성 컨텍스트 소스이며 `PromptEngine._make_lore_blocks()`도 실사용 중이다. P1-6은 Entry를 *추가* 블록으로 주입했을 뿐 authority를 옮기지 않았다. Entry 백필/듀얼리드/동등성 비교는 여전히 없다(P1-8). |
+| G6 | **legacy Character/World/Lore ↔ Entry Store 동등성 미확보** | 유효. `Character.personality`/`speech_style`, `World` 값, `Lorebook`/`LoreEntry`, prior `Chapter.summary`가 legacy path에 남아 있고 `PromptEngine._make_lore_blocks()`도 실사용 중이다. `World` 배열·Glossary는 저장되지만 generation consumer가 없고, `Lorebook.enabled`는 production loader에서 무시된다. Entry recency는 DB timestamp를 사용해 work story chronology/future-summary exclusion도 아직 증명하지 않는다. P1-6은 Entry를 *추가* 블록으로 주입했을 뿐 authority를 옮기지 않았다. `docs/architecture/legacy-entry-equivalence-design.md`가 비교 의미를 제안했으며 구현은 별도 P1-8 PR이다. |
 | ~~G7~~ | ~~**retrieve()/Context Assembly가 실사용 경로에 미연결**~~ | **해소됨 (P1-6).** `services/entry_generation_context.py`가 유일한 프로덕션 호출 지점으로서 Chat/Novel 양쪽에서 `EntryService.retrieve()` → `assemble_entry_context()` → PromptEngine을 결선한다. 단 기본 OFF 플래그 뒤에 있으므로, 플래그를 켜기 전까지 실제 생성 프롬프트는 종전과 동일하다. RFC-003 §16.8의 "두 개의 권위 있는 검색 경로" 문제는 **의도적으로 미해소** 상태이며 P1-8에서 다룬다. |
 | G8 | ~~edit-diff capture 미구현~~ → **구현 완료** | `docs/architecture/edit-diff-capture-design.md`의 승인된 계약이 구현되었다. 추가된 것: 마이그레이션 `0003_edit_diff_capture`(신규 `edit_diff_captures` 테이블만 생성, 기존 테이블 ALTER 0, `0001`·`0002` 무수정, 백필 없음 — 소급 수집은 불가능하다), `models/edit_diff.py`, `repositories/edit_diff_repository.py`, `repositories/chapter_repository.py`, `services/edit_diff_capture.py`. 손실 지점 2곳이 모두 막혔다: (1) Path A — `EntryService.edit_review_entry()`가 AI pre-image를 파괴적 쓰기와 **동일 트랜잭션**에서 capture하며, content hash가 같으면 row를 쓰지 않는다(Tier 1 atomic, 실패 시 edit rollback). (2) Path B — `NovelService._append_chapter()`가 스트림 세그먼트를 병합 전에 capture한다(Tier 2 atomic). Path B settle은 **동일 chapter의 다음 이어쓰기** T1에서 수행되며 best-effort(Tier 3)다 — 실패해도 요청을 막지 않고 structured warning만 남기며 row는 pending으로 유지된다. `settled_at IS NULL`인 마지막 row는 정상 종료 상태다(after-side는 살아 있는 `chapters.content_text`). `_append_chapter()`와 settle 경로 모두 chapter를 `with_for_update()`로 잠근 뒤 `sequence`를 도출한다. `before_state`/`after_state`는 직교 컬럼이고 `payload_state`는 존재하지 않는다. capture 테이블을 가리키는 ORM relationship이 없으므로 삭제 cascade는 DB가 수행한다. 초과 크기(`EDIT_DIFF_MAX_CHARS = 100_000`/side, 코드 상수 — 스키마 의존 없음)는 절대 truncate하지 않고 해당 side를 NULL + hash/length 유지로 기록한다. HTTP endpoint·DTO·프론트 변경 0, Entry 생성/변경 0. **미구현(의도적):** 설계 §13 read contract `list_edit_diff_captures`는 P2-5 소유다. |
 | G10 | **review 감사 필드 미결정** | 확인됨. `accepted_at`/`rejected_at`/`superseded_at`/`human-edited` provenance는 있으나 review actor·action history·edit diff·되돌림 메타데이터가 없다. `review-card-api.md`가 별도 승인된 persistence 설계 필요로 명시. |
+
+### 3.1 Phase 1 항목별 재판정
+
+필수 항목은 P1-1~P1-9이며 P1-10은 사용자 데이터 때문에 자동 수행하지 않는 선택 작업이다. 현재 main 기준 필수 완료율은 **7/9 = 77.8%**다. 이 문서 브랜치의 P1-8 design은 `Partial`이며 merge되어도 implementation 전에는 완료로 세지 않는다.
+
+| 항목 | 판정 | 실행 근거와 예외 |
+|---|---|---|
+| P1-1 Review supersede API | Complete | authenticated API/service와 atomic lifecycle tests 존재 |
+| P1-2 Review frontend | Complete | Home 진입점, queue/card mutation, frontend tests 존재 |
+| P1-3 repository prompt assets | Complete | Chat/Novel/Summary production callers와 asset tests 존재 |
+| P1-4 PromptTemplate boundary | Complete | legacy API 보존, production defaults는 repository assets, boundary tests 존재 |
+| P1-5 direct Entry authoring/audit read | Complete | 승인된 범위인 authenticated create/list/get API와 integration tests 존재; generic direct Entry authoring frontend는 없음 |
+| P1-6 generation wiring | Complete | Chat/Novel/Chat-regenerate production callers와 41 integration/unit tests 존재; feature flag default OFF라 기본 사용자 prompt에는 비활성 |
+| P1-7 edit-diff capture | Complete | Review edit와 Novel continuation production write boundaries, migration `0003`, integration tests 존재; read/distillation consumer는 의도적 후속 |
+| P1-8 legacy equivalence | Partial | 설계 제안만 존재; projection/comparison caller·API·golden은 아직 없음 |
+| P1-9 review audit persistence | Not Started | actor/action history 계약과 migration 모두 없음 |
+| P1-10 local cleanup | Partial | 선택 작업. stash 2건과 stale local DB stamp를 확인했으나 사용자 데이터 보호를 위해 변경하지 않음 |
+
+기존 문서의 `약 90%`, P1-6 당시 `156 passed`, `0002_entry_store (head)`, P1-7 "미구현" 표시는 **Documentation mismatch**로 판정하여 이 스냅샷과 architecture README에서 정정했다.
 
 ---
 
@@ -126,11 +145,11 @@
 | 영역 | 진행도 |
 |---|---|
 | Substrate (M0~M7 기반) | 약 90% — 잔여는 Prompt Cache, 메타 요약 상한, refresh 회전/denylist, JSON Export |
-| Architecture Phase 1 (Store/Retrieval/Review gate) | 약 90% — 계약·영속·생명주기·검색·브리지·Review API·supersede API·Review 프론트·프롬프트 자산·P1-5 authoring/audit read API·P1-6 실사용 결선·P1-7 edit-diff capture 완료 / 레거시 동등성(P1-8)·review 감사 persistence(P1-9) 미완 |
+| Architecture Phase 1 (Store/Retrieval/Review gate) | **77.8% (필수 7/9)** — P1-1~P1-7 완료, P1-8 설계 제안/구현 미완, P1-9 미착수. 기존 약 90% 표기는 항목 수와 implementation 여부를 엄밀히 반영하지 않은 documentation mismatch였다. |
 | Phase 2 Analyst | 0% |
 | Phase 3 Writer | 0% (기존 single-pass 이어쓰기는 substrate로 보존) |
 | Phase 4 Story Bible | 0% (별도 스토어 없음 = 의도된 상태) |
 | Phase 5 Character Chat 공유 지식 통합 | 약 25% — P1-6이 character/world/user canon 주입 경로를 열었다. 명시적 work 선택·relationship.state·북마크 승격은 미구현 |
 | Phase 6 Bench | 약 15% — retrieval/context 골든 픽스처만 |
 
-전체적으로 **"substrate는 서 있고, Store가 제품 생성 경로에 연결되었으나 아직 기본 OFF 플래그 뒤에 있고 레거시 컨텍스트가 여전히 권위를 갖는 상태"** 다. edit-diff capture(P1-7)가 들어가면서 시간이 지날수록 데이터가 영구 손실되던 유일한 gap은 닫혔다. 다음 결정 지점은 (a) 레거시 ↔ Entry 동등성 확보 후 플래그 상시 ON 판단(P1-8), (b) review 감사 persistence 결정(P1-9)이다.
+전체적으로 **"substrate는 서 있고, Store가 제품 생성 경로에 연결되었으나 기본 OFF 플래그 뒤에 있고 레거시 컨텍스트가 여전히 권위를 갖는 상태"** 다. edit-diff capture(P1-7)가 비가역 데이터 손실을 막았지만, 사용자가 매일 장편소설을 준비하고 직접 Provider API로 생성하거나 전체 Prompt Packet을 복사한 뒤 Chapter에 반영하는 loop는 아직 없다. 다음 작업은 P1-8 구현이며, 그 뒤에는 P1-9 review audit이나 Taste/Voice 자동학습보다 shared Generation Preparation 기반 dual-generation milestone을 우선하는 dependency track을 `docs/architecture/personal-author-os-roadmap.md`에 기록했다.

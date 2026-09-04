@@ -139,7 +139,11 @@ A single-process, layered **modular monolith**: a reusable **substrate** (provid
 
 **P1-6 implementation note:** [Entry Context Integration](entry-context-integration.md) records how `retrieve()` → Context Assembly reaches real Chat/Novel generation: the distinct `entry` PromptBlock kind and its priority rationale, the OFF-by-default feature flag, the knowledge-slice budget, the separated retrieval/assembly trace, and the error policy.
 
-**P1-7 design (APPROVED, NOT implemented):** [Edit-diff Capture Persistence](edit-diff-capture-design.md) fixes where and when the draft↔human-edited text pair is captured (ADR-010, RFC-001 §8.8): the capture predicate, the two capture paths, why an edit diff is a non-Entry operational record rather than an Entry type, an additive `0003_*` table, the transaction/failure tiers, size and retention bounds, and the P1-9 boundary. Independently reviewed and approved on 2026-08-09 with all eight open questions closed; the implementation is a separate task and no code, column, table, or migration exists yet.
+**P1-7 design and implementation:** [Edit-diff Capture Persistence](edit-diff-capture-design.md) fixes where and when the draft↔human-edited text pair is captured (ADR-010, RFC-001 §8.8). The design was approved in PR #23 and implemented in PR #25 as additive migration `0003_edit_diff_capture` plus the Review Card and Novel continuation capture paths. The read/distillation consumer remains deferred.
+
+**P1-8 proposed design:** [Legacy Context ↔ Entry Equivalence Bridge](legacy-entry-equivalence-design.md) fixes the read-only projection, independent coverage/runtime states with coexisting diagnostics, runtime-selection trace, and later lore-scanner cutover gate. It authorizes no backfill, migration, read cutover, or feature-flag change.
+
+**Product delivery roadmap:** [Personal Long-form Novel Author OS Roadmap](personal-author-os-roadmap.md) makes long-form novel authoring the primary product and maps Story Canon, Character/Relationship state, Scene Brief, shared Generation Preparation, direct Provider API execution, Prompt Packet copy, Chapter apply/import, optional Taste/Voice, learning, Writer, and Bench onto the frozen architecture. Both execution routes share one provider-neutral selection/assembly result; AI Character Chat remains an independent auxiliary capability.
 
 **Build order (from ADR-001 / `architecture-final-minimal.md` §8):**
 1. Entry store + `retrieve()`; migrate character/world/lore fields → Entries.
