@@ -593,15 +593,25 @@ def test_runtime_keeps_retrieval_assembly_and_final_budget_exclusions_distinct(
 
 
 def test_chat_validation_and_missing_anchor(client) -> None:  # noqa: ANN001
+    private_prose = "오류 응답에 반사되면 안 되는 사용자 산문"
     both = client.post(
         "/api/v1/entries/equivalence:compare",
         json={
-            "chat": {"chat_id": "x", "mode": "regenerate"},
+            "chat": {
+                "chat_id": "x",
+                "mode": "regenerate",
+                "user_message": private_prose,
+            },
             "novel": {"chapter_id": "y"},
             "budget_override": _OVERRIDE,
         },
     )
     assert both.status_code == 422
+    assert private_prose not in both.text
+    assert all(
+        "input" not in error and "ctx" not in error
+        for error in both.json()["error"]["details"]["errors"]
+    )
     assert client.post(
         "/api/v1/entries/equivalence:compare", json={"budget_override": _OVERRIDE}
     ).status_code == 422
