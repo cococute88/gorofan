@@ -6,6 +6,7 @@ as ``event: error`` by the streaming layer (design 8.12.3).
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -75,5 +76,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _validation(_request: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(
             status_code=422,
-            content=_error_body("UNPROCESSABLE", "Validation error", {"errors": exc.errors()}),
+            content=jsonable_encoder(
+                _error_body("UNPROCESSABLE", "Validation error", {"errors": exc.errors()})
+            ),
         )

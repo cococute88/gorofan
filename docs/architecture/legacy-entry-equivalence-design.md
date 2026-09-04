@@ -1,8 +1,8 @@
 # P1-8 Legacy Context ↔ Entry Equivalence Bridge
 
-- **Status:** Proposed for architecture review
-- **Scope:** P1-8 design only
-- **Baseline:** `main` at `10683313321be4ee9d81d634943d55fa67f3f4cb`
+- **Status:** Accepted in PR #27; implemented by the P1-8 implementation change
+- **Scope:** P1-8 architecture contract and implementation conformance reference
+- **Baseline:** accepted on `main` at merge commit `9deb643c1c506e604f1341a6d3e072c30220ab88`
 - **Governing decisions:** ADR-003, ADR-009, ADR-017, ADR-018; RFC-002 §12, RFC-003 §12 and §16.8, RFC-009
 
 ## 1. Decision summary
