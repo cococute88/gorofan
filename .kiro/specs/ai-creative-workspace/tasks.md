@@ -71,13 +71,13 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 
 **모델/effort 표기 규칙:** Architecture·cross-cutting·대규모 multi-file → **Claude Opus 5** · bounded 구현/UI/API → **GPT-5.6 Terra** · 복잡한 terminal 조사/디버깅/대규모 검증 → **GPT-5.6 Sol**. 기본 effort **High**, 위험도가 매우 높은 아키텍처 변경만 **XHigh**.
 
-### 2.1 Personal Author OS 최단 제품 경로
+### 2.1 Long-form Novel Author OS 최단 제품 경로
 
 기존 Phase 1~6은 architecture capability 순서로 보존한다. 실제 사용자 milestone은 [`docs/architecture/personal-author-os-roadmap.md`](../../../docs/architecture/personal-author-os-roadmap.md)의 dependency track을 따른다.
 
-`P1-8 design → P1-8 implementation → AOS-1 Prompt Packet contract → Scene Brief → explicit Taste → Voice → deterministic compiler/API → preview·Context Inspector·전체 복사 → result import → edit-diff read → Taste/Voice candidate Analyst`
+`P1-8 design → P1-8 implementation → AOS-1 shared Generation Preparation/dual-route contract → minimum Novel preparation + Scene input → direct Provider API + Prompt Packet API → Novel workspace UI → Chapter apply/import → optional explicit Taste/Voice → edit-diff read → Taste/Voice candidate Analyst`
 
-이 순서에서 Prompt Packet preparation은 RFC-009의 provider-neutral composition seam에 놓이고, 기존 RFC-004 Writer와 Chat provider execution은 삭제하거나 재정의하지 않는다. Taste는 Story Canon이 아니고, Voice는 Taste가 아니며, Scene Brief는 operation-local working state다. 🍰 별식은 generation별 Taste 제외 모드이며 데이터를 변경하지 않는다.
+이 순서에서 하나의 Generation Preparation이 RFC-009의 provider-neutral composition seam에서 retrieval·ordering·budget·trace를 고정하고, 마지막 단계에서만 기존 Provider Adapter 직접 실행 또는 thin external Prompt Packet formatting으로 갈라진다. 기존 RFC-004 Writer와 Chat provider execution은 삭제하거나 재정의하지 않는다. 장편소설 제작이 주 제품이고 Character Chat은 독립 보조 기능이다. Taste는 Story Canon이 아니고, Voice는 Taste가 아니며, Scene Brief는 operation-local working state이고 chat-private Memory는 Novel context로 자동 유입되지 않는다. Taste/Voice 부재는 첫 usable loop를 막지 않으며, 🍰 별식은 generation별 Taste 제외 모드로서 데이터를 변경하지 않는다.
 
 ---
 
@@ -147,7 +147,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** Claude Opus 5 / High (스키마 결정이 되돌리기 어려우므로 설계 리뷰 필수).
 
 #### P1-8 legacy Character/World/Lore ↔ Entry 동등성 브릿지 (읽기 비교, 백필 없음)
-- **상태:** **설계 PR 진행 중.** `docs/architecture/legacy-entry-equivalence-design.md`가 coverage projection과 concrete runtime selection comparison을 분리하고, strict result states·legacy source mapping·known gaps·lore scanner cutover gate를 제안한다. 구현은 설계 승인 후 별도 PR이다.
+- **상태:** **설계 PR 진행 중.** `docs/architecture/legacy-entry-equivalence-design.md`가 coverage/runtime을 독립 axis로 분리하고, deterministic precedence와 복수 diagnostic code, exact payload·duplicate/order 규칙, `chat_id` + request mode 및 `chapter_id` + instruction/target_words runtime anchor, known gaps, 별도 lore scanner cutover gate를 제안한다. 구현은 설계 승인 후 별도 PR이다.
 - **목적:** RFC-002 §12의 안전 순서 중 4단계(레거시 ↔ Entry 투영 비교)를 먼저 확보한다. 전환 스위치·삭제는 하지 않는다.
 - **선행 의존성:** P1-5, P1-6.
 - **예상 변경 범위:** `backend/app/services/`(레거시 → Entry 투영/비교 순수 함수와 owner-safe read service), `schemas/entry.py`·`api/v1/entries.py`(authenticated non-mutating diagnostic caller), `tests/golden/`·통합 테스트(레거시/Entry coverage와 runtime-selection 동등성), 문서(전환 기준·잔여 격차 목록).
@@ -366,9 +366,9 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 |---|---|---|---|
 | 1 | **P1-8 design** | legacy stored coverage와 concrete runtime selection의 의미가 다르고 Lore/summary 정책도 다르므로 비교 계약을 먼저 고정한다. | GPT-5.6 Sol / High |
 | 2 | **P1-8 implementation** | 승인된 projection/report 계약을 순수 함수·owner-safe read seam·golden/integration test로 구현한다. 백필/전환/flag 변경은 없다. | GPT-5.6 Sol / High |
-| 3 | **AOS-1 Prompt Packet architecture contract** | P1-8 evidence 위에서 preparation/execution seam과 Story/Taste/Voice/Scene/Packet/import 경계를 고정한다. | Claude Opus 5 / High |
+| 3 | **AOS-1 Generation Preparation + dual-route architecture contract** | P1-8 evidence 위에서 Story/Character/Relationship/Chapter/Scene 경계, shared selection/budget/trace, direct Provider Adapter와 external Prompt Packet의 terminal seam, apply/import linkage를 고정한다. Taste/Voice는 optional이다. | Claude Opus 5 / High |
 
-**현재 순서:** P1-8 설계 승인 → P1-8 구현 → AOS-1 Prompt Packet contract. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
+**현재 순서:** P1-8 설계 승인 → P1-8 구현 → AOS-1 shared Generation Preparation/dual-route contract. 이어지는 AOS-2~AOS-5가 최소 Novel 준비, 직접 API/전체 복사, UI, Chapter apply/import loop를 완성한다. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
 
 ---
 

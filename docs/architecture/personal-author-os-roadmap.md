@@ -1,28 +1,40 @@
-# Personal AI Author OS — Product Architecture Roadmap
+# Personal Long-form Novel Author OS — Product Architecture Roadmap
 
 - **Status:** Product direction and dependency plan
-- **North Star:** prepare one complete, human-readable Generation Prompt Packet without requiring a paid provider API call inside rfrf
+- **North Star:** provide a personal long-form novel authoring/generation workspace that builds one high-quality, provider-neutral Generation Preparation and lets the user either execute it through an rfrf Provider Adapter or copy it as a complete Prompt Packet into an external LLM UI
 - **Architecture relationship:** extends the frozen Store → Analyst → Writer architecture; does not replace it
 
 ## 1. Product outcome
 
+Long-form novel authoring is the primary product. AI Character Chat remains a supported, independent/auxiliary feature, but it does not set the dependency order for the novel workflow.
+
 The target daily loop is:
 
 ```text
-rfrf 열기
 → 작품 선택
-→ 다음 장면 준비
-→ 평소 취향 / 🍰 별식 선택
-→ Prompt Packet 생성
-→ 전체 복사
-→ ChatGPT/Claude에 붙여넣기
-→ 결과 가져오기
+→ 현재 Chapter / 다음 Scene 준비
+→ Story Canon + Character/Relationship state + 최근 문맥 선택
+→ Scene Brief 또는 간단한 사용자 지시 입력
+→ provider-neutral Generation Preparation 생성
+→ 직접 Provider API 생성 또는 Prompt Packet 전체 복사
+→ 생성 결과 확인
+→ Chapter draft 반영 또는 외부 결과 import
 → 읽고 수정
 → edit-diff evidence 축적
-→ 다음 생성의 취향 적중률 개선
+→ 다음 Scene / Chapter 생성
 ```
 
-rfrf's core value is selecting and assembling the right Story, Taste, Voice, Scene, and Context before prose generation. Existing direct provider generation remains supported, but it is no longer the only route to the product's central value.
+rfrf's core value is selecting and assembling the right Story, character/relationship state, recent context, Scene request, and constraints before prose generation, then carrying the result forward across many Chapters. Taste and Voice improve that preparation when available; neither is required for the first useful loop.
+
+The two first-class execution routes share the same selection, ordering, budget, prompt authority, and trace:
+
+```text
+Generation Preparation
+├─ direct: existing provider formatter/adapter → provider call → streamed/generated prose
+└─ external: thin human-readable target formatter → complete Prompt Packet → stop without provider call
+```
+
+`ChatGPT`, `Claude`, and `Generic` external targets do not own separate retrieval or prompt policy. The route choice occurs only after provider-neutral preparation.
 
 ## 2. Compatibility with Architecture Frozen
 
@@ -33,16 +45,16 @@ The direction is compatible if the existing nouns retain their meanings.
 | Store / Entry | owned creative knowledge and canon; not operation-local packet state |
 | Story Bible | work-scoped canonical view used as Story Canon |
 | Retrieval | selects the minimum relevant canon within budget and emits trace |
-| Context Assembly / PromptEngine | deterministic ordering, budgeting, and provider-neutral assembly substrate |
-| Prompt Assets | repository-authoritative packet instructions and section templates |
+| Context Assembly / PromptEngine | deterministic ordering, budgeting, and provider-neutral assembly substrate shared by both execution routes |
+| Prompt Assets | repository-authoritative generation instructions and section templates for both routes |
 | Analyst | later converts accepted chapters, references, and edit diffs into proposed knowledge/preferences |
 | Writer | existing RFC-004 provider-backed novel orchestration remains; it may consume the same prepared context but is not redefined as packet copying |
-| Provider adapters | optional execution after preparation; retained for direct generation |
+| Provider adapters | direct execution after preparation; existing registry and adapters are reused rather than duplicated |
 | Memory | chat-private context only; never silently widened into Story Canon or Taste |
 | Review Card | human gate for AI-proposed Entries; not automatically reused for every Taste UX without a semantics review |
 | Bench | developer-only deterministic and optional judge-based evaluation of selection, packet, and prose behavior |
 
-RFC-009 already places provider-neutral prompt composition before generation. The Prompt Packet compiler belongs at that preparation seam. Existing Writer and Chat execution continue to call providers; the packet path stops after producing a copyable artifact. A dedicated Prompt Packet contract is still required before code because the current RFCs do not define its persisted metadata, editable preview, target formatting, or import linkage.
+RFC-009 already places provider-neutral prompt composition before generation. Generation Preparation belongs at that seam. Existing Writer/provider execution remains intact; the external packet path stops after producing a copyable artifact. A dedicated contract is still required before code because the current RFCs do not define the shared preparation identity/trace, editable preview, target formatting, or import linkage. That contract must not create a second Store or require preparation to be durable by default.
 
 ## 3. Domain boundaries
 
@@ -83,7 +95,7 @@ High-level characteristics include POV, tense, sentence length and variance, par
 
 Analyst may later propose these high-level characteristics from user-supplied samples. The system must not be designed to reproduce a named living author's text or copy a specific copyrighted work; it uses high-level traits and user-provided examples.
 
-Whether a named multi-preset Voice Profile is a true aggregate or a projection over `style.preference` Entries requires the Prompt Packet architecture decision. No speculative table is authorized by this roadmap.
+Whether a named multi-preset Voice Profile is a true aggregate or a projection over `style.preference` Entries requires the AOS-1 Generation Preparation architecture decision. No speculative table is authorized by this roadmap.
 
 ### 3.4 Scene Brief
 
@@ -98,13 +110,23 @@ Cake mode is a per-generation request option, not a data mutation.
 - excludes Taste Profile and Taste-derived Anti-Taste from that packet;
 - preserves Story Canon, work settings, Scene Brief, retrieved Entries, and Voice by default;
 - requires a separate explicit switch if Voice is also disabled;
-- records the mode in packet/import provenance;
+- records the mode in shared preparation/output provenance;
 - excludes imported results from Taste-learning evidence by default;
 - may later allow explicit user opt-in to learn from a cake result.
 
-## 4. Prompt Packet contract direction
+### 3.6 Character Chat boundary
 
-A Generation Prompt Packet is a complete, human-readable, editable artifact that can be copied once into ChatGPT, Claude, or a generic LLM chat UI. Creating it requires no provider credential, provider call, or network call.
+Character Chat may reuse Character DNA, Relationship state, Story Bible/Entry retrieval, and provider adapters where an explicit owned work/session anchor makes that appropriate. It remains independently usable and must not be forced through the novel Scene/Chapter flow.
+
+Chat-private `Memory` remains scoped to its `ChatSession`. It is never promoted to Story Canon, injected into Novel generation, or used as Taste/Voice evidence without a separately authorized user action and contract. Character Chat capability does not gate the novel roadmap below.
+
+## 4. Generation Preparation and Prompt Packet contract direction
+
+Generation Preparation is the provider-neutral, operation-local result of selecting and assembling the inputs for one novel-generation attempt. It is not a new knowledge Store. At minimum it must work with Story Canon, current Character/Relationship state, recent Chapter context, a Scene Brief or simple instruction, and generation constraints. Taste and Voice sections are optional: an absent profile is represented explicitly and is never a preparation error.
+
+Both execution routes consume the same preparation and context-selection evidence. Provider adapters may translate the assembled messages into wire format, while external formatters may render a human-readable target layout. Neither may re-run retrieval, choose different canon, recalculate Taste/Voice, or apply an independent budget policy.
+
+A Generation Prompt Packet is one rendering of Generation Preparation: a complete, human-readable, editable artifact that can be copied once into ChatGPT, Claude, or a generic LLM chat UI. Creating it requires no provider credential, provider call, or network call.
 
 It can assemble these ordered layers:
 
@@ -120,20 +142,20 @@ It can assemble these ordered layers:
 10. Anti-Taste / hard avoids;
 11. output format and length constraints.
 
-Small always-on context (identity, selected Voice, hard constraints) and relevance-retrieved context are separate inputs. The compiler does not insert every Canon Entry or every preference. It reuses the existing budget/retrieval trace for selective context and gives protected structural sections an explicit bounded budget rather than hiding them in model-specific formatting.
+Small always-on context (identity and hard constraints, plus selected Voice when present) and relevance-retrieved context are separate inputs. Preparation does not insert every Canon Entry or every preference. It reuses the existing budget/retrieval trace for selective context and gives protected structural sections an explicit bounded budget rather than hiding them in route-specific formatting.
 
-Selection is model-neutral. `ChatGPT`, `Claude`, and `Generic` adapters are thin formatting layers only; they must not duplicate retrieval, Taste, Voice, budget, or exclusion logic.
+Selection is model-neutral. `ChatGPT`, `Claude`, and `Generic` external formatters are thin formatting layers only; they must not duplicate retrieval, Taste, Voice, budget, or exclusion logic. They are distinct from the existing provider adapters that own API wire formats.
 
-Packet metadata must preserve section source, Entry ids, retrieval policy, prompt-asset id/version/digest, budget, selected/excluded reasons, Taste/Voice state, cake mode, target format, and size estimates. Character/token estimates may be approximate but deterministic and clearly labelled.
+Shared preparation evidence must preserve section source, Entry ids, retrieval policy, prompt-asset id/version/digest, budget, selected/excluded reasons, optional Taste/Voice state, cake mode, route/target format, and size estimates. Direct and external outputs should reference the same evidence identity when persistence is justified. Character/token estimates may be approximate but deterministic and clearly labelled.
 
-The Context Inspector is a user-friendly view over this trace. It explains included, low-relevance excluded, budget-excluded, mode-excluded, and manually excluded context. It is not a raw JSON debug dump. Manual exclusions affect one generation request unless the user explicitly changes source data.
+The Context Inspector is a user-friendly view over this trace. It explains included, rank/limit-excluded, budget-excluded, mode-excluded, and manually excluded context according to the active retrieval policy. It is not a raw JSON debug dump. Manual exclusions affect one generation request unless the user explicitly changes source data.
 
 The import loop is deliberately simple:
 
 ```text
-Prompt Packet 전체 복사
-→ 외부 ChatGPT/Claude 생성 결과 전체 복사
-→ rfrf 생성 결과 가져오기
+직접 API 결과 확인 또는 Prompt Packet 전체 복사
+→ 외부 경로이면 ChatGPT/Claude 생성 결과 전체 복사
+→ 현재 Chapter draft에 직접 반영 또는 외부 결과 가져오기
 → 현재 Chapter draft에 저장
 → 사용자 수정
 → 기존 edit-diff capture
@@ -148,18 +170,18 @@ Every row is one reviewable PR. A design PR and its implementation PR remain sep
 |---|---|---|---|
 | 1 | P1-8 design | P1-5, P1-6 | freeze read-only legacy/Entry comparison semantics |
 | 2 | P1-8 implementation | approved design | produce real equivalence evidence without writes or cutover |
-| 3 | AOS-1 Prompt Packet architecture contract | P1-8 evidence | freeze Story/Taste/Voice/Scene boundaries, packet artifact/trace, optional execution seam, import linkage, and explicit canon-source precedence |
-| 4 | AOS-2 Scene Brief minimum | AOS-1 | let the user prepare the next scene with minimal manual input and deterministic defaults |
-| 5 | AOS-3 explicit Taste foundation | AOS-1 | remember user-authored positive/anti preferences; no inference yet; cake-mode request semantics |
-| 6 | AOS-4 Voice foundation | AOS-1 | save/select high-level voice guidance or a work default; no imitation engine |
-| 7 | AOS-5 Prompt Packet compiler + API | AOS-2/3/4 | deterministically compile Story/Scene/Taste/Voice/context with Generic/ChatGPT/Claude formatters and no API key |
-| 8 | AOS-6 Prompt Packet UI | AOS-5 | preview sections, choose normal/cake, inspect context, estimate size, manually exclude, copy all on desktop/tablet/mobile |
-| 9 | AOS-7 External result import | AOS-5 | paste generated prose into the existing Work/Chapter draft flow with packet provenance |
-| 10 | AOS-8 edit-diff read contract | P1-7, AOS-7 | expose owned before/after evidence safely to Analyst; no inference yet |
-| 11 | AOS-9 Taste/Voice candidate Analyst | AOS-8, Taste/Voice contracts | accumulate repeated evidence, confidence, count, source, and proposals; never auto-confirm from one diff |
+| 3 | AOS-1 Generation Preparation + dual-route architecture contract | P1-8 evidence | freeze Story/Character/Relationship/Chapter/Scene boundaries, shared trace and budget, direct/external terminal seam, import linkage, and explicit canon-source precedence; Taste/Voice optional |
+| 4 | AOS-2 minimum Novel preparation + Scene input | AOS-1 | build owned provider-neutral preparation from current Story/Canon, cast/state, recent Chapter context, simple Scene Brief/instruction, and constraints without requiring Taste/Voice |
+| 5 | AOS-3 dual execution API | AOS-2 | feed the same preparation to the existing direct Provider Adapter path or thin Generic/ChatGPT/Claude Prompt Packet formatters; no duplicated selection policy |
+| 6 | AOS-4 Novel generation workspace UI | AOS-3 | choose direct generation or complete prompt copy, inspect the shared context trace, and receive streamed/generated prose on desktop/tablet/mobile |
+| 7 | AOS-5 Chapter apply/import loop | AOS-3 | apply direct output or paste external output into the existing Chapter draft flow with optimistic concurrency, preparation provenance, and P1-7 edit-diff continuity |
+| 8 | AOS-6 explicit Taste foundation | AOS-1, usable novel loop | add user-authored positive/anti preferences and cake-mode semantics as optional preparation sections; no inference yet |
+| 9 | AOS-7 Voice foundation | AOS-1, usable novel loop | save/select optional high-level voice guidance or a work default; no imitation engine and no generation dependency |
+| 10 | AOS-8 edit-diff read contract | P1-7, AOS-5 | expose owned before/after evidence safely to Analyst; no inference yet |
+| 11 | AOS-9 Taste/Voice candidate Analyst | AOS-6/7/8 | accumulate repeated evidence, confidence, count, source, and proposals; never auto-confirm from one diff |
 | 12 | AOS-10 Taste/Voice review UX | AOS-9 | confirm/reject/edit/disable candidates and prevent unsupported reactivation |
-| 13 | AOS-11 Writer alignment | AOS-5 | let direct provider execution consume the same preparation result without deleting current generation paths |
-| 14 | AOS-12 Bench expansion | AOS-5 onward | deterministic Story/character/relationship/Taste/Voice/repetition/pacing/goal/forbidden-pattern metrics; optional LLM judge only |
+| 13 | AOS-11 Writer-loop evolution | AOS-3 | evolve RFC-004 orchestration on the shared preparation without deleting the usable single-pass path |
+| 14 | AOS-12 Bench expansion | AOS-2 onward | deterministic Story/character/relationship/Taste/Voice/repetition/pacing/goal/forbidden-pattern metrics; optional LLM judge only |
 
 P1-9 review actor/action persistence remains an independent Phase 1 architecture task. It should not block Milestone A unless AOS-1 proves packet/Taste review needs the same durable audit semantics.
 
@@ -167,36 +189,54 @@ P1-8 evidence is a decision gate, not an automatic cutover. If the report is cle
 
 ## 6. Milestones
 
-### Milestone A — first useful no-API Prompt Packet
+### Milestone A — first useful dual-generation novel loop
 
 Required after this design PR:
 
 1. P1-8 implementation;
-2. AOS-1 packet architecture contract;
-3. AOS-2 Scene Brief minimum;
-4. AOS-3 explicit Taste foundation;
-5. AOS-4 Voice foundation;
-6. AOS-5 compiler/API;
-7. AOS-6 preview/Context Inspector/copy UI.
+2. AOS-1 Generation Preparation + dual-route contract;
+3. AOS-2 minimum Novel preparation + Scene input;
+4. AOS-3 dual execution API;
+5. AOS-4 Novel generation workspace UI;
+6. AOS-5 Chapter apply/import loop.
 
-This milestone supports one-copy ChatGPT/Claude/Generic packets without Taste learning. Do not delay it for automated scene suggestions, deep Analyst extraction, full Writer loops, or fine-tuning.
+At AOS-3 the backend can produce a complete Prompt Packet and execute direct generation; at AOS-4 both are usable from the product UI; AOS-5 closes the daily continuation loop. Taste/Voice profiles, automated scene suggestions, deep Analyst extraction, full Writer loops, and fine-tuning must not delay this milestone.
 
-### Milestone B — import, read, and edit external prose
+### Milestone B — optional authored Taste and Voice
 
-Add AOS-7. Prefer the existing Chapter document and optimistic-concurrency path. Do not create a Scene table merely for import. Imported text must retain packet id/target/mode provenance and enter normal edit-diff capture where the existing boundary supports it.
+Add AOS-6 and AOS-7 as independent optional preparation sections. Explicit user guidance comes before automatic learning. Generation remains valid when either profile is absent.
 
 ### Milestone C — edits begin improving later generations
 
-Add AOS-8, AOS-9, and AOS-10. Learning begins only when repeated evidence can produce reviewable Taste/Voice candidates and confirmed preferences can enter packet selection. Fine-tuning and LoRA remain out of scope.
+Add AOS-8, AOS-9, and AOS-10. Learning begins only when repeated evidence can produce reviewable Taste/Voice candidates and confirmed preferences can enter preparation selection. Fine-tuning and LoRA remain out of scope.
 
-## 7. Required test plan
+## 7. Provider execution priority
 
-### 7.1 Prompt Packet
+The repository already has a `GeminiAdapter` registered beside Anthropic, OpenAI-compatible providers, and Ollama. AOS-3 should therefore reuse, not recreate, that adapter and use Gemini as a practical first validation path for low-cost direct novel generation.
+
+This is a delivery priority, not architectural authority. At AOS-3 implementation time, the current Gemini API, supported models, streaming behavior, context/output capabilities, quota, and free/paid availability must be revalidated. No model name, context limit, quota, or price policy is frozen in this roadmap. Provider selection continues through the existing registry/configuration seam, and Anthropic, OpenAI-compatible, and Ollama routes remain supported fallbacks.
+
+## 8. Required test plan
+
+### 8.1 Shared preparation and dual execution
+
+- minimum preparation succeeds without Taste or Voice;
+- Story Canon, Character/Relationship state, recent Chapter context, Scene instruction, and constraints are selected once;
+- direct and external routes share selection ids, ordering, budget decisions, prompt-asset digest, and exclusion trace;
+- direct execution uses the existing provider registry/adapter and can stream prose;
+- Gemini validation uses implementation-time capabilities rather than roadmap constants;
+- provider failure does not alter preparation, Canon, Chapter, or feature flags;
+- external rendering performs no provider call and requires no credential;
+- ChatGPT, Claude, and Generic formatting cannot re-run retrieval or change selected canon;
+- current/future Chapter context follows story chronology, never DB timestamp alone;
+- not all Entries are inserted; unresolved facts and continuity state remain selectively retrievable.
+
+### 8.2 Prompt Packet
 
 - Taste ON and Taste OFF/cake;
 - cake keeps Story Canon, work state, Scene Brief, retrieved Entries, and Voice by default;
 - explicit independent Voice OFF;
-- relevant Entry included and irrelevant Entry excluded;
+- relevant Entry ranks ahead of an otherwise equal unmatched Entry under the current retrieval policy;
 - deterministic exclusion under budget;
 - ChatGPT, Claude, and Generic formatting from one shared selection;
 - output is a complete single-copy prompt;
@@ -206,7 +246,7 @@ Add AOS-8, AOS-9, and AOS-10. Learning begins only when repeated evidence can pr
 - imported result links to packet metadata;
 - cake result is excluded from Taste evidence by default.
 
-### 7.2 Taste
+### 8.3 Taste
 
 - explicit outranks inferred;
 - repeated evidence increases confidence/count deterministically;
@@ -218,7 +258,7 @@ Add AOS-8, AOS-9, and AOS-10. Learning begins only when repeated evidence can pr
 - deleting a Work does not delete global user Taste;
 - provenance and human-confirmed state survive edits and disable/enable transitions.
 
-### 7.3 Voice
+### 8.4 Voice
 
 - work default and selected preset resolve deterministically;
 - Voice remains enabled in cake mode;
@@ -226,7 +266,7 @@ Add AOS-8, AOS-9, and AOS-10. Learning begins only when repeated evidence can pr
 - high-level features and user examples retain provenance;
 - no target-author identity is required or emitted by the profile contract.
 
-### 7.4 Performance and UX
+### 8.5 Performance and UX
 
 - not all Entries or preferences are inserted;
 - selection and budget remain deterministic and local;
@@ -234,14 +274,15 @@ Add AOS-8, AOS-9, and AOS-10. Learning begins only when repeated evidence can pr
 - large clipboard copy preserves the entire packet;
 - generation preparation, normal/cake choice, preview, copy, and Context Inspector are readable and touchable on desktop, tablet, and mobile.
 
-### 7.5 Import and learning safety
+### 8.6 Apply/import and learning safety
 
 - import never overwrites a newer Chapter version silently;
 - source packet, target, cake mode, and user opt-in are traceable;
 - edit-diff capture remains intact;
 - no imported or inferred data becomes Story Canon or confirmed Taste without its governing human action.
+- chat-private Memory never enters novel preparation or canon implicitly.
 
-## 8. Bench direction
+## 9. Bench direction
 
 Bench expands incrementally with deterministic measures first:
 
@@ -253,26 +294,29 @@ Bench expands incrementally with deterministic measures first:
 - scene-goal completion;
 - forbidden-pattern occurrence.
 
-An automatic LLM judge is optional and out of band. It is never required for packet generation and never gates a user's live result.
+An automatic LLM judge is optional and out of band. It is never required for preparation or generation and never gates a user's live result.
 
-## 9. Explicit non-goals
+## 10. Explicit non-goals
 
 - deleting OpenAI, Anthropic, Gemini, or Ollama adapters;
-- making a provider API key mandatory for packet creation;
+- making a provider API key mandatory for preparation or packet creation;
+- duplicating the existing Gemini adapter or freezing a Gemini model/quota/price in architecture;
+- making Taste, Voice, or Analyst learning a prerequisite for the first useful novel loop;
+- making Character Chat the primary novel workflow or injecting chat-private Memory into it;
 - replacing Entry Store, PromptEngine, MemoryEngine, NovelEngine, or existing generation;
 - creating StoryCore, StoryBible, Taste, Voice, or Scene tables without a separately approved need;
 - treating Taste or Voice as Story Canon;
 - fine-tuning, LoRA, automatic strong preferences from one edit, or named-author cloning;
 - a maximal NovelCrafter-style settings surface or many unrelated AI buttons.
 
-## 10. Decision checkpoints
+## 11. Decision checkpoints
 
 Only these points currently require architecture decisions before implementation:
 
 1. P1-8 exact equivalence semantics — fixed in the companion P1-8 design.
-2. Prompt Packet artifact identity, editable/persisted boundary, preparation/execution seam, and import linkage — AOS-1.
-3. Taste candidate lifecycle and whether existing Review Card semantics can be reused without conflating Story Canon review — AOS-1/AOS-3.
-4. Voice preset identity and persistence — AOS-1/AOS-4.
+2. Generation Preparation identity/trace, editable/persisted boundary, shared direct/external seam, target rendering, and import linkage — AOS-1.
+3. Taste candidate lifecycle and whether existing Review Card semantics can be reused without conflating Story Canon review — AOS-1/AOS-6.
+4. Voice preset identity and persistence — AOS-1/AOS-7.
 5. Scene Brief persistence only if operation-local state proves insufficient — AOS-2, based on actual use.
 
 Everything else should proceed as small, reversible implementation PRs after those contracts are fixed.

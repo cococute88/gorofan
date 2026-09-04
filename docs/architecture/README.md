@@ -141,9 +141,9 @@ A single-process, layered **modular monolith**: a reusable **substrate** (provid
 
 **P1-7 design and implementation:** [Edit-diff Capture Persistence](edit-diff-capture-design.md) fixes where and when the draft↔human-edited text pair is captured (ADR-010, RFC-001 §8.8). The design was approved in PR #23 and implemented in PR #25 as additive migration `0003_edit_diff_capture` plus the Review Card and Novel continuation capture paths. The read/distillation consumer remains deferred.
 
-**P1-8 proposed design:** [Legacy Context ↔ Entry Equivalence Bridge](legacy-entry-equivalence-design.md) fixes the read-only projection, strict comparison states, runtime-selection trace, and later lore-scanner cutover gate. It authorizes no backfill, migration, read cutover, or feature-flag change.
+**P1-8 proposed design:** [Legacy Context ↔ Entry Equivalence Bridge](legacy-entry-equivalence-design.md) fixes the read-only projection, independent coverage/runtime states with coexisting diagnostics, runtime-selection trace, and later lore-scanner cutover gate. It authorizes no backfill, migration, read cutover, or feature-flag change.
 
-**Product delivery roadmap:** [Personal AI Author OS Roadmap](personal-author-os-roadmap.md) maps Story Canon, Taste, Voice, Scene Brief, Prompt Packet, result import, learning, Writer, and Bench onto the frozen architecture. It prioritizes a no-provider-API Prompt Packet milestone while preserving direct generation.
+**Product delivery roadmap:** [Personal Long-form Novel Author OS Roadmap](personal-author-os-roadmap.md) makes long-form novel authoring the primary product and maps Story Canon, Character/Relationship state, Scene Brief, shared Generation Preparation, direct Provider API execution, Prompt Packet copy, Chapter apply/import, optional Taste/Voice, learning, Writer, and Bench onto the frozen architecture. Both execution routes share one provider-neutral selection/assembly result; AI Character Chat remains an independent auxiliary capability.
 
 **Build order (from ADR-001 / `architecture-final-minimal.md` §8):**
 1. Entry store + `retrieve()`; migrate character/world/lore fields → Entries.

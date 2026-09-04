@@ -2,7 +2,7 @@
 
 > **Canonical handoff document for a new AI session.**
 >
-> **Verified at:** 2026-08-30T19:41:47+09:00
+> **Verified at:** 2026-09-04T16:18:01+09:00
 > **Verified `main`:** `10683313321be4ee9d81d634943d55fa67f3f4cb`
 
 ## Contents
@@ -40,7 +40,7 @@ Before changing anything:
 | GitHub repository | [`cococute88/gorofan`](https://github.com/cococute88/gorofan) |
 | Local repository | `C:\gv\rfrf` |
 | Default branch | `main` |
-| Verification time | `2026-08-30T19:41:47+09:00` |
+| Verification time | `2026-09-04T16:18:01+09:00` |
 | Verified `origin/main` / local `main` | `10683313321be4ee9d81d634943d55fa67f3f4cb` |
 | PR #21 | [`feat(entry): wire retrieval context into generation paths`](https://github.com/cococute88/gorofan/pull/21), merged 2026-08-09 — **P1-6** |
 | PR #21 merge commit | `1b2a850b2732778fecb8944f03a8d12020aa588a` |
@@ -347,13 +347,13 @@ The proposed contract is `docs/architecture/legacy-entry-equivalence-design.md`.
 
 - stored-knowledge **coverage** and concrete-generation **runtime selection** are separate reports;
 - legacy sources have deterministic Entry-shaped projections and stable source keys;
-- exact result states expose missing, conflicting, ambiguous, ineligible, unused, and selection-mismatch cases;
+- independent coverage/runtime axes expose missing, conflicting, ambiguous, ineligible, duplicate, unsupported, and selection-mismatch cases without hiding simultaneous findings;
 - current World/Lore/summary differences are findings, not silently corrected behavior;
 - lore scanner cutover has an explicit later gate.
 
-After this design is reviewed and merged, implement only the pure projection/comparison module, typed report, owner-safe read seam, and golden/integration tests. A test-only helper with no application caller cannot claim equivalence on real data. The implementation remains read-only: no Entry backfill, legacy write, migration, read cutover, feature-flag change, provider call, Prompt Packet code, Taste/Voice/Scene code, or P1-9 work.
+After this design is reviewed and merged, implement only the pure projection/comparison module, typed report, owner-safe read seam, and golden/integration tests. A test-only helper with no application caller cannot claim equivalence on real data. The implementation remains read-only: no Entry backfill, legacy write, migration, read cutover, feature-flag change, provider call, Generation Preparation/Prompt Packet code, Taste/Voice/Scene code, or P1-9 work.
 
-The separate product dependency path is in `docs/architecture/personal-author-os-roadmap.md`. It places no-API Prompt Packet preparation at the RFC-009 composition seam and preserves RFC-004 Writer plus all existing provider adapters.
+The separate product dependency path is in `docs/architecture/personal-author-os-roadmap.md`. It makes long-form Novel authoring the primary product and places one shared Generation Preparation at the RFC-009 composition seam. Direct Provider API generation and complete Prompt Packet copy diverge only at the terminal execution/formatting step; RFC-004 Writer, all existing provider adapters, and independent Character Chat remain intact. Taste/Voice learning is not a prerequisite for the first usable loop.
 
 ## 12. First-run checklist for a new AI
 
@@ -363,7 +363,7 @@ The separate product dependency path is in `docs/architecture/personal-author-os
 4. Confirm the starting state yourself rather than trusting this snapshot: `alembic heads` should be `0003_edit_diff_capture`, `pytest -q` should be 199 passed, and `FEATURES["entry_store_context"]` should still default OFF.
 5. Read the real legacy context sources before implementing anything against them: `NovelService._build_story_context()`, `PromptEngine._make_lore_blocks()`, the `Character` / `World` / `Lorebook` / `LoreEntry` models, and `entry_generation_context.py`.
 6. Create a new branch from current `origin/main`.
-7. Design first, implement second, in separate PRs. Enforce the non-goals in [section 11](#11-immediate-next-task-p1-8-design).
+7. Design first, implement second, in separate PRs. Enforce the non-goals in [section 11](#11-immediate-next-task-after-review-p1-8-implementation).
 8. Verify: Ruff clean, MyPy adds no error in the changed scope against the 36-errors-in-11-files baseline, full pytest passes with no reduction from 199, `git diff --check` clean, all files UTF-8.
 9. Create a **Draft** PR and include the required completion report.
 10. Do not merge. Report results and wait for the requested review/merge decision.
@@ -402,9 +402,9 @@ relying on any of it.
 
 Your task is P1-8: the legacy Character/World/Lore to Entry equivalence bridge. This is a
 READ-ONLY DETERMINISTIC COMPARISON that produces evidence about whether the Entry Store can
-carry the same knowledge the legacy sources carry today. It is the approved gate for later
-deciding whether FEATURES["entry_store_context"] can be turned on permanently. It is not
-that decision, and it does not perform it.
+carry the same knowledge the legacy sources carry today and whether concrete runtime selection
+also agrees. It produces evidence for later authority/cutover decisions, but does not make them.
+Entry context enablement and legacy lore-scanner retirement remain separate controls and decisions.
 
 Confirm the starting state yourself before implementing anything: alembic heads is
 0003_edit_diff_capture, backend pytest is 199 passed, Ruff is clean, MyPy reports 36 errors
@@ -416,12 +416,12 @@ retrieve() to Context Assembly to PromptEngine.
 
 Read docs/architecture/legacy-entry-equivalence-design.md completely. Implement only its
 pure legacy projection/comparison module, typed report, owner-safe read seam, and golden/
-integration tests after that design is approved and merged. Preserve its separation between
-stored coverage and concrete runtime selection, its strict result states, and its later lore
-scanner cutover gate. Do not claim real-data equivalence from a test-only helper with no
+integration tests after that design is approved and merged. Preserve its independent coverage
+and concrete runtime axes, deterministic precedence and coexisting diagnostic codes, and its
+later lore-scanner cutover gate. Do not claim real-data equivalence from a test-only helper with no
 application caller.
 
-Do not do any of the following. No backfill of Entries from legacy rows. No legacy deletion,
+Do not do any of the following. No Generation Preparation or Prompt Packet implementation. No backfill of Entries from legacy rows. No legacy deletion,
 no read cutover, no migration. Do not turn the P1-6 feature flag on. Do not reopen P1-6
 decisions: DEFAULT_PRIORITY["entry"] = 65, LAYER_ORDER with entry between lore and memory,
 the 0.15 knowledge-slice budget ratio, flag semantics, and the propagate-do-not-swallow

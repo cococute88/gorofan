@@ -152,4 +152,4 @@
 | Phase 5 Character Chat 공유 지식 통합 | 약 25% — P1-6이 character/world/user canon 주입 경로를 열었다. 명시적 work 선택·relationship.state·북마크 승격은 미구현 |
 | Phase 6 Bench | 약 15% — retrieval/context 골든 픽스처만 |
 
-전체적으로 **"substrate는 서 있고, Store가 제품 생성 경로에 연결되었으나 기본 OFF 플래그 뒤에 있고 레거시 컨텍스트가 여전히 권위를 갖는 상태"** 다. edit-diff capture(P1-7)가 비가역 데이터 손실을 막았지만, 사용자가 매일 새 소설을 만드는 Prompt Packet/Import UX는 아직 없다. 다음 작업은 P1-8 구현이며, 그 뒤에는 review audit보다 no-API Prompt Packet milestone을 우선하는 제품 dependency track을 `docs/architecture/personal-author-os-roadmap.md`에 기록했다.
+전체적으로 **"substrate는 서 있고, Store가 제품 생성 경로에 연결되었으나 기본 OFF 플래그 뒤에 있고 레거시 컨텍스트가 여전히 권위를 갖는 상태"** 다. edit-diff capture(P1-7)가 비가역 데이터 손실을 막았지만, 사용자가 매일 장편소설을 준비하고 직접 Provider API로 생성하거나 전체 Prompt Packet을 복사한 뒤 Chapter에 반영하는 loop는 아직 없다. 다음 작업은 P1-8 구현이며, 그 뒤에는 P1-9 review audit이나 Taste/Voice 자동학습보다 shared Generation Preparation 기반 dual-generation milestone을 우선하는 dependency track을 `docs/architecture/personal-author-os-roadmap.md`에 기록했다.
