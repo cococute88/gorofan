@@ -2,7 +2,7 @@
 
 > **Canonical handoff document for a new AI session.**
 >
-> **Verified at:** 2026-09-04T16:18:01+09:00
+> **Verified at:** 2026-09-05T08:31:21+09:00
 > **Verified `main`:** `9deb643c1c506e604f1341a6d3e072c30220ab88`
 > **Verified implementation branch:** `feature/p1-8-equivalence-implementation`
 
@@ -204,19 +204,20 @@ Run each command as a separate process with the stated working directory; do not
 
 | Check | Working directory | Command | Verified result at this handoff |
 |---|---|---|---|
-| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest -q` | **233 passed, 0 failed** on the P1-8 implementation branch. `main` before P1-8 was 199; P1-8 added 34 focused tests. |
-| P1-8 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **34 passed.** Covers all projection kinds and coverage states, runtime axes/exclusion stages/multiplicity, ownership, read-only/provider-free behavior, and deterministic golden reports. |
+| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest` | **243 passed, 0 failed** after the five blocker repairs. |
+| P1-8 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **44 passed.** Covers the existing contract plus all five blocker regressions, Novel source identity, missing Memory evaluation context, regenerate user ties, and the unchanged production Memory wrapper. |
+| Related regression bundle | `backend` | Entry lifecycle/retrieval/context/review, Chat/Novel/Memory/streaming, prompt budget/assets, edit-diff, golden, migrations | **165 passed, 0 failed.** |
 | P1-7 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/integration/test_edit_diff_capture_schema.py tests/integration/test_edit_diff_capture_entry.py tests/integration/test_edit_diff_capture_novel.py` | **41 passed** (schema 12, Path A 11, Path B 18). `tests/integration/test_migrations.py` grew from 3 to 5 for the remaining 2. |
 | P1-6 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_prompt_integration.py tests/unit/test_entry_generation_context.py tests/integration/test_entry_context_generation.py` | **41 passed.** The integration file drives the real SSE endpoints with a recording provider. |
 | Entry/retrieval/assembly target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_retrieval.py tests/unit/test_entry_context_assembly.py tests/integration/test_entry_retrieval.py tests/golden/test_retrieval_context_golden.py` | Repository command paths verified; use for Store/context work. |
-| Ruff | `backend` | `.\.venv\Scripts\python.exe -m ruff check app tests` | `All checks passed!` on merged `main`. |
-| Frontend test | `frontend` | `npm run test` | Passed: 3 files / 13 tests on 2026-07-31; unchanged by P1-6 and P1-7 (neither touched the frontend). |
-| Frontend lint | `frontend` | `npm run lint` | Passed on 2026-07-31; emits a TypeScript-version support warning. |
-| Frontend production build | `frontend` | `npm run build` | Passed: 15 routes on 2026-07-31. |
+| Ruff | `backend` | `.\.venv\Scripts\python.exe -m ruff check app tests` | `All checks passed!` on the blocker-repair branch. |
+| Frontend test | `frontend` | `npm run test` | Passed: 3 files / 13 tests on 2026-09-05; P1-8 did not touch the frontend. |
+| Frontend lint | `frontend` | `npm run lint` | Passed on 2026-09-05. |
+| Frontend production build | `frontend` | `npm run build` | Passed: 15 routes on 2026-09-05. |
 | Alembic revisions | `backend` | `.\.venv\Scripts\python.exe -m alembic heads` | **`0003_edit_diff_capture (head)`** — single head, `down_revision = "0002_entry_store"`. |
-| Whitespace/patch integrity | repository root | `git diff --check` | Clean on merged `main`. |
+| Whitespace/patch integrity | repository root | `git diff --check` | Clean on the blocker-repair branch. |
 
-The full command `.\.venv\Scripts\python.exe -m mypy app tests` reports **36 pre-existing errors in 11 files** at the verified main — unchanged by P1-6 and P1-7. The distribution is `tests/unit/test_prompt_assets.py` (9), `app/repositories/base.py` (8), `tests/integration/test_prompt_template_boundary.py` (5), `app/engines/prompt/engine.py` (5), `app/services/world_service.py` (3), and one each in `tests/integration/test_migrations.py`, `app/services/novel_service.py`, `app/main.py`, `app/core/storage.py`, `app/auth/service.py`, `app/api/sse.py`. The four new P1-7 modules contribute **0**, and `app/services/entry_service.py` remains at 0.
+The verified `main` baseline was **36 pre-existing errors in 11 files**. On this blocker-repair branch, `.\.venv\Scripts\python.exe -m mypy app tests` reports **31 errors in 10 files** because the five pre-existing nullable annotations on `PromptEngine.AssembleInput` were corrected; the changed P1-8 scope reports zero errors. No new full-MyPy error was introduced.
 
 Full MyPy is not the clean merge gate. For a scoped change, record the current errors for precisely the changed scope and do not introduce or increase them; fix new errors in that scope before review.
 
@@ -268,7 +269,7 @@ The current `tasks.md`, `implementation-status.md`, and production code agree on
 |---|---|---|---|---|
 | ~~**P1-6**~~ `retrieve()` → Context Assembly → real generation path | **Complete** (PR #21, `1b2a850`). Single production call site wired for Chat and Novel behind an OFF-by-default flag. | — | — | Done. |
 | ~~**P1-7**~~ edit-diff capture | **Complete** (design PR #23 `39cf740`, implementation PR #25 `271e27c`). Both destroying paths capture the pair; `alembic heads` is `0003_edit_diff_capture`. The permanent-data-loss clock has stopped. | — | — | Done. The §13 read contract belongs to **P2-5**, not to a follow-up here. |
-| ~~**P1-8**~~ legacy Character/World/Lore ↔ Entry equivalence bridge | **Complete on the implementation branch.** Pure deterministic projections, coverage precedence, typed owner-safe API, and Chat/Novel runtime shadows are covered by 32 focused tests. Legacy remains authoritative and `_make_lore_blocks()` still runs. | PR #27 contract accepted. | Backfill, legacy deletion, read cutover, migration, or flipping the flag as part of the bridge. | Done; completion is diagnostic only, not authority cutover. |
+| **P1-8** legacy Character/World/Lore ↔ Entry equivalence bridge | **Blocker repairs complete; independent re-review pending on Draft PR #28.** Pure projections, coverage precedence, typed owner-safe API, and Chat/Novel runtime shadows are covered by 44 focused tests. Legacy remains authoritative and `_make_lore_blocks()` still runs. | PR #27 contract accepted; PR #28 re-review required. | Backfill, legacy deletion, read cutover, migration, or flipping the flag as part of the bridge. | Do not merge or advance to chronology work before independent re-review. |
 | **P1-9** review audit persistence decision | Not implemented. Current Entries have lifecycle/provenance but no approved actor/action history design. P1-7 deliberately defined no actor or action vocabulary. | P1-1 complete. | Unapproved JSON schema, implementation migration in the design PR, reusing `edit_diff_captures` as a review timeline. | After P1-8 unless architecture review chooses earlier. |
 | **P1-10** local development environment cleanup | Optional and blocked by user-data safety. Local DB stamp is stale; protected stashes exist. | Explicit user approval for data/stash actions. | Automatic DB recreation, `alembic stamp`, stash application/deletion. | Last, and only with approval. |
 
@@ -348,26 +349,26 @@ Neither is a defect, and neither blocked the merge:
 
 Three smaller observations recorded by the pre-merge review, all accepted as non-blocking: design §9.2's "increment a counter" is satisfied by the structured log because the repository has no metrics substrate and building one would exceed P1-7's scope; a Tier-2 failure on the success path ends the SSE stream without an `error` event, which the design's stated outcome permits; and `insert_offset` is `len(content_text)` *before* concatenation exactly as design §6.3 defines it, which is two characters ahead of the separator when the chapter is non-empty — an alignment detail for P2-5, not an error.
 
-## 11. P1-8 implementation result and next correctness gate
+## 11. P1-8 blocker repair result and independent re-review gate
 
-PR #27's accepted contract is implemented on `feature/p1-8-equivalence-implementation`. `POST /api/v1/entries/equivalence:compare` always builds both legacy and Entry shadows without provider execution or persistent writes, even while the production Entry context flag remains OFF. The report keeps stored **coverage** and concrete **runtime selection** independent and records retrieval, assembly, final-budget, order, lifecycle, chronology, and applicability evidence.
+Draft PR #28 on `feature/p1-8-equivalence-implementation` has repaired the five independently reproduced blockers: aggregate-source false attribution, `not_applicable` order contamination, hidden Memory wall clock, regenerate timestamp-tie false certainty, and selected chronology codes on non-selected rows. The implementation now uses exact source spans/full normalized payloads, isolates applicability from coverage, requires explicit Memory evaluation time when Memory candidates exist, reports production-ambiguous regenerate ties as unsupported, and distinguishes selected from non-selected chronology evidence.
 
-P1-8 intentionally did not move authority. The legacy Character/World/Lore path, lore scanner, Entry feature-flag default, generation behavior, provider adapters, and all persistence schemas remain unchanged. Its completion means the dual path is observable, not that the two paths are equivalent or that legacy can be retired.
+The branch passes 44 focused P1-8 tests, 243 backend tests, a 165-test related regression bundle, Ruff, scoped MyPy with zero errors, Alembic single-head checks, and frontend 13 tests/lint/build. Full MyPy reports 31 existing errors in 10 files after correcting five pre-existing PromptEngine nullable annotations. These results make the Draft ready for a new independent re-review, **not ready for merge**.
 
-The strongest correctness finding is that current Entry retrieval ranks by database timestamps and does not exclude `story.summary` rows whose chapter position is future or unknown relative to a Novel target. Before a shared Generation Preparation or Prompt Packet path inherits that selection, use a separate architecture/correctness PR to define and test story-chronology eligibility and ordering. Do not repair this inside the diagnostic bridge. After that gate, proceed to AOS-1 Generation Preparation + dual-route Architecture Contract.
+P1-8 intentionally did not move authority. The legacy Character/World/Lore path, lore scanner, Entry feature-flag default, production Memory/Chat/Novel selection, provider-visible generation payloads, provider adapters, and all persistence schemas remain unchanged. The existing future/unknown `story.summary` eligibility debt remains measured rather than repaired. Do not begin its chronology correctness gate until PR #28 passes independent re-review.
 
 ## 12. First-run checklist for a new AI
 
-1. Read `AI-HANDOFF.md`, then the governing originals for the task at hand. For the next chronology gate, include ADR-003/004/017/018, RFC-002/003/005, the P1-8 contract, Entry retrieval, and Novel continuation code.
+1. Read `AI-HANDOFF.md`, then the P1-8 design, implementation, and five blocker regressions. The next action is an independent re-review of Draft PR #28, not chronology implementation.
 2. Fetch and compare `origin/main`; if this handoff SHA (`9deb643`) is no longer current, re-validate GitHub state, code call sites, and status documents.
 3. Check the working tree and list stashes without modifying either. Keep user work, the local DB, and stashes untouched.
-4. Confirm the starting state yourself rather than trusting this snapshot: `alembic heads` should be `0003_edit_diff_capture`, this implementation branch should have 233 tests, and `FEATURES["entry_store_context"]` should still default OFF.
+4. Confirm the starting state yourself rather than trusting this snapshot: `alembic heads` should be `0003_edit_diff_capture`, this implementation branch should have 243 backend tests / 44 focused tests, and `FEATURES["entry_store_context"]` should still default OFF.
 5. Read the P1-8 diagnostic service and golden/integration evidence together with the production retrieval and Novel preparation path; do not treat the bridge as a new runtime authority.
-6. Create a new branch from current `origin/main`.
-7. Keep the story-summary correctness contract and implementation in separately reviewed PRs; do not fold it into P1-8 or AOS-1.
-8. Verify: Ruff clean, MyPy adds no error in the changed scope against the 36-errors-in-11-files baseline, full pytest passes with no reduction from 233 after P1-8 merges, `git diff --check` clean, all files UTF-8.
-9. Create a **Draft** PR and include the required completion report.
-10. Do not merge. Report results and wait for the requested review/merge decision.
+6. Review the existing PR branch; do not create a chronology branch during the P1-8 re-review.
+7. Re-run the five named blocker regressions and inspect their evidence rather than trusting expected snapshots alone.
+8. Verify: Ruff clean, scoped MyPy zero, full MyPy distinguished from the 31-errors-in-10-files current baseline, full pytest 243 or more, `git diff --check` clean, all files UTF-8.
+9. Keep PR #28 Draft during the independent re-review.
+10. Do not merge. Report the independent verdict and wait for the requested decision.
 
 Use one PowerShell command per process and set the terminal working directory instead of shell-chaining commands. If the wrapper corrupts a command, use the `subprocess.run(argv, cwd=..., shell=False)` fallback described in [Environment cautions](#8-environment-cautions), not another identical wrapper retry.
 
@@ -403,23 +404,23 @@ architecture contract (PR #27) are merged. P1-8 implementation exists on
 feature/p1-8-equivalence-implementation. If main has advanced, re-verify before
 relying on any of it.
 
-Your task is a separate story-summary chronology correctness architecture contract. P1-8 evidence
-shows that current Entry retrieval ranks story.summary by database timestamps and does not guarantee
-exclusion of summaries whose chapter position is future or unknown relative to the Novel target.
-Define the narrow eligibility, ordering, trace, owner-scope, and rollout contract that must precede
-AOS-1 Generation Preparation. Do not implement the fix in the design PR.
+Your task is an independent Implementation Re-Review of Draft PR #28. Reproduce and inspect the five
+previous blockers: aggregate substring source attribution, not-applicable ordering contamination,
+Memory wall-clock dependence, regenerate timestamp ties, and selected chronology codes on a
+non-selected summary. Do not rely only on the author session's verdict or test expectations.
 
 Confirm the starting state yourself before changing anything: alembic heads is
-0003_edit_diff_capture, the P1-8 implementation branch has 233 tests, Ruff is clean, MyPy reports 36 errors
-in 11 files, and FEATURES["entry_store_context"] still defaults OFF. Then read the real
+0003_edit_diff_capture, the P1-8 implementation branch has 243 backend tests / 44 focused tests,
+Ruff is clean, scoped MyPy is zero, full MyPy reports 31 errors in 10 files, and
+FEATURES["entry_store_context"] still defaults OFF. Then read the real
 legacy context path before touching it: NovelService._build_story_context(),
 PromptEngine._make_lore_blocks(), the Character / World / Lorebook / LoreEntry models, and
 services/entry_generation_context.py, which is the single production call site chaining
 retrieve() to Context Assembly to PromptEngine.
 
 Read docs/architecture/legacy-entry-equivalence-design.md and its implementation/tests completely.
-Treat P1-8 as diagnostic evidence, not as runtime authority. Preserve independent coverage/runtime
-axes and the current production behavior while specifying the later correction and migration gate.
+Treat P1-8 as diagnostic evidence, not as runtime authority. Verify independent coverage/runtime
+axes, explicit Memory evaluation context, ambiguity evidence, and unchanged production behavior.
 
 Do not do any of the following. No Generation Preparation or Prompt Packet implementation. No backfill of Entries from legacy rows. No legacy deletion,
 no read cutover, no migration. Do not turn the P1-6 feature flag on. Do not reopen P1-6
@@ -433,17 +434,15 @@ P1-9 review audit persistence. Do not modify 0001_initial, 0002_entry_store,
 0003_edit_diff_capture, or the local backend/data/app.db. Do not apply, pop, or drop
 stashes. Do not auto-merge.
 
-Verify before opening the PR: Ruff clean; MyPy introduces no new error in the changed scope
-against the 36-errors-in-11-files baseline; backend pytest passes with no reduction from the
-233-test P1-8 implementation baseline; git diff --check clean; all files UTF-8. Use one PowerShell command per
+Verify the existing Draft: Ruff clean; scoped MyPy zero and no new full-MyPy errors against the
+31-errors-in-10-files branch baseline; backend pytest passes with no reduction from 243;
+focused P1-8 passes with no reduction from 44; git diff --check clean; all files UTF-8. Use one PowerShell command per
 process; if the wrapper corrupts a command, use Python subprocess.run(argv, cwd=...,
 shell=False) rather than retrying the same broken shell string.
 
-Perform an independent self-review, commit, push, and create a Draft PR only. Then report:
-what was designed or implemented and how it maps to the governing ADR/RFC set, files read
-and changed, all verification results, issues, PR URL, next work, whether a new chat is
-recommended, Ready-for-Review/merge judgment, a next-AI prompt, and recommended
-model/reasoning.
+Do not modify or merge the PR during review unless separately asked. Report the independent verdict,
+each blocker reproduction result, any remaining correctness issue, all verification results, PR URL,
+and whether it is safe to proceed to a later merge decision. Keep the PR Draft.
 ```
 
-**Recommended execution model:** Claude Code — Opus High; Codex — high reasoning; Cursor — strongest available reasoning model. Story-summary chronology is a correctness boundary for every later shared generation preparation route.
+**Recommended execution model:** Claude Code — Opus High; Codex — high reasoning; Cursor — strongest available reasoning model. P1-8 is a measurement boundary, so the re-review must prefer explicit unsupported evidence over invented deterministic production semantics.

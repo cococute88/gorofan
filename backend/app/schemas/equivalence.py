@@ -1,6 +1,7 @@
 """Typed P1-8 legacy-to-Entry diagnostic API contract."""
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal, Self
 
@@ -60,6 +61,7 @@ class ChatEquivalenceSituation(BaseModel):
     chat_id: str = Field(min_length=1)
     mode: ChatDiagnosticMode
     user_message: str | None = None
+    evaluation_time: datetime | None = None
 
     @field_validator("user_message")
     @classmethod
@@ -69,6 +71,15 @@ class ChatEquivalenceSituation(BaseModel):
         if not value.strip():
             raise ValueError("user_message must not be blank")
         return value
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def normalize_evaluation_time(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("evaluation_time must include a UTC offset")
+        return value.astimezone(UTC)
 
     @model_validator(mode="after")
     def validate_mode(self) -> Self:
@@ -213,6 +224,7 @@ class SituationEvidence(BaseModel):
     kind: Literal["chat", "novel"]
     anchor_id: str
     mode: str | None = None
+    memory_evaluation_time: datetime | None = None
     context_window: int
     max_tokens: int
     safety_ratio: float

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from hashlib import sha256
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, Literal
@@ -21,11 +22,16 @@ from app.adapters.base import AssembledPrompt
 from app.adapters.registry import ProviderRegistry
 from app.config import Settings
 from app.core.errors import NotFound, ValidationAppError
-from app.engines.memory.engine import RETRIEVE_K, SHORT_WINDOW, MemoryEngine
+from app.engines.memory.engine import RETRIEVE_K, SHORT_WINDOW, MemoryEngine, rank_memories
 from app.engines.novel.engine import words_to_tokens
 from app.engines.prompt.assets import PromptAssetLoader
 from app.engines.prompt.blocks import LAYER_ORDER, PromptBlock
-from app.engines.prompt.engine import AssembleInput, PromptEngine
+from app.engines.prompt.engine import (
+    AssembleInput,
+    PromptEngine,
+    render_character_block,
+    render_world_block,
+)
 from app.engines.prompt.entry_context import (
     ASSEMBLY_POLICY_VERSION,
     EntryContextAssemblyRequest,
@@ -166,6 +172,24 @@ class EffectiveBudget:
     max_tokens: int
     safety_ratio: float
     source: Literal["model_config", "diagnostic_override"]
+
+
+@dataclass(frozen=True)
+class LegacySourceAttribution:
+    """Exact source-identity span inside one resolved aggregate prompt block."""
+
+    block_kind: str
+    start: int
+    end: int
+    expected_sha256: str
+
+
+@dataclass(frozen=True)
+class ChatMemoryShadow:
+    user_text: str
+    short: list[Any]
+    long: list[Memory]
+    unsupported_codes: tuple[str, ...] = ()
 
 
 def _payload_summary(content: str, title: str | None = None) -> PayloadSummary:
@@ -665,32 +689,53 @@ class LegacyEntryEquivalenceService:
             override=request.budget_override,
             target_words=None,
         )
-        user_text, short, long = await self._chat_memory_shadow(
+        memory_shadow = await self._chat_memory_shadow(
             session,
             chat_id=chat.id,
             mode=dto.mode,
             supplied_message=dto.user_message,
             context_window=budget.context_window,
+            evaluation_time=dto.evaluation_time,
         )
+        if memory_shadow.unsupported_codes:
+            runtime = self._unsupported_runtime_report(
+                surface="chat",
+                projections=projections,
+                coverage=coverage,
+                diagnostic_codes=set(memory_shadow.unsupported_codes),
+            )
+            return self._report(
+                kind="chat",
+                anchor_id=chat.id,
+                mode=dto.mode.value,
+                memory_evaluation_time=dto.evaluation_time,
+                budget=budget,
+                coverage=coverage,
+                blank_keys=blanks,
+                runtime=runtime,
+                entries=entries,
+                candidates=candidates,
+                target_chapter_index=None,
+            )
         retrieve_request = build_chat_retrieve_request(
             user_id=user_id,
             character=character,
             world=world,
-            user_message=user_text,
+            user_message=memory_shadow.user_text,
             context_window=budget.context_window,
         )
         retrieval = await self.entries.retrieve(session, retrieve_request)
         assembled = assemble_entry_context(
             EntryContextAssemblyRequest(retrieval, budget=retrieve_request.budget)
         )
-        legacy_prompt, entry_prompt = self._chat_prompts(
+        legacy_prompt, entry_prompt, legacy_attribution = self._chat_prompts(
             character=character,
             persona=persona,
             world=world,
             lore_rows=lore_rows,
-            short=short,
-            long=long,
-            user_text=user_text,
+            short=memory_shadow.short,
+            long=memory_shadow.long,
+            user_text=memory_shadow.user_text,
             budget=budget,
             entry_blocks=list(assembled.blocks),
         )
@@ -704,11 +749,13 @@ class LegacyEntryEquivalenceService:
             retrieval=retrieval,
             assembled_entry_ids=list(assembled.included_entry_ids),
             target_chapter_index=None,
+            legacy_attribution=legacy_attribution,
         )
         return self._report(
             kind="chat",
             anchor_id=chat.id,
             mode=dto.mode.value,
+            memory_evaluation_time=dto.evaluation_time,
             budget=budget,
             coverage=coverage,
             blank_keys=blanks,
@@ -826,7 +873,7 @@ class LegacyEntryEquivalenceService:
             for item in chapters
             if item.index < chapter.index and item.summary
         ]
-        legacy_prompt, entry_prompt = self._novel_prompts(
+        legacy_prompt, entry_prompt, legacy_attribution = self._novel_prompts(
             chapter=chapter,
             characters=characters,
             world=world,
@@ -846,11 +893,13 @@ class LegacyEntryEquivalenceService:
             retrieval=retrieval,
             assembled_entry_ids=list(assembled.included_entry_ids),
             target_chapter_index=chapter.index,
+            legacy_attribution=legacy_attribution,
         )
         return self._report(
             kind="novel",
             anchor_id=chapter.id,
             mode=None,
+            memory_evaluation_time=None,
             budget=budget,
             coverage=coverage,
             blank_keys=blanks,
@@ -1016,7 +1065,8 @@ class LegacyEntryEquivalenceService:
         mode: ChatDiagnosticMode,
         supplied_message: str | None,
         context_window: int,
-    ) -> tuple[str, list[Any], list[Memory]]:
+        evaluation_time: datetime | None,
+    ) -> ChatMemoryShadow:
         active: list[Any] = list(
             (
                 await session.execute(
@@ -1029,11 +1079,32 @@ class LegacyEntryEquivalenceService:
                 )
             ).scalars().all()
         )
+        unsupported_codes: set[str] = set()
         if mode is ChatDiagnosticMode.REGENERATE:
             assistants = [message for message in active if message.role == "assistant"]
             if assistants:
+                latest_assistant_time = assistants[-1].created_at
+                if sum(
+                    message.created_at == latest_assistant_time for message in assistants
+                ) > 1:
+                    unsupported_codes.add("regenerate_assistant_timestamp_tie")
                 active.remove(assistants[-1])
-            users = [message for message in active if message.role == "user"]
+            users = list(
+                (
+                    await session.execute(
+                        select(Message)
+                        .where(
+                            Message.chat_session_id == chat_id,
+                            Message.role == "user",
+                        )
+                        .order_by(Message.created_at, Message.id)
+                    )
+                ).scalars().all()
+            )
+            if users:
+                latest_user_time = users[-1].created_at
+                if sum(message.created_at == latest_user_time for message in users) > 1:
+                    unsupported_codes.add("regenerate_user_timestamp_tie")
             user_text = users[-1].content if users else ""
         else:
             assert supplied_message is not None
@@ -1051,13 +1122,24 @@ class LegacyEntryEquivalenceService:
         candidates = await self.memory_engine.retriever.search(
             session, chat_id, user_text, RETRIEVE_K
         )
-        ranked = self.memory_engine._rank(  # noqa: SLF001
-            candidates, user_text
-        )
+        if candidates and evaluation_time is None:
+            unsupported_codes.add("memory_evaluation_time_required")
+        if unsupported_codes:
+            return ChatMemoryShadow(
+                user_text=user_text,
+                short=short,
+                long=[],
+                unsupported_codes=tuple(sorted(unsupported_codes)),
+            )
+        ranked = rank_memories(
+            candidates,
+            user_text,
+            evaluation_time=evaluation_time,
+        ) if evaluation_time is not None else []
         long = self.memory_engine._select_within_budget(  # noqa: SLF001
             ranked, max(256, int(context_window * 0.4))
         )
-        return user_text, short, long
+        return ChatMemoryShadow(user_text=user_text, short=short, long=long)
 
     def _chat_prompts(
         self,
@@ -1071,28 +1153,48 @@ class LegacyEntryEquivalenceService:
         user_text: str,
         budget: EffectiveBudget,
         entry_blocks: list[PromptBlock],
-    ) -> tuple[AssembledPrompt, AssembledPrompt]:
+    ) -> tuple[AssembledPrompt, AssembledPrompt, dict[str, LegacySourceAttribution]]:
         asset = self.prompt_assets.load("chat.default")
         legacy_lore = [entry for entry, _book in lore_rows if entry.enabled]
-        legacy = self.prompt_engine.assemble(
-            AssembleInput(
-                template_body=asset.body,
-                prompt_asset_id=asset.asset_id,
-                prompt_asset_version=asset.version,
-                prompt_asset_sha256=asset.sha256,
-                character=character,
-                persona=persona,
-                world=world,
-                lore_entries=legacy_lore,
-                memory_short=short,
-                memory_long=long,
-                history=[],
-                user_message=user_text,
-                context_window=budget.context_window,
-                max_tokens=budget.max_tokens,
-                safety_ratio=budget.safety_ratio,
-            )
+        legacy_input = AssembleInput(
+            template_body=asset.body,
+            prompt_asset_id=asset.asset_id,
+            prompt_asset_version=asset.version,
+            prompt_asset_sha256=asset.sha256,
+            character=character,
+            persona=persona,
+            world=world,
+            lore_entries=legacy_lore,
+            memory_short=short,
+            memory_long=long,
+            history=[],
+            user_message=user_text,
+            context_window=budget.context_window,
+            max_tokens=budget.max_tokens,
+            safety_ratio=budget.safety_ratio,
         )
+        legacy_context = self.prompt_engine._ctx(legacy_input)  # noqa: SLF001
+        resolve = lambda value: self.prompt_engine._resolve(  # noqa: E731, SLF001
+            value, legacy_context
+        )
+        attribution: dict[str, LegacySourceAttribution] = {}
+        rendered_character = render_character_block(character, transform=resolve)
+        for field_name in ("personality", "speech_style"):
+            span = rendered_character.field_spans.get(field_name)
+            if span is not None:
+                source_key = f"character:{character.id}:{field_name}:0"
+                attribution[source_key] = _legacy_source_attribution(
+                    "character",
+                    span,
+                    resolve(str(getattr(character, field_name, ""))),
+                )
+        if world is not None:
+            rendered_world = render_world_block(world, transform=resolve)
+            span = rendered_world.field_spans["description"]
+            attribution[f"world:{world.id}:description:0"] = _legacy_source_attribution(
+                "world", span, resolve(str(world.description))
+            )
+        legacy = self.prompt_engine.assemble(legacy_input)
         character_identity = SimpleNamespace(
             id=character.id, name=character.name, personality="", speech_style=""
         )
@@ -1121,7 +1223,7 @@ class LegacyEntryEquivalenceService:
                 safety_ratio=budget.safety_ratio,
             )
         )
-        return legacy, entry
+        return legacy, entry, attribution
 
     def _novel_prompts(
         self,
@@ -1134,28 +1236,80 @@ class LegacyEntryEquivalenceService:
         instruction: str,
         budget: EffectiveBudget,
         entry_blocks: list[PromptBlock],
-    ) -> tuple[AssembledPrompt, AssembledPrompt]:
+    ) -> tuple[AssembledPrompt, AssembledPrompt, dict[str, LegacySourceAttribution]]:
         asset = self.prompt_assets.load("novel.continue")
+        resolution_context = self.prompt_engine._ctx(  # noqa: SLF001
+            AssembleInput(template_body="", world=world)
+        )
 
-        def body(include_legacy: bool) -> str:
-            text = asset.body
-            lines = [
-                (
-                    f"- {character.name}: {character.personality} / 말투: "
-                    f"{character.speech_style}"
-                    if include_legacy
-                    else f"- {character.name}:  / 말투: "
+        def body(
+            include_legacy: bool,
+        ) -> tuple[str, dict[str, LegacySourceAttribution]]:
+            raw_parts: list[str] = []
+            resolved_length = 0
+            source_attribution: dict[str, LegacySourceAttribution] = {}
+
+            def append(
+                raw: str,
+                *,
+                source_key: str | None = None,
+                expected: str | None = None,
+            ) -> None:
+                nonlocal resolved_length
+                raw_parts.append(raw)
+                resolved = self.prompt_engine._resolve(  # noqa: SLF001
+                    raw, resolution_context
                 )
-                for character in characters
-            ]
-            if lines:
-                text += "\n\n[등장인물]\n" + "\n".join(lines)
-            return text
+                start = resolved_length
+                resolved_length += len(resolved)
+                if source_key is not None and expected is not None:
+                    source_attribution[source_key] = _legacy_source_attribution(
+                        "system", (start, resolved_length), resolved
+                    )
+
+            append(asset.body)
+            if characters:
+                append("\n\n[등장인물]\n")
+            for index, character in enumerate(characters):
+                if index:
+                    append("\n")
+                append("- ")
+                append(str(character.name))
+                append(": ")
+                personality = str(character.personality) if include_legacy else ""
+                append(
+                    personality,
+                    source_key=(
+                        f"character:{character.id}:personality:0" if include_legacy else None
+                    ),
+                    expected=personality if include_legacy else None,
+                )
+                append(" / 말투: ")
+                speech_style = str(character.speech_style) if include_legacy else ""
+                append(
+                    speech_style,
+                    source_key=(
+                        f"character:{character.id}:speech_style:0" if include_legacy else None
+                    ),
+                    expected=speech_style if include_legacy else None,
+                )
+            return "".join(raw_parts), source_attribution
 
         tail = (chapter.content_text or "")[-1200:]
+        legacy_body, attribution = body(True)
+        if world is not None:
+            resolve = lambda value: self.prompt_engine._resolve(  # noqa: E731, SLF001
+                value, resolution_context
+            )
+            rendered_world = render_world_block(world, transform=resolve)
+            attribution[f"world:{world.id}:description:0"] = _legacy_source_attribution(
+                "world",
+                rendered_world.field_spans["description"],
+                resolve(str(world.description)),
+            )
         legacy = self.prompt_engine.assemble(
             AssembleInput(
-                template_body=body(True),
+                template_body=legacy_body,
                 prompt_asset_id=asset.asset_id,
                 prompt_asset_version=asset.version,
                 prompt_asset_sha256=asset.sha256,
@@ -1175,9 +1329,10 @@ class LegacyEntryEquivalenceService:
             if world is not None
             else None
         )
+        entry_body, _entry_attribution = body(False)
         entry = self.prompt_engine.assemble(
             AssembleInput(
-                template_body=body(False),
+                template_body=entry_body,
                 prompt_asset_id=asset.asset_id,
                 prompt_asset_version=asset.version,
                 prompt_asset_sha256=asset.sha256,
@@ -1193,7 +1348,59 @@ class LegacyEntryEquivalenceService:
                 safety_ratio=budget.safety_ratio,
             )
         )
-        return legacy, entry
+        return legacy, entry, attribution
+
+    def _unsupported_runtime_report(
+        self,
+        *,
+        surface: Literal["chat", "novel"],
+        projections: list[LegacyEntryProjection],
+        coverage: list[CoverageRecord],
+        diagnostic_codes: set[str],
+    ) -> RuntimeReport:
+        """Return deterministic no-selection evidence for an ambiguous request."""
+
+        coverage_by_key = {record.projection.source_key: record for record in coverage}
+        records: list[RuntimeRecord] = []
+        unsupported_reason = sorted(diagnostic_codes)[0]
+        for projection in projections:
+            codes = set(coverage_by_key[projection.source_key].diagnostic_codes)
+            if not self.settings.entry_store_context_enabled:
+                codes.add("entry_context_feature_flag_off")
+            if projection.runtime_visibility == "not_applicable":
+                state = RuntimeState.NOT_APPLICABLE
+                exclusion = "legacy_not_runtime_visible"
+                codes.add(exclusion)
+            else:
+                state = RuntimeState.UNSUPPORTED_LEGACY_SEMANTICS
+                exclusion = unsupported_reason
+                codes.update(diagnostic_codes)
+            records.append(
+                RuntimeRecord(
+                    source_key=projection.source_key,
+                    runtime_state=state,
+                    legacy=RuntimeSelectionEvidence(
+                        selected=False,
+                        final_prompt_selected=False,
+                        exclusion_code=exclusion,
+                        trace_ids=[projection.source_key],
+                    ),
+                    entry=RuntimeSelectionEvidence(
+                        selected=False,
+                        retrieval_selected=None,
+                        assembly_selected=None,
+                        final_prompt_selected=None,
+                        exclusion_code=exclusion,
+                    ),
+                    diagnostic_codes=sorted(codes),
+                )
+            )
+        records.sort(key=lambda record: record.source_key or "")
+        return RuntimeReport(
+            surface=surface,
+            records=records,
+            counts=_enum_counts(record.runtime_state.value for record in records),
+        )
 
     def _runtime_report(
         self,
@@ -1207,6 +1414,7 @@ class LegacyEntryEquivalenceService:
         retrieval: EntryRetrievalResult,
         assembled_entry_ids: list[str],
         target_chapter_index: int | None,
+        legacy_attribution: dict[str, LegacySourceAttribution],
     ) -> RuntimeReport:
         coverage_by_key = {record.projection.source_key: record for record in coverage}
         candidate_by_id = {candidate.id: candidate for candidate in candidates}
@@ -1225,7 +1433,7 @@ class LegacyEntryEquivalenceService:
             for index, item in enumerate(ordered_included_rows)
         }
         legacy_block_contents = {
-            str(item["block_id"]): normalize_comparison_text(message.content)
+            str(item["block_id"]): message.content
             for item, message in zip(
                 ordered_included_rows, legacy_prompt.messages, strict=True
             )
@@ -1358,11 +1566,24 @@ class LegacyEntryEquivalenceService:
                 if legacy_block_id is not None
                 else ""
             )
-            legacy_final = (
-                initially_selected
-                and trace_selected
-                and projection.content in block_content
-            )
+            source_attribution = legacy_attribution.get(projection.source_key)
+            if source_attribution is not None:
+                source_survived = (
+                    legacy_block_id is not None
+                    and str(legacy_trace_by_id[legacy_block_id].get("kind"))
+                    == source_attribution.block_kind
+                    and _attributed_source_survived(
+                        source_attribution, block_content
+                    )
+                )
+            else:
+                # Lore and Chapter summaries are one-source-per-block. Requiring
+                # full normalized equality detects truncation without allowing a
+                # coincidental substring in another source to stand in for them.
+                source_survived = (
+                    normalize_comparison_text(block_content) == projection.content
+                )
+            legacy_final = initially_selected and trace_selected and source_survived
             if initially_selected and not legacy_final:
                 exclusion = "final_prompt_budget_drop"
                 codes.add("final_prompt_budget_drop")
@@ -1402,12 +1623,17 @@ class LegacyEntryEquivalenceService:
                     entry_exclusion = "no_eligible_exact_entry"
 
             for entry_id in final_exact:
-                entry_sequence_pairs.append((entry_positions[entry_id], projection.source_key))
+                if applicable:
+                    entry_sequence_pairs.append(
+                        (entry_positions[entry_id], projection.source_key)
+                    )
                 candidate = candidate_by_id[entry_id]
                 codes.add("database_timestamp_recency")
                 if projection.projection_kind is ProjectionKind.CHAPTER_SUMMARY:
                     codes.update(
-                        _story_position_codes(candidate, target_chapter_index)
+                        _story_position_codes(
+                            candidate, target_chapter_index, selected=True
+                        )
                     )
 
             if not applicable:
@@ -1511,7 +1737,9 @@ class LegacyEntryEquivalenceService:
                 and entry_only_candidate.entry_type == "story.summary"
             ):
                 codes.update(
-                    _story_position_codes(entry_only_candidate, target_chapter_index)
+                    _story_position_codes(
+                        entry_only_candidate, target_chapter_index, selected=True
+                    )
                 )
             records.append(
                 RuntimeRecord(
@@ -1546,6 +1774,7 @@ class LegacyEntryEquivalenceService:
         kind: Literal["chat", "novel"],
         anchor_id: str,
         mode: str | None,
+        memory_evaluation_time: datetime | None,
         budget: EffectiveBudget,
         coverage: list[CoverageRecord],
         blank_keys: list[str],
@@ -1579,8 +1808,15 @@ class LegacyEntryEquivalenceService:
                 continue
             codes = ["database_timestamp_recency"]
             candidate = candidate_by_id[entry.id]
+            runtime_selected = entry.id in runtime_selected_ids
             if entry.type == "story.summary":
-                codes.extend(_story_position_codes(candidate, target_chapter_index))
+                codes.extend(
+                    _story_position_codes(
+                        candidate,
+                        target_chapter_index,
+                        selected=runtime_selected,
+                    )
+                )
             entry_only.append(
                 EntryOnlyEvidence(
                     entry_id=entry.id,
@@ -1590,7 +1826,7 @@ class LegacyEntryEquivalenceService:
                     subject_id=entry.subject_id,
                     entry_type=entry.type,
                     payload=_payload_summary(entry.content, entry.title),
-                    runtime_selected=entry.id in runtime_selected_ids,
+                    runtime_selected=runtime_selected,
                     diagnostic_codes=sorted(codes),
                 )
             )
@@ -1599,6 +1835,7 @@ class LegacyEntryEquivalenceService:
                 kind=kind,
                 anchor_id=anchor_id,
                 mode=mode,
+                memory_evaluation_time=memory_evaluation_time,
                 context_window=budget.context_window,
                 max_tokens=budget.max_tokens,
                 safety_ratio=budget.safety_ratio,
@@ -1662,24 +1899,68 @@ def _ordered_included_trace_rows(prompt: AssembledPrompt) -> list[dict[str, obje
     return sorted(rows, key=order_key)
 
 
+def _legacy_source_attribution(
+    block_kind: str, span: tuple[int, int], expected: str
+) -> LegacySourceAttribution:
+    return LegacySourceAttribution(
+        block_kind=block_kind,
+        start=span[0],
+        end=span[1],
+        expected_sha256=sha256(
+            normalize_comparison_text(expected).encode("utf-8")
+        ).hexdigest(),
+    )
+
+
+def _attributed_source_survived(
+    attribution: LegacySourceAttribution, block_content: str
+) -> bool:
+    if attribution.start < 0 or attribution.end < attribution.start:
+        return False
+    if len(block_content) < attribution.end:
+        return False
+    retained = normalize_comparison_text(
+        block_content[attribution.start : attribution.end]
+    )
+    return sha256(retained.encode("utf-8")).hexdigest() == attribution.expected_sha256
+
+
 def _story_position_codes(
-    candidate: EntrySnapshot, target_chapter_index: int | None
+    candidate: EntrySnapshot,
+    target_chapter_index: int | None,
+    *,
+    selected: bool,
 ) -> set[str]:
     if target_chapter_index is None:
         return set()
     codes: set[str] = set()
+    unknown = False
+    future = False
     if candidate.subject_type == "chapter":
         if candidate.subject_story_position is None:
-            codes.add("unknown_story_position")
+            unknown = True
         elif candidate.subject_story_position >= target_chapter_index:
-            codes.add("future_story_position_selected")
+            future = True
     else:
-        codes.add("unknown_story_position")
+        unknown = True
     if candidate.created_at_chapter_id is not None:
         if candidate.created_at_chapter_position is None:
-            codes.add("unknown_story_position")
+            unknown = True
         elif candidate.created_at_chapter_position >= target_chapter_index:
-            codes.add("future_story_position_selected")
+            future = True
+    if future:
+        codes.add(
+            "future_story_position_selected"
+            if selected
+            else "future_story_position_not_selected"
+        )
+    if unknown:
+        codes.add("unknown_story_position")
+        codes.add(
+            "unknown_story_position_selected"
+            if selected
+            else "unknown_story_position_not_selected"
+        )
     return codes
 
 

@@ -182,7 +182,7 @@ Exactly one `runtime_state` is assigned per requested surface:
 | `selection_mismatch` | only one side survives a selection stage, selected multiplicity differs, or the stable selected order differs |
 | `unsupported_legacy_semantics` | the current legacy outcome cannot be reproduced deterministically, including equal-priority Lore whose production order is unspecified |
 
-`legacy_not_runtime_visible` is a diagnostic code/visibility value, not a coverage result. Other codes may coexist, including `duplicate_legacy_payload`, `ignored_disabled_lorebook`, `legacy_disabled_entry`, `legacy_keyword_miss`, `legacy_equal_priority_order_unspecified`, `entry_status_excluded`, `entry_orphan_excluded`, `entry_limit_rejected`, `entry_retrieval_budget_rejected`, `entry_rendered_budget_rejected`, `final_prompt_budget_drop`, `future_story_position_selected`, `unknown_story_position`, and `database_timestamp_recency`.
+`legacy_not_runtime_visible` is a diagnostic code/visibility value, not a coverage result. Other codes may coexist, including `duplicate_legacy_payload`, `ignored_disabled_lorebook`, `legacy_disabled_entry`, `legacy_keyword_miss`, `legacy_equal_priority_order_unspecified`, `entry_status_excluded`, `entry_orphan_excluded`, `entry_limit_rejected`, `entry_retrieval_budget_rejected`, `entry_rendered_budget_rejected`, `final_prompt_budget_drop`, `future_story_position_selected`, `future_story_position_not_selected`, `unknown_story_position`, `unknown_story_position_selected`, `unknown_story_position_not_selected`, `database_timestamp_recency`, `memory_evaluation_time_required`, `regenerate_assistant_timestamp_tie`, and `regenerate_user_timestamp_tie`.
 
 Entry-only live canon is returned separately as `entry_only`; it is useful new knowledge and is not a failure. Counts must never collapse the detailed records.
 
@@ -208,6 +208,10 @@ It reuses, without modifying:
 
 The comparison builds two in-memory shadow assemblies from the same snapshot: (a) current legacy knowledge with Entry context absent and (b) Entry knowledge with the projected legacy personality/voice/world-description/Lore/summary payloads absent while aggregate identity and all unrelated inputs remain. It never flips the feature flag and never sends either prompt to a provider. It compares logical payload occurrence, order, and survival at legacy selection, Entry retrieval, Entry Context Assembly, and final PromptEngine budgeting; it does not require byte-identical provider messages because headings and block kinds differ by design.
 
+Final-budget survival is attributed at source level. For aggregate Character, World, and Novel system blocks, the diagnostic carries the exact resolved character offsets and full normalized payload digest for each source field through the shadow assembly. It never infers one source's survival from `payload in aggregate_block`, from a bounded preview, or from another source containing the same text. Identical and partially overlapping values therefore retain distinct source identity and occurrence count. One-source Lore and Chapter blocks require full normalized block equality after final budgeting, so a truncated prefix is not treated as survival. This trace is diagnostic-only and does not add markers to, or otherwise change, provider-visible prompt text.
+
+Sources whose legacy runtime visibility is `not_applicable` remain present in stored coverage and retain their own `not_applicable` runtime records, but are excluded from both sides of the applicable runtime ordering sequence. Their Entry rows cannot create an order mismatch for World description, Lore, Character, or any other applicable source.
+
 The runtime report must keep these exclusion reasons distinct:
 
 - legacy keyword miss;
@@ -219,7 +223,7 @@ The runtime report must keep these exclusion reasons distinct:
 - Entry rendered-block budget rejection;
 - final PromptEngine budget drop.
 
-For Novel, the report resolves both a summary subject Chapter index and `created_at_chapter_id` index when present. Any selected `story.summary` tied to a Chapter at or after the target Chapter is `future_story_position_selected`; missing/unresolvable position is `unknown_story_position`. The current ranker's use of `updated_at`/`created_at` is reported as `database_timestamp_recency` and is never normalized into story chronology by the bridge.
+For Novel, the report resolves both a summary subject Chapter index and `created_at_chapter_id` index when present. Any runtime-selected `story.summary` tied to a Chapter at or after the target Chapter is `future_story_position_selected`; an eligible but non-selected row instead receives `future_story_position_not_selected`. Missing/unresolvable position retains the general `unknown_story_position` evidence and is additionally distinguished as `unknown_story_position_selected` or `unknown_story_position_not_selected`. The current ranker's use of `updated_at`/`created_at` is reported as `database_timestamp_recency` and is never normalized into story chronology by the bridge.
 
 ## 8. Known non-equivalences frozen by this design
 
@@ -247,10 +251,12 @@ The implementation PR must provide one owner-scoped application service that:
 
 The production diagnostic caller is one authenticated, non-mutating `POST /api/v1/entries/equivalence:compare` endpoint. A request body avoids placing user prose in a query string. It accepts exactly one concrete situation:
 
-- Chat: `chat_id` plus `mode`. `new_message` requires the same non-blank `user_message` as `MessageCreate`; `regenerate` forbids a supplied message and derives the last user text from the owned session.
+- Chat: `chat_id` plus `mode`. `new_message` requires the same non-blank `user_message` as `MessageCreate`; `regenerate` forbids a supplied message and derives the last user text from the owned session. An optional offset-aware `evaluation_time` defines the diagnostic Memory-ranking instant.
 - Novel: `chapter_id`, `instruction` (default empty), and `target_words` with the same default/range as `ContinueRequest` (`800`, `50..5000`).
 
-The Chat shadow must reproduce the production pre-assembly view without writing it: `new_message` inserts an ephemeral user message into the in-memory message sequence at the position where the flushed row would be observed, while `regenerate` omits the last active assistant exactly as the service does before rebuilding Memory and uses the derived last user text. The Novel shadow derives the provider configuration and then applies `min(configured max_tokens, words_to_tokens(target_words))` exactly as the current continuation path does. Thus retrieval beat, Memory inputs, instruction/tail, and final prompt budget are all reproducible from the request and owned snapshot.
+The Chat shadow must reproduce the production pre-assembly view without writing it: `new_message` inserts an ephemeral user message into the in-memory message sequence at the position where the flushed row would be observed, while `regenerate` omits the last active assistant exactly as the service does before rebuilding Memory and uses the derived last user text. Production selects regenerate assistant and user targets with `created_at DESC` and no further tie-break. If the maximum timestamp is shared by multiple eligible rows, the diagnostic must not invent an `id` ordering as production truth; it returns `unsupported_legacy_semantics` with `regenerate_assistant_timestamp_tie` or `regenerate_user_timestamp_tie` and makes no runtime-selection claim. The Novel shadow derives the provider configuration and then applies `min(configured max_tokens, words_to_tokens(target_words))` exactly as the current continuation path does. Thus retrieval beat, Memory inputs, instruction/tail, and final prompt budget are all reproducible from the request and owned snapshot when the production semantics are defined.
+
+PR #27 did not define the clock instant used by Chat Memory recency. This implementation clarification closes only that diagnostic input: when Memory candidates exist, an offset-aware `evaluation_time` is required before the diagnostic can claim runtime equivalence. The shadow applies the existing production Memory relevance/recency/kind formula at that explicit instant through the same ranking function. If the field is absent, it returns deterministic `unsupported_legacy_semantics` with `memory_evaluation_time_required`; it never falls back to the server wall clock. Normal `MemoryEngine._rank()` still supplies `datetime.now(UTC)` and production Chat selection is unchanged. When no Memory candidate exists, no evaluation time is needed because recency cannot affect the result.
 
 The service derives the effective `context_window`, final `max_tokens`, and tokenizer/provider safety ratio from owned local model configuration and the registry capability lookup, without decrypting credentials. Explicit numeric overrides are allowed only as a complete validated effective trio, replace the computed effective values, and are labelled `diagnostic_override`. Local adapter capability lookup is allowed; invoking `chat()`/`stream_chat()`, decrypting or exposing a secret, or making a network call is forbidden.
 
@@ -260,7 +266,7 @@ The endpoint derives `user_id` from authentication, loads the owned Chat or Chap
 
 The response contains:
 
-- `situation`: anchor kind/id, effective numeric budgets, task/policy versions, and whether an override was used;
+- `situation`: anchor kind/id, effective numeric budgets, task/policy versions, whether an override was used, and the explicit Memory evaluation time when supplied;
 - `coverage.records`: source identity/order, structural projection, `coverage_state`, exact/ineligible candidate ids and statuses, payload-difference fields, runtime visibility, and diagnostic codes;
 - `runtime.records`: source key or Entry-only id, per-stage selected/excluded booleans, occurrence/order positions, exclusion code, `runtime_state`, and relevant trace ids;
 - `entry_only`: owned live-canon ids and structural identity not matched by a legacy payload;
@@ -272,7 +278,9 @@ The API must not serialize ORM objects or return `user_id`, provider credentials
 
 - stable ordering: source kind, aggregate id, source field, source order, source id;
 - stable Entry candidate ordering: current retrieval order, then Entry id;
-- no current timestamps in the report body;
+- no server-current timestamps in the report body; an explicitly supplied Memory evaluation time may be echoed as required diagnostic context;
+- no hidden wall clock in diagnostic Memory ranking; a Memory-bearing Chat request without explicit evaluation time is unsupported rather than guessed;
+- no production-invented regenerate tie-break; timestamp ties are deterministic unsupported evidence;
 - no random ids;
 - no persistence or autofix action;
 - no provider or network call;
@@ -293,6 +301,7 @@ The separate implementation PR is complete when it proves:
 - title-required/title-ignored mappings, legacy duplicate reuse for coverage, runtime multiplicity/order mismatch, and equal-priority Lore unsupported ordering;
 - concrete Chat and Novel runtime comparison with separate exclusion traces;
 - Chat `new_message`/`regenerate` memory and final-budget reproduction from `chat_id`; Novel `instruction`/`target_words`, prior/future-summary chronology evidence, and database-timestamp recency labelling;
+- source-identity final-budget attribution under identical/overlapping aggregate text, not-applicable ordering isolation, explicit Memory evaluation-time determinism, regenerate timestamp-tie unsupported evidence, and selected/non-selected chronology codes;
 - authenticated API tests for owned, foreign, deleted, and invalid anchor combinations;
 - deterministic reruns and golden snapshots;
 - zero SQL writes, zero migrations, zero provider calls;

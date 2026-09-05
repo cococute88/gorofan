@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
 from sqlalchemy import event, func, select
 
+import app.engines.memory.engine as memory_engine_module
 from app.config import get_settings
+from app.engines.memory.engine import MemoryEngine, rank_memories
 from app.models.character import Character
 from app.models.chat import ChatSession, Memory, Message
 from app.models.edit_diff import EditDiffCapture
@@ -288,6 +291,7 @@ def test_chat_diagnostic_is_typed_deterministic_and_read_only(
         "kind": "chat",
         "anchor_id": ids["chat"],
         "mode": "new_message",
+        "memory_evaluation_time": None,
         "context_window": 4096,
         "max_tokens": 512,
         "safety_ratio": 0.08,
@@ -637,6 +641,18 @@ def test_chat_validation_and_missing_anchor(client) -> None:  # noqa: ANN001
     assert _compare_chat(client, "x", mode="new_message").status_code == 422
     assert _compare_chat(client, "x", mode="regenerate", message="금지").status_code == 422
     assert _compare_chat(client, "x", mode="unsupported").status_code == 422
+    assert client.post(
+        "/api/v1/entries/equivalence:compare",
+        json={
+            "chat": {
+                "chat_id": "x",
+                "mode": "new_message",
+                "user_message": "시각",
+                "evaluation_time": "2026-01-01T00:00:00",
+            },
+            "budget_override": _OVERRIDE,
+        },
+    ).status_code == 422
 
 
 def test_authentication_is_required_when_auth_is_enabled() -> None:
@@ -941,3 +957,497 @@ def test_novel_foreign_and_missing_chapter_are_not_found(client) -> None:  # noq
     )
     assert deleted.status_code == 404
     assert deleted.json()["error"]["message"] == "Chapter not found"
+
+
+def test_final_budget_attribution_uses_source_identity_not_aggregate_substring(
+    client,
+) -> None:  # noqa: ANN001
+    repeated = "겹침" * 30
+    character = client.post(
+        "/api/v1/characters",
+        json={"name": repeated, "personality": repeated},
+    ).json()
+    chat = client.post(
+        "/api/v1/chats", json={"character_id": character["id"]}
+    ).json()
+    _canon(
+        client,
+        scope_kind="character",
+        scope_id=character["id"],
+        subject_type="character",
+        subject_id=character["id"],
+        entry_type="character.identity",
+        content=repeated,
+    )
+
+    response = client.post(
+        "/api/v1/entries/equivalence:compare",
+        json={
+            "chat": {
+                "chat_id": chat["id"],
+                "mode": "new_message",
+                "user_message": "나" * 300,
+            },
+            "budget_override": {
+                "context_window": 512,
+                "max_tokens": 1,
+                "safety_ratio": 0,
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    source_key = f"character:{character['id']}:personality:0"
+    runtime = next(
+        row for row in response.json()["runtime"]["records"] if row["source_key"] == source_key
+    )
+    assert runtime["legacy"]["selected"] is False
+    assert runtime["entry"]["selected"] is False
+    assert runtime["runtime_state"] == "equivalent"
+    assert "final_prompt_budget_drop" in runtime["diagnostic_codes"]
+
+
+def test_novel_source_attribution_preserves_identity_for_identical_fields(
+    client,
+) -> None:  # noqa: ANN001
+    repeated = "같은 원문"
+    character = client.post(
+        "/api/v1/characters",
+        json={
+            "name": repeated,
+            "personality": repeated,
+            "speech_style": repeated,
+        },
+    ).json()
+    work = client.post("/api/v1/works", json={"title": "source span"}).json()
+    assert client.post(
+        f"/api/v1/works/{work['id']}/characters",
+        json={"character_id": character["id"], "role_in_work": "주연"},
+    ).status_code == 201
+    chapter = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "1화", "content_text": "본문"},
+    ).json()
+    for entry_type in ("character.identity", "character.voice"):
+        _canon(
+            client,
+            scope_kind="character",
+            scope_id=character["id"],
+            subject_type="character",
+            subject_id=character["id"],
+            entry_type=entry_type,
+            content=repeated,
+        )
+
+    response = client.post(
+        "/api/v1/entries/equivalence:compare",
+        json={
+            "novel": {"chapter_id": chapter["id"], "target_words": 50},
+            "budget_override": _OVERRIDE,
+        },
+    )
+    assert response.status_code == 200, response.text
+    runtime = {
+        row["source_key"]: row
+        for row in response.json()["runtime"]["records"]
+        if row["source_key"]
+    }
+    for field_name in ("personality", "speech_style"):
+        row = runtime[f"character:{character['id']}:{field_name}:0"]
+        assert row["legacy"]["selected"] is True
+        assert row["entry"]["selected"] is True
+
+
+def test_not_applicable_entries_do_not_contaminate_applicable_runtime_order(
+    client,
+) -> None:  # noqa: ANN001
+    world = client.post(
+        "/api/v1/worlds",
+        json={"name": "순서 세계", "description": "정상 설명", "races": ["선행 종족"]},
+    ).json()
+    character = client.post(
+        "/api/v1/characters",
+        json={"name": "순서 인물", "world_id": world["id"]},
+    ).json()
+    chat = client.post(
+        "/api/v1/chats", json={"character_id": character["id"]}
+    ).json()
+    _canon(
+        client,
+        scope_kind="world",
+        scope_id=world["id"],
+        subject_type="world",
+        subject_id=world["id"],
+        entry_type="world.fact",
+        content="정상 설명",
+    )
+    _canon(
+        client,
+        scope_kind="world",
+        scope_id=world["id"],
+        subject_type="world",
+        subject_id=world["id"],
+        entry_type="world.fact",
+        content="종족: 선행 종족",
+    )
+
+    report = _compare_chat(
+        client, chat["id"], mode="new_message", message="계속"
+    ).json()
+    description_key = f"world:{world['id']}:description:0"
+    race_key = f"world:{world['id']}:races:0"
+    runtime = {row["source_key"]: row for row in report["runtime"]["records"] if row["source_key"]}
+    assert runtime[description_key]["runtime_state"] == "equivalent"
+    assert "stable_order_mismatch" not in runtime[description_key]["diagnostic_codes"]
+    assert runtime[race_key]["runtime_state"] == "not_applicable"
+
+
+async def _seed_memory_competition(client, chat_id: str, base: datetime) -> None:  # noqa: ANN001
+    sm = cast(Any, client.app).state.sessionmaker
+    async with sm() as session:
+        session.add_all(
+            [
+                Memory(
+                    chat_session_id=chat_id,
+                    user_id=_owner_id(),
+                    kind="summary",
+                    content="용문 기억",
+                    version=1,
+                    token_count=140,
+                    created_at=base - timedelta(days=2),
+                    updated_at=base - timedelta(days=2),
+                ),
+                Memory(
+                    chat_session_id=chat_id,
+                    user_id=_owner_id(),
+                    kind="fact",
+                    content="무관" * 115,
+                    version=2,
+                    token_count=140,
+                    created_at=base,
+                    updated_at=base,
+                ),
+            ]
+        )
+        await session.commit()
+
+
+def test_memory_ranking_uses_explicit_evaluation_time_not_system_clock(
+    client, monkeypatch
+) -> None:  # noqa: ANN001
+    world = client.post("/api/v1/worlds", json={"name": "기억 세계"}).json()
+    character = client.post(
+        "/api/v1/characters",
+        json={"name": "기억 인물", "world_id": world["id"]},
+    ).json()
+    book = client.post(
+        f"/api/v1/worlds/{world['id']}/lorebooks",
+        json={"name": "기억 로어"},
+    ).json()
+    lore = client.post(
+        f"/api/v1/worlds/lorebooks/{book['id']}/entries",
+        json={"keywords": ["용문"], "content": "용문 규칙", "priority": 50},
+    ).json()
+    chat = client.post(
+        "/api/v1/chats", json={"character_id": character["id"]}
+    ).json()
+    _canon(
+        client,
+        scope_kind="world",
+        scope_id=world["id"],
+        subject_type="world",
+        subject_id=world["id"],
+        entry_type="world.fact",
+        content="용문 규칙",
+    )
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    _run(_seed_memory_competition(client, chat["id"], base))
+
+    def compare(evaluation_time: datetime):
+        return client.post(
+            "/api/v1/entries/equivalence:compare",
+            json={
+                "chat": {
+                    "chat_id": chat["id"],
+                    "mode": "new_message",
+                    "user_message": "용문 " + "나" * 200,
+                    "evaluation_time": evaluation_time.isoformat(),
+                },
+                "budget_override": {
+                    "context_window": 512,
+                    "max_tokens": 1,
+                    "safety_ratio": 0,
+                },
+            },
+        )
+
+    class EarlySystemClock(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206
+            return base.astimezone(tz) if tz is not None else base.replace(tzinfo=None)
+
+    class LateSystemClock(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206
+            value = base + timedelta(days=30)
+            return value.astimezone(tz) if tz is not None else value.replace(tzinfo=None)
+
+    monkeypatch.setattr(memory_engine_module, "datetime", EarlySystemClock)
+    first = compare(base)
+    monkeypatch.setattr(memory_engine_module, "datetime", LateSystemClock)
+    repeated = compare(base)
+    later_context = compare(base + timedelta(days=10))
+    assert first.status_code == 200, first.text
+    assert repeated.status_code == 200, repeated.text
+    assert later_context.status_code == 200, later_context.text
+    assert first.json() == repeated.json()
+
+    source_key = f"lore_entry:{lore['id']}:content:0"
+    early_runtime = next(
+        row for row in first.json()["runtime"]["records"] if row["source_key"] == source_key
+    )
+    later_runtime = next(
+        row
+        for row in later_context.json()["runtime"]["records"]
+        if row["source_key"] == source_key
+    )
+    assert early_runtime["legacy"]["selected"] is False
+    assert later_runtime["legacy"]["selected"] is True
+
+
+def test_memory_without_evaluation_time_reports_unsupported_semantics(client) -> None:  # noqa: ANN001
+    character = client.post(
+        "/api/v1/characters",
+        json={"name": "평가 시각", "personality": "숨은 시각 없음"},
+    ).json()
+    chat = client.post(
+        "/api/v1/chats", json={"character_id": character["id"]}
+    ).json()
+    _run(
+        _seed_memory_competition(
+            client, chat["id"], datetime(2026, 1, 1, tzinfo=UTC)
+        )
+    )
+
+    response = _compare_chat(
+        client, chat["id"], mode="new_message", message="용문"
+    )
+    assert response.status_code == 200, response.text
+    source_key = f"character:{character['id']}:personality:0"
+    runtime = next(
+        row for row in response.json()["runtime"]["records"] if row["source_key"] == source_key
+    )
+    assert runtime["runtime_state"] == "unsupported_legacy_semantics"
+    assert "memory_evaluation_time_required" in runtime["diagnostic_codes"]
+    assert runtime["legacy"]["selected"] is False
+    assert runtime["entry"]["final_prompt_selected"] is None
+
+
+def test_production_memory_rank_wrapper_keeps_wall_clock_policy(monkeypatch) -> None:
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    candidates = [
+        Memory(
+            id="older-relevant",
+            chat_session_id="chat",
+            user_id="owner",
+            kind="summary",
+            content="용문 기억",
+            token_count=1,
+            created_at=base - timedelta(days=2),
+            updated_at=base - timedelta(days=2),
+        ),
+        Memory(
+            id="newer-irrelevant",
+            chat_session_id="chat",
+            user_id="owner",
+            kind="fact",
+            content="무관",
+            token_count=1,
+            created_at=base,
+            updated_at=base,
+        ),
+    ]
+
+    class FixedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001, ANN206
+            return base.astimezone(tz) if tz is not None else base.replace(tzinfo=None)
+
+    monkeypatch.setattr(memory_engine_module, "datetime", FixedClock)
+    engine = MemoryEngine(summarizer=cast(Any, None))
+    assert engine._rank(candidates, "용문") == rank_memories(  # noqa: SLF001
+        candidates, "용문", evaluation_time=base
+    )
+
+
+async def _seed_regenerate_timestamp_tie(client, chat_id: str) -> None:  # noqa: ANN001
+    sm = cast(Any, client.app).state.sessionmaker
+    tied = datetime(2026, 2, 1, tzinfo=UTC)
+    async with sm() as session:
+        user = Message(
+            chat_session_id=chat_id,
+            user_id=_owner_id(),
+            role="user",
+            content="동률 재생성",
+            token_count=5,
+            status="complete",
+            created_at=tied,
+            updated_at=tied,
+        )
+        session.add(user)
+        await session.flush()
+        session.add_all(
+            [
+                Message(
+                    chat_session_id=chat_id,
+                    user_id=_owner_id(),
+                    parent_message_id=user.id,
+                    role="assistant",
+                    content="동률 답변 A",
+                    token_count=5,
+                    status="complete",
+                    created_at=tied,
+                    updated_at=tied,
+                ),
+                Message(
+                    chat_session_id=chat_id,
+                    user_id=_owner_id(),
+                    parent_message_id=user.id,
+                    role="assistant",
+                    content="동률 답변 B",
+                    token_count=5,
+                    status="complete",
+                    created_at=tied,
+                    updated_at=tied,
+                ),
+            ]
+        )
+        await session.commit()
+
+
+def test_regenerate_timestamp_tie_is_reported_as_unsupported(client) -> None:  # noqa: ANN001
+    character = client.post(
+        "/api/v1/characters",
+        json={"name": "동률 인물", "personality": "동률 성격"},
+    ).json()
+    chat = client.post(
+        "/api/v1/chats", json={"character_id": character["id"]}
+    ).json()
+    _run(_seed_regenerate_timestamp_tie(client, chat["id"]))
+
+    response = _compare_chat(client, chat["id"], mode="regenerate")
+    assert response.status_code == 200, response.text
+    source_key = f"character:{character['id']}:personality:0"
+    runtime = next(
+        row for row in response.json()["runtime"]["records"] if row["source_key"] == source_key
+    )
+    assert runtime["runtime_state"] == "unsupported_legacy_semantics"
+    assert runtime["legacy"]["selected"] is False
+    assert runtime["entry"]["selected"] is False
+    assert "regenerate_assistant_timestamp_tie" in runtime["diagnostic_codes"]
+
+
+async def _seed_regenerate_user_timestamp_tie(client, chat_id: str) -> None:  # noqa: ANN001
+    sm = cast(Any, client.app).state.sessionmaker
+    tied = datetime(2026, 3, 1, tzinfo=UTC)
+    async with sm() as session:
+        users = [
+            Message(
+                chat_session_id=chat_id,
+                user_id=_owner_id(),
+                role="user",
+                content=f"동률 사용자 {suffix}",
+                token_count=5,
+                status="complete",
+                created_at=tied,
+                updated_at=tied,
+            )
+            for suffix in ("A", "B")
+        ]
+        session.add_all(users)
+        await session.flush()
+        session.add(
+            Message(
+                chat_session_id=chat_id,
+                user_id=_owner_id(),
+                parent_message_id=users[0].id,
+                role="assistant",
+                content="유일한 답변",
+                token_count=5,
+                status="complete",
+                created_at=tied + timedelta(seconds=1),
+                updated_at=tied + timedelta(seconds=1),
+            )
+        )
+        await session.commit()
+
+
+def test_regenerate_user_timestamp_tie_is_also_unsupported(client) -> None:  # noqa: ANN001
+    character = client.post(
+        "/api/v1/characters",
+        json={"name": "사용자 동률", "personality": "사용자 동률 성격"},
+    ).json()
+    chat = client.post(
+        "/api/v1/chats", json={"character_id": character["id"]}
+    ).json()
+    _run(_seed_regenerate_user_timestamp_tie(client, chat["id"]))
+
+    response = _compare_chat(client, chat["id"], mode="regenerate")
+    assert response.status_code == 200, response.text
+    source_key = f"character:{character['id']}:personality:0"
+    runtime = next(
+        row for row in response.json()["runtime"]["records"] if row["source_key"] == source_key
+    )
+    assert runtime["runtime_state"] == "unsupported_legacy_semantics"
+    assert "regenerate_user_timestamp_tie" in runtime["diagnostic_codes"]
+
+
+def test_future_summary_codes_distinguish_selected_and_not_selected_entries(
+    client,
+) -> None:  # noqa: ANN001
+    work = client.post("/api/v1/works", json={"title": "미래 선택 구분"}).json()
+    chapters = [
+        client.post(
+            f"/api/v1/works/{work['id']}/chapters",
+            json={"title": f"{index}화", "content_text": "현재 본문"},
+        ).json()
+        for index in range(1, 5)
+    ]
+    selected_id = _canon(
+        client,
+        scope_kind="work",
+        scope_id=work["id"],
+        subject_type="chapter",
+        subject_id=chapters[3]["id"],
+        entry_type="story.summary",
+        content="선택되는 미래 요약",
+        data={"level": "chapter"},
+    )
+    not_selected_id = _canon(
+        client,
+        scope_kind="work",
+        scope_id=work["id"],
+        subject_type="chapter",
+        subject_id=chapters[2]["id"],
+        entry_type="story.summary",
+        content="탈락하는 미래 요약" * 80,
+        data={"level": "chapter"},
+    )
+
+    response = client.post(
+        "/api/v1/entries/equivalence:compare",
+        json={
+            "novel": {"chapter_id": chapters[1]["id"], "target_words": 50},
+            "budget_override": {
+                "context_window": 512,
+                "max_tokens": 1,
+                "safety_ratio": 0,
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    entry_only = {row["entry_id"]: row for row in response.json()["entry_only"]}
+    assert entry_only[selected_id]["runtime_selected"] is True
+    assert "future_story_position_selected" in entry_only[selected_id]["diagnostic_codes"]
+    assert entry_only[not_selected_id]["runtime_selected"] is False
+    assert "future_story_position_selected" not in entry_only[not_selected_id]["diagnostic_codes"]
+    assert "future_story_position_not_selected" in entry_only[not_selected_id]["diagnostic_codes"]

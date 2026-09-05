@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.engines.prompt.engine import render_character_block, render_world_block
 from app.schemas.equivalence import CoverageState, ProjectionKind
 from app.services.legacy_entry_equivalence import (
     EntrySnapshot,
@@ -48,6 +49,40 @@ def test_normalization_is_strict_and_utf8_safe() -> None:
     assert normalize_comparison_text(" \r\n한 글  A!\r ") == "한 글  A!"
     assert normalize_comparison_text("Case") != normalize_comparison_text("case")
     assert normalize_comparison_text("한  글") != normalize_comparison_text("한 글")
+
+
+def test_aggregate_renderers_preserve_prompt_text_and_distinct_source_spans() -> None:
+    shared = "동일 원문"
+    character = render_character_block(
+        SimpleNamespace(name=shared, personality=shared, speech_style=shared)
+    )
+    assert character.content == (
+        f"이름: {shared}\n성격: {shared}\n말투: {shared}"
+    )
+    assert character.field_spans["name"] != character.field_spans["personality"]
+    assert character.field_spans["personality"] != character.field_spans["speech_style"]
+    for span in character.field_spans.values():
+        assert character.content[slice(*span)] == shared
+
+    world = render_world_block(
+        SimpleNamespace(name=shared, description=shared)
+    )
+    assert world.content == f"세계관: {shared}\n{shared}"
+    assert world.content[slice(*world.field_spans["description"])] == shared
+
+    resolved = render_character_block(
+        SimpleNamespace(
+            name="세라",
+            personality="{{world.name}}",
+            speech_style="{{world.name}}",
+        ),
+        transform=lambda value: value.replace("{{world.name}}", "테라"),
+    )
+    assert resolved.content == "이름: 세라\n성격: 테라\n말투: 테라"
+    assert (
+        resolved.content[slice(*resolved.field_spans["personality"])]
+        == "테라"
+    )
 
 
 def test_character_projects_only_approved_fields_and_stable_keys() -> None:

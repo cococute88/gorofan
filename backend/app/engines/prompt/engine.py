@@ -7,6 +7,7 @@ inside the engine against `history` (design 9.11.2). Guarantees Property 7.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.adapters.base import AssembledPrompt, ChatMessage
@@ -24,6 +25,60 @@ from app.engines.prompt.tokenizer import Tokenizer, default_tokenizer
 _VAR_RE = re.compile(r"\{\{([\w\.]+)\}\}")
 
 
+@dataclass(frozen=True)
+class RenderedFieldBlock:
+    """Provider text plus source-identity spans for aggregate legacy fields."""
+
+    content: str
+    field_spans: dict[str, tuple[int, int]]
+
+
+def render_character_block(
+    character: object, *, transform: Callable[[str], str] | None = None
+) -> RenderedFieldBlock:
+    """Render the production Character block and retain each field's exact span."""
+
+    apply = transform or (lambda value: value)
+    pieces: list[str] = []
+    spans: dict[str, tuple[int, int]] = {}
+    for field_name, label in (
+        ("name", "이름: "),
+        ("personality", "성격: "),
+        ("speech_style", "말투: "),
+    ):
+        raw_value = str(getattr(character, field_name, ""))
+        if not raw_value:
+            continue
+        if pieces:
+            pieces.append("\n")
+        pieces.append(label)
+        value = apply(raw_value)
+        start = sum(len(piece) for piece in pieces)
+        pieces.append(value)
+        spans[field_name] = (start, start + len(value))
+    return RenderedFieldBlock(content="".join(pieces), field_spans=spans)
+
+
+def render_world_block(
+    world: object, *, transform: Callable[[str], str] | None = None
+) -> RenderedFieldBlock:
+    """Render the production World block and retain name/description spans."""
+
+    apply = transform or (lambda value: value)
+    name = apply(str(getattr(world, "name", "")))
+    description = apply(str(getattr(world, "description", "")))
+    prefix = "세계관: "
+    content = f"{prefix}{name}\n{description}"
+    description_start = len(prefix) + len(name) + 1
+    return RenderedFieldBlock(
+        content=content,
+        field_spans={
+            "name": (len(prefix), len(prefix) + len(name)),
+            "description": (description_start, description_start + len(description)),
+        },
+    )
+
+
 @dataclass
 class AssembleInput:
     template_body: str
@@ -33,11 +88,11 @@ class AssembleInput:
     character: object | None = None
     persona: object | None = None
     world: object | None = None
-    lore_entries: list = None  # list[LoreEntry-like]
-    memory_short: list = None  # list[Message-like]
-    memory_long: list = None  # list[Memory-like]
-    history: list = None  # list[Message-like]
-    chapter_prior_summaries: list[str] = None
+    lore_entries: list | None = None  # list[LoreEntry-like]
+    memory_short: list | None = None  # list[Message-like]
+    memory_long: list | None = None  # list[Memory-like]
+    history: list | None = None  # list[Message-like]
+    chapter_prior_summaries: list[str] | None = None
     # Already-assembled Entry Store blocks (P1-6). The caller owns retrieval and
     # Context Assembly; the engine only collects, orders, and budgets them.
     entry_blocks: list[PromptBlock] | None = None
@@ -125,13 +180,7 @@ class PromptEngine:
 
         add("system", "system", inp.template_body, truncatable=False)
         if inp.character is not None:
-            c = inp.character
-            parts = [
-                f"이름: {getattr(c, 'name', '')}",
-                f"성격: {getattr(c, 'personality', '')}",
-                f"말투: {getattr(c, 'speech_style', '')}",
-            ]
-            add("character", "system", "\n".join(p for p in parts if p.split(": ", 1)[1]))
+            add("character", "system", render_character_block(inp.character).content)
         if inp.persona is not None:
             add(
                 "persona",
@@ -139,8 +188,7 @@ class PromptEngine:
                 f"사용자 페르소나: {getattr(inp.persona, 'name', '')} — {getattr(inp.persona, 'description', '')}",
             )
         if inp.world is not None:
-            w = inp.world
-            add("world", "system", f"세계관: {getattr(w, 'name', '')}\n{getattr(w, 'description', '')}")
+            add("world", "system", render_world_block(inp.world).content)
         blocks.extend(self._make_lore_blocks(inp))
         # Entry Store canon joins as its own kind, alongside — never merged into —
         # the legacy lore blocks above and the chat-private memory blocks below.

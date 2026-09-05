@@ -34,6 +34,39 @@ class MemoryContext:
     token_estimate: int = 0
 
 
+def rank_memories(
+    candidates: list[Memory], query: str | None, *, evaluation_time: datetime
+) -> list[Memory]:
+    """Apply the production ranking formula at an explicit evaluation instant.
+
+    ``MemoryEngine._rank`` supplies the current UTC clock for normal generation.
+    Read-only diagnostics call this same function with their explicit evaluation
+    context so they neither duplicate the policy nor inherit a hidden wall clock.
+    """
+
+    now = evaluation_time
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    else:
+        now = now.astimezone(UTC)
+    q_tokens = {t for t in (query or "").lower().split() if len(t) > 1}
+
+    def score(m: Memory) -> float:
+        created = m.created_at or now
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        dt = max(0.0, (now - created).total_seconds())
+        recency = math.exp(-dt / TAU_SECONDS)
+        content = (m.content or "").lower()
+        relevance = (
+            sum(1 for t in q_tokens if t in content) / len(q_tokens) if q_tokens else 0.0
+        )
+        priority = _KIND_WEIGHT.get(m.kind, 0.5)
+        return W_RECENCY * recency + W_RELEVANCE * relevance + W_PRIORITY * priority
+
+    return sorted(candidates, key=score, reverse=True)
+
+
 @dataclass
 class MemoryEngine:
     summarizer: Summarizer
@@ -93,23 +126,7 @@ class MemoryEngine:
 
     # ----- ranking (design 10.8) -----
     def _rank(self, candidates: list[Memory], query: str | None) -> list[Memory]:
-        now = datetime.now(UTC)
-        q_tokens = {t for t in (query or "").lower().split() if len(t) > 1}
-
-        def score(m: Memory) -> float:
-            created = m.created_at or now
-            if created.tzinfo is None:
-                created = created.replace(tzinfo=UTC)
-            dt = max(0.0, (now - created).total_seconds())
-            recency = math.exp(-dt / TAU_SECONDS)
-            content = (m.content or "").lower()
-            relevance = (
-                sum(1 for t in q_tokens if t in content) / len(q_tokens) if q_tokens else 0.0
-            )
-            priority = _KIND_WEIGHT.get(m.kind, 0.5)
-            return W_RECENCY * recency + W_RELEVANCE * relevance + W_PRIORITY * priority
-
-        return sorted(candidates, key=score, reverse=True)
+        return rank_memories(candidates, query, evaluation_time=datetime.now(UTC))
 
     def _select_within_budget(self, ranked: list[Memory], budget_hint: int) -> list[Memory]:
         out: list[Memory] = []
