@@ -130,7 +130,7 @@ All rows below were checked against GitHub metadata and the current code/history
 - **User authoring and audit reads:** User-authored Entry creation is server-provenanced; default Entry lists expose live canon only, while `include_history=true` permits labelled audit/history data. Cursor pagination and immutable supersession correction are implemented.
 - **P1-6 production wiring (PR #21):** `backend/app/services/entry_generation_context.py` is the single production call site chaining `EntryService.retrieve()` → `assemble_entry_context()` → `PromptEngine`. Chat and Novel each invoke it inside T1, before any token is streamed, exactly once per request — including the Chat regenerate path.
 - **P1-7 edit-diff capture (PR #25):** both data-destroying paths now preserve the AI pre-image. `EntryService.edit_review_entry()` reads the pre-image under the existing Entry row lock and inserts the capture in the same transaction as the destructive field assignment; `NovelService._append_chapter()` captures the streamed segment before concatenating it into `Chapter.content_text`, under an explicit chapter row lock. The prior segment is settled at T1 of the next continuation of the same chapter. See [section 10](#10-the-p1-7-contract-as-merged) for the full contract.
-- **P1-8 diagnostic implementation (active branch):** `legacy_entry_equivalence.py` and the authenticated compare endpoint implement PR #27's pure projections, coverage precedence, and provider-free Chat/Novel shadows. This is branch evidence until its Draft PR is reviewed and merged; it does not change authority.
+- **P1-8 diagnostic implementation (active branch):** `legacy_entry_equivalence.py` and the authenticated compare endpoint implement PR #27's pure projections, coverage precedence, and provider-free Chat/Novel shadows. The second independent review's three remaining counterexamples now have direct regressions: resolved-empty source absence, actual aggregate span ordering, and exact-matched runtime-rejected summary chronology. This is branch evidence until its Draft PR is independently re-reviewed and merged; it does not change authority.
 
 ### P1-6 contract as merged
 
@@ -204,9 +204,9 @@ Run each command as a separate process with the stated working directory; do not
 
 | Check | Working directory | Command | Verified result at this handoff |
 |---|---|---|---|
-| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest` | **243 passed, 0 failed** after the five blocker repairs. |
-| P1-8 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **44 passed.** Covers the existing contract plus all five blocker regressions, Novel source identity, missing Memory evaluation context, regenerate user ties, and the unchanged production Memory wrapper. |
-| Related regression bundle | `backend` | Entry lifecycle/retrieval/context/review, Chat/Novel/Memory/streaming, prompt budget/assets, edit-diff, golden, migrations | **165 passed, 0 failed.** |
+| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest` | **247 passed, 0 failed** after the second review's three remaining blocker repairs. |
+| P1-8 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **48 passed.** Covers the existing contract and previous blockers plus resolved-empty Character/World sources, multi-Character rendered-order match/mismatch, and exact future-summary retrieval rejection chronology. |
+| Related regression bundle | `backend` | Entry lifecycle/retrieval/context/review, Chat/Novel/Memory/streaming, prompt budget/assets, edit-diff, golden, migrations | **230 passed, 0 failed.** |
 | P1-7 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/integration/test_edit_diff_capture_schema.py tests/integration/test_edit_diff_capture_entry.py tests/integration/test_edit_diff_capture_novel.py` | **41 passed** (schema 12, Path A 11, Path B 18). `tests/integration/test_migrations.py` grew from 3 to 5 for the remaining 2. |
 | P1-6 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_prompt_integration.py tests/unit/test_entry_generation_context.py tests/integration/test_entry_context_generation.py` | **41 passed.** The integration file drives the real SSE endpoints with a recording provider. |
 | Entry/retrieval/assembly target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_retrieval.py tests/unit/test_entry_context_assembly.py tests/integration/test_entry_retrieval.py tests/golden/test_retrieval_context_golden.py` | Repository command paths verified; use for Store/context work. |
@@ -269,7 +269,7 @@ The current `tasks.md`, `implementation-status.md`, and production code agree on
 |---|---|---|---|---|
 | ~~**P1-6**~~ `retrieve()` → Context Assembly → real generation path | **Complete** (PR #21, `1b2a850`). Single production call site wired for Chat and Novel behind an OFF-by-default flag. | — | — | Done. |
 | ~~**P1-7**~~ edit-diff capture | **Complete** (design PR #23 `39cf740`, implementation PR #25 `271e27c`). Both destroying paths capture the pair; `alembic heads` is `0003_edit_diff_capture`. The permanent-data-loss clock has stopped. | — | — | Done. The §13 read contract belongs to **P2-5**, not to a follow-up here. |
-| **P1-8** legacy Character/World/Lore ↔ Entry equivalence bridge | **Blocker repairs complete; independent re-review pending on Draft PR #28.** Pure projections, coverage precedence, typed owner-safe API, and Chat/Novel runtime shadows are covered by 44 focused tests. Legacy remains authoritative and `_make_lore_blocks()` still runs. | PR #27 contract accepted; PR #28 re-review required. | Backfill, legacy deletion, read cutover, migration, or flipping the flag as part of the bridge. | Do not merge or advance to chronology work before independent re-review. |
+| **P1-8** legacy Character/World/Lore ↔ Entry equivalence bridge | **Second-review blocker repairs complete; final independent re-review pending on Draft PR #28.** Pure projections, coverage precedence, typed owner-safe API, and Chat/Novel runtime shadows are covered by 48 focused tests. Legacy remains authoritative and `_make_lore_blocks()` still runs. | PR #27 contract accepted; PR #28 final re-review required. | Backfill, legacy deletion, read cutover, migration, or flipping the flag as part of the bridge. | Do not merge or advance to chronology work before independent re-review. |
 | **P1-9** review audit persistence decision | Not implemented. Current Entries have lifecycle/provenance but no approved actor/action history design. P1-7 deliberately defined no actor or action vocabulary. | P1-1 complete. | Unapproved JSON schema, implementation migration in the design PR, reusing `edit_diff_captures` as a review timeline. | After P1-8 unless architecture review chooses earlier. |
 | **P1-10** local development environment cleanup | Optional and blocked by user-data safety. Local DB stamp is stale; protected stashes exist. | Explicit user approval for data/stash actions. | Automatic DB recreation, `alembic stamp`, stash application/deletion. | Last, and only with approval. |
 
@@ -349,24 +349,24 @@ Neither is a defect, and neither blocked the merge:
 
 Three smaller observations recorded by the pre-merge review, all accepted as non-blocking: design §9.2's "increment a counter" is satisfied by the structured log because the repository has no metrics substrate and building one would exceed P1-7's scope; a Tier-2 failure on the success path ends the SSE stream without an `error` event, which the design's stated outcome permits; and `insert_offset` is `len(content_text)` *before* concatenation exactly as design §6.3 defines it, which is two characters ahead of the separator when the chapter is non-empty — an alignment detail for P2-5, not an error.
 
-## 11. P1-8 blocker repair result and independent re-review gate
+## 11. P1-8 blocker repair result and final independent re-review gate
 
-Draft PR #28 on `feature/p1-8-equivalence-implementation` has repaired the five independently reproduced blockers: aggregate-source false attribution, `not_applicable` order contamination, hidden Memory wall clock, regenerate timestamp-tie false certainty, and selected chronology codes on non-selected rows. The implementation now uses exact source spans/full normalized payloads, isolates applicability from coverage, requires explicit Memory evaluation time when Memory candidates exist, reports production-ambiguous regenerate ties as unsupported, and distinguishes selected from non-selected chronology evidence.
+Draft PR #28 on `feature/p1-8-equivalence-implementation` preserves the earlier five blocker repairs and now repairs the second independent review's remaining three: a zero-length resolved span can no longer make an absent legacy payload appear selected; Novel aggregate order uses actual inner rendered spans instead of lexical `source_key`; and eligible exact-matched summaries rejected at retrieval/assembly/final budgeting still receive final-selection-based future/unknown chronology evidence alongside their exclusion stage.
 
-The branch passes 44 focused P1-8 tests, 243 backend tests, a 165-test related regression bundle, Ruff, scoped MyPy with zero errors, Alembic single-head checks, and frontend 13 tests/lint/build. Full MyPy reports 31 existing errors in 10 files after correcting five pre-existing PromptEngine nullable annotations. These results make the Draft ready for a new independent re-review, **not ready for merge**.
+The branch passes 48 focused P1-8 tests, 247 backend tests, a 230-test related regression bundle, Ruff, scoped MyPy with zero errors, Alembic single-head checks, and frontend 13 tests/lint/build. Full MyPy reports the unchanged 31 existing errors in 10 files. These results make the Draft ready for a new independent re-review, **not ready for merge**.
 
 P1-8 intentionally did not move authority. The legacy Character/World/Lore path, lore scanner, Entry feature-flag default, production Memory/Chat/Novel selection, provider-visible generation payloads, provider adapters, and all persistence schemas remain unchanged. The existing future/unknown `story.summary` eligibility debt remains measured rather than repaired. Do not begin its chronology correctness gate until PR #28 passes independent re-review.
 
 ## 12. First-run checklist for a new AI
 
-1. Read `AI-HANDOFF.md`, then the P1-8 design, implementation, and five blocker regressions. The next action is an independent re-review of Draft PR #28, not chronology implementation.
+1. Read `AI-HANDOFF.md`, then the P1-8 design, implementation, the earlier five blocker regressions, and the three second-review regressions. The next action is a final independent re-review of Draft PR #28, not chronology implementation.
 2. Fetch and compare `origin/main`; if this handoff SHA (`9deb643`) is no longer current, re-validate GitHub state, code call sites, and status documents.
 3. Check the working tree and list stashes without modifying either. Keep user work, the local DB, and stashes untouched.
-4. Confirm the starting state yourself rather than trusting this snapshot: `alembic heads` should be `0003_edit_diff_capture`, this implementation branch should have 243 backend tests / 44 focused tests, and `FEATURES["entry_store_context"]` should still default OFF.
+4. Confirm the starting state yourself rather than trusting this snapshot: `alembic heads` should be `0003_edit_diff_capture`, this implementation branch should have 247 backend tests / 48 focused tests, and `FEATURES["entry_store_context"]` should still default OFF.
 5. Read the P1-8 diagnostic service and golden/integration evidence together with the production retrieval and Novel preparation path; do not treat the bridge as a new runtime authority.
 6. Review the existing PR branch; do not create a chronology branch during the P1-8 re-review.
-7. Re-run the five named blocker regressions and inspect their evidence rather than trusting expected snapshots alone.
-8. Verify: Ruff clean, scoped MyPy zero, full MyPy distinguished from the 31-errors-in-10-files current baseline, full pytest 243 or more, `git diff --check` clean, all files UTF-8.
+7. Re-run all eight named blocker areas, especially `test_zero_length_resolved_legacy_source_is_not_runtime_selected`, both parameters of `test_novel_multi_character_order_uses_rendered_source_spans`, and `test_exact_future_summary_rejected_by_retrieval_has_not_selected_chronology`; inspect evidence rather than trusting snapshots alone.
+8. Verify: Ruff clean, scoped MyPy zero, full MyPy unchanged from the 31-errors-in-10-files baseline, full pytest 247 or more, `git diff --check` clean, all files UTF-8.
 9. Keep PR #28 Draft during the independent re-review.
 10. Do not merge. Report the independent verdict and wait for the requested decision.
 
@@ -389,7 +389,19 @@ The user's preferred completion report always includes:
 11. A copyable prompt for the next AI.
 12. Recommended model and reasoning level.
 
-## 14. Copyable next-task prompt
+## 14. Preserved post-P1-8 Author OS / Style direction
+
+This work does not implement the following direction, but later handoffs must preserve it:
+
+- **Novel-first product:** rfrf is a personal long-form novel generation workspace; Character Chat remains an independent supporting feature.
+- **Shared Generation Preparation:** `Story/Canon + Character/Relationship + recent Chapter + Scene input` feeds one provider-neutral selection/order/budget/trace preparation seam.
+- **Two terminal routes:** the same preparation can drive (A) direct Provider API generation, with Gemini as the practical first direct-generation path, or (B) a complete Prompt Packet copied to ChatGPT, Claude, or a generic external model. Both routes converge on Chapter apply/import, user revision, edit-diff evidence, and the next generation.
+- **Taste and Voice remain distinct:** Taste is user preference, while Voice/Narrative Style describes prose behavior; neither is Story Canon and neither is mandatory for the first usable novel loop.
+- **Reference-based Style Baseline:** later work may register multiple novel references, analyze per-reference features, and derive a shared/preferred baseline. Korean quantitative candidates include Kiwi-backed morphology, endings, POS/POS n-grams, sentence length, dialogue ratio, spacing, punctuation, and lexical repetition. Other languages require a language-specific extractor seam.
+- **Hybrid Style Engine:** deterministic/statistical features may combine with Gemini semantic Voice/Narrative Style analysis. Long references should use chunked/background analysis; generated prose should be compared with the Style Baseline for scene drift and long-form consistency.
+- **Sequencing constraint:** reference ingestion, persistence, background analysis, and Style Engine implementation must not delay the first usable Novel generation loop.
+
+## 15. Copyable next-task prompt
 
 ```text
 You are continuing AI Author OS / gorafan at C:\gv\rfrf. The GitHub repository is
@@ -404,13 +416,14 @@ architecture contract (PR #27) are merged. P1-8 implementation exists on
 feature/p1-8-equivalence-implementation. If main has advanced, re-verify before
 relying on any of it.
 
-Your task is an independent Implementation Re-Review of Draft PR #28. Reproduce and inspect the five
-previous blockers: aggregate substring source attribution, not-applicable ordering contamination,
-Memory wall-clock dependence, regenerate timestamp ties, and selected chronology codes on a
-non-selected summary. Do not rely only on the author session's verdict or test expectations.
+Your task is a final independent Implementation Re-Review of Draft PR #28. Reproduce and inspect the
+five previous blocker areas plus the second review's three remaining counterexamples: a non-empty
+projection resolving to a zero-length legacy payload, multi-Character Novel order where lexical
+source_key order differs from rendered order, and an exact-matched future/unknown summary rejected
+before final prompt survival. Do not rely only on the author session's verdict or test expectations.
 
 Confirm the starting state yourself before changing anything: alembic heads is
-0003_edit_diff_capture, the P1-8 implementation branch has 243 backend tests / 44 focused tests,
+0003_edit_diff_capture, the P1-8 implementation branch has 247 backend tests / 48 focused tests,
 Ruff is clean, scoped MyPy is zero, full MyPy reports 31 errors in 10 files, and
 FEATURES["entry_store_context"] still defaults OFF. Then read the real
 legacy context path before touching it: NovelService._build_story_context(),
@@ -435,8 +448,8 @@ P1-9 review audit persistence. Do not modify 0001_initial, 0002_entry_store,
 stashes. Do not auto-merge.
 
 Verify the existing Draft: Ruff clean; scoped MyPy zero and no new full-MyPy errors against the
-31-errors-in-10-files branch baseline; backend pytest passes with no reduction from 243;
-focused P1-8 passes with no reduction from 44; git diff --check clean; all files UTF-8. Use one PowerShell command per
+31-errors-in-10-files branch baseline; backend pytest passes with no reduction from 247;
+focused P1-8 passes with no reduction from 48; git diff --check clean; all files UTF-8. Use one PowerShell command per
 process; if the wrapper corrupts a command, use Python subprocess.run(argv, cwd=...,
 shell=False) rather than retrying the same broken shell string.
 

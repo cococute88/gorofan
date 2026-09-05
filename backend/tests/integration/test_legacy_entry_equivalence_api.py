@@ -100,6 +100,7 @@ def _canon(
     title: str | None = None,
     data: dict[str, object] | None = None,
     created_at_chapter_id: str | None = None,
+    priority: int = 80,
 ) -> str:
     payload: dict[str, object] = {
         "scope_kind": scope_kind,
@@ -109,7 +110,7 @@ def _canon(
         "type": entry_type,
         "content": content,
         "data": data or {},
-        "priority": 80,
+        "priority": priority,
     }
     if title is not None:
         payload["title"] = title
@@ -1451,3 +1452,217 @@ def test_future_summary_codes_distinguish_selected_and_not_selected_entries(
     assert entry_only[not_selected_id]["runtime_selected"] is False
     assert "future_story_position_selected" not in entry_only[not_selected_id]["diagnostic_codes"]
     assert "future_story_position_not_selected" in entry_only[not_selected_id]["diagnostic_codes"]
+
+
+def test_zero_length_resolved_legacy_source_is_not_runtime_selected(client) -> None:  # noqa: ANN001
+    unresolved = "{{missing.variable}}"
+    world = client.post(
+        "/api/v1/worlds",
+        json={"name": "빈 해석 세계", "description": unresolved},
+    ).json()
+    character = client.post(
+        "/api/v1/characters",
+        json={
+            "name": "빈 해석 인물",
+            "world_id": world["id"],
+            "personality": unresolved,
+        },
+    ).json()
+    chat = client.post(
+        "/api/v1/chats", json={"character_id": character["id"]}
+    ).json()
+    entry_id = _canon(
+        client,
+        scope_kind="character",
+        scope_id=character["id"],
+        subject_type="character",
+        subject_id=character["id"],
+        entry_type="character.identity",
+        content=unresolved,
+    )
+    world_entry_id = _canon(
+        client,
+        scope_kind="world",
+        scope_id=world["id"],
+        subject_type="world",
+        subject_id=world["id"],
+        entry_type="world.fact",
+        content=unresolved,
+    )
+
+    response = _compare_chat(
+        client, chat["id"], mode="new_message", message="계속"
+    )
+    assert response.status_code == 200, response.text
+    source_key = f"character:{character['id']}:personality:0"
+    coverage = next(
+        row
+        for row in response.json()["coverage"]["records"]
+        if row["projection"]["source_key"] == source_key
+    )
+    runtime = next(
+        row
+        for row in response.json()["runtime"]["records"]
+        if row["source_key"] == source_key
+    )
+    assert coverage["eligible_exact_entry_ids"] == [entry_id]
+    assert runtime["legacy"]["selected"] is False
+    assert runtime["entry"]["selected"] is True
+    assert runtime["runtime_state"] == "selection_mismatch"
+    assert runtime["legacy"]["exclusion_code"] == "legacy_resolved_payload_empty"
+    assert "legacy_resolved_payload_empty" in runtime["diagnostic_codes"]
+    assert "final_prompt_budget_drop" not in runtime["diagnostic_codes"]
+
+    world_source_key = f"world:{world['id']}:description:0"
+    world_coverage = next(
+        row
+        for row in response.json()["coverage"]["records"]
+        if row["projection"]["source_key"] == world_source_key
+    )
+    world_runtime = next(
+        row
+        for row in response.json()["runtime"]["records"]
+        if row["source_key"] == world_source_key
+    )
+    assert world_coverage["eligible_exact_entry_ids"] == [world_entry_id]
+    assert world_runtime["legacy"]["selected"] is False
+    assert world_runtime["entry"]["selected"] is True
+    assert world_runtime["runtime_state"] == "selection_mismatch"
+    assert world_runtime["legacy"]["exclusion_code"] == "legacy_resolved_payload_empty"
+
+
+@pytest.mark.parametrize("entry_matches_rendered_order", [True, False])
+def test_novel_multi_character_order_uses_rendered_source_spans(
+    client, entry_matches_rendered_order: bool
+) -> None:  # noqa: ANN001
+    characters = [
+        client.post(
+            "/api/v1/characters",
+            json={"name": name, "personality": personality},
+        ).json()
+        for name, personality in (
+            ("렌더 첫 인물", "렌더 첫 성격"),
+            ("렌더 둘째 인물", "렌더 둘째 성격"),
+        )
+    ]
+    rendered_first, rendered_second = sorted(
+        characters, key=lambda item: item["id"], reverse=True
+    )
+    assert rendered_first["id"] > rendered_second["id"]
+
+    work = client.post("/api/v1/works", json={"title": "실제 렌더 순서"}).json()
+    for character in (rendered_first, rendered_second):
+        response = client.post(
+            f"/api/v1/works/{work['id']}/characters",
+            json={"character_id": character["id"], "role_in_work": "주연"},
+        )
+        assert response.status_code == 201, response.text
+    chapter = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "1화", "content_text": "현재 본문"},
+    ).json()
+
+    first_priority, second_priority = (
+        (100, 0) if entry_matches_rendered_order else (0, 100)
+    )
+    for character, priority in (
+        (rendered_first, first_priority),
+        (rendered_second, second_priority),
+    ):
+        _canon(
+            client,
+            scope_kind="character",
+            scope_id=character["id"],
+            subject_type="character",
+            subject_id=character["id"],
+            entry_type="character.identity",
+            content=character["personality"],
+            priority=priority,
+        )
+
+    response = client.post(
+        "/api/v1/entries/equivalence:compare",
+        json={
+            "novel": {"chapter_id": chapter["id"], "target_words": 50},
+            "budget_override": _OVERRIDE,
+        },
+    )
+    assert response.status_code == 200, response.text
+    source_keys = {
+        f"character:{rendered_first['id']}:personality:0",
+        f"character:{rendered_second['id']}:personality:0",
+    }
+    runtime = [
+        row
+        for row in response.json()["runtime"]["records"]
+        if row["source_key"] in source_keys
+    ]
+    assert all(row["legacy"]["selected"] is True for row in runtime)
+    assert all(row["entry"]["selected"] is True for row in runtime)
+    if entry_matches_rendered_order:
+        assert all(row["runtime_state"] == "equivalent" for row in runtime)
+        assert all(
+            "stable_order_mismatch" not in row["diagnostic_codes"] for row in runtime
+        )
+    else:
+        assert all(row["runtime_state"] == "selection_mismatch" for row in runtime)
+        assert all(
+            "stable_order_mismatch" in row["diagnostic_codes"] for row in runtime
+        )
+
+
+def test_exact_future_summary_rejected_by_retrieval_has_not_selected_chronology(
+    client,
+) -> None:  # noqa: ANN001
+    work = client.post("/api/v1/works", json={"title": "미래 exact 탈락"}).json()
+    chapters = [
+        client.post(
+            f"/api/v1/works/{work['id']}/chapters",
+            json={"title": f"{index}화", "content_text": "현재 본문"},
+        ).json()
+        for index in range(1, 3)
+    ]
+    long_summary = "선택 예산을 넘는 미래 요약 " * 300
+    _run(
+        _set_summaries_and_snapshot(
+            client, {chapters[1]["id"]: long_summary}, chapters[0]["id"]
+        )
+    )
+    entry_id = _canon(
+        client,
+        scope_kind="work",
+        scope_id=work["id"],
+        subject_type="chapter",
+        subject_id=chapters[1]["id"],
+        entry_type="story.summary",
+        content=long_summary,
+        data={"level": "chapter"},
+    )
+
+    response = client.post(
+        "/api/v1/entries/equivalence:compare",
+        json={
+            "novel": {"chapter_id": chapters[0]["id"], "target_words": 50},
+            "budget_override": {
+                "context_window": 512,
+                "max_tokens": 1,
+                "safety_ratio": 0,
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    source_key = f"chapter:{chapters[1]['id']}:summary:0"
+    runtime = next(
+        row
+        for row in response.json()["runtime"]["records"]
+        if row["source_key"] == source_key
+    )
+    assert runtime["entry"]["trace_ids"] == [entry_id]
+    assert runtime["entry"]["retrieval_selected"] is False
+    assert runtime["entry"]["selected"] is False
+    assert runtime["entry"]["final_prompt_selected"] is False
+    assert runtime["entry"]["exclusion_code"] == "entry_retrieval_budget_rejected"
+    assert "entry_retrieval_budget_rejected" in runtime["diagnostic_codes"]
+    assert "database_timestamp_recency" in runtime["diagnostic_codes"]
+    assert "future_story_position_not_selected" in runtime["diagnostic_codes"]
+    assert "future_story_position_selected" not in runtime["diagnostic_codes"]

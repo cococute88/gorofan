@@ -182,6 +182,7 @@ class LegacySourceAttribution:
     start: int
     end: int
     expected_sha256: str
+    resolved_payload_present: bool
 
 
 @dataclass(frozen=True)
@@ -1489,7 +1490,7 @@ class LegacyEntryEquivalenceService:
             for source_key in source_keys
         }
 
-        legacy_sequence_pairs: list[tuple[int, str]] = []
+        legacy_sequence_pairs: list[tuple[tuple[int, int, int], str]] = []
         entry_sequence_pairs: list[tuple[int, str]] = []
         for projection in projections:
             coverage_record = coverage_by_key[projection.source_key]
@@ -1584,12 +1585,28 @@ class LegacyEntryEquivalenceService:
                     normalize_comparison_text(block_content) == projection.content
                 )
             legacy_final = initially_selected and trace_selected and source_survived
-            if initially_selected and not legacy_final:
+            if (
+                initially_selected
+                and source_attribution is not None
+                and not source_attribution.resolved_payload_present
+            ):
+                exclusion = "legacy_resolved_payload_empty"
+                codes.add("legacy_resolved_payload_empty")
+            elif initially_selected and not legacy_final:
                 exclusion = "final_prompt_budget_drop"
                 codes.add("final_prompt_budget_drop")
             legacy_position = legacy_position if legacy_final else None
-            if legacy_final and legacy_position is not None:
-                legacy_sequence_pairs.append((legacy_position, projection.source_key))
+            order_applicable = applicable and projection.source_key not in unsupported_lore
+            if legacy_final and legacy_position is not None and order_applicable:
+                inner_start = source_attribution.start if source_attribution is not None else 0
+                inner_end = (
+                    source_attribution.end
+                    if source_attribution is not None
+                    else len(block_content)
+                )
+                legacy_sequence_pairs.append(
+                    ((legacy_position, inner_start, inner_end), projection.source_key)
+                )
 
             exact_ids = coverage_record.eligible_exact_entry_ids
             retrieved_exact = [entry_id for entry_id in exact_ids if entry_id in retrieval_ids]
@@ -1622,8 +1639,8 @@ class LegacyEntryEquivalenceService:
                 elif not exact_ids:
                     entry_exclusion = "no_eligible_exact_entry"
 
-            for entry_id in final_exact:
-                if applicable:
+            for entry_id in exact_ids:
+                if entry_id in final_exact and order_applicable:
                     entry_sequence_pairs.append(
                         (entry_positions[entry_id], projection.source_key)
                     )
@@ -1632,7 +1649,9 @@ class LegacyEntryEquivalenceService:
                 if projection.projection_kind is ProjectionKind.CHAPTER_SUMMARY:
                     codes.update(
                         _story_position_codes(
-                            candidate, target_chapter_index, selected=True
+                            candidate,
+                            target_chapter_index,
+                            selected=entry_id in final_exact,
                         )
                     )
 
@@ -1902,19 +1921,21 @@ def _ordered_included_trace_rows(prompt: AssembledPrompt) -> list[dict[str, obje
 def _legacy_source_attribution(
     block_kind: str, span: tuple[int, int], expected: str
 ) -> LegacySourceAttribution:
+    normalized_expected = normalize_comparison_text(expected)
     return LegacySourceAttribution(
         block_kind=block_kind,
         start=span[0],
         end=span[1],
-        expected_sha256=sha256(
-            normalize_comparison_text(expected).encode("utf-8")
-        ).hexdigest(),
+        expected_sha256=sha256(normalized_expected.encode("utf-8")).hexdigest(),
+        resolved_payload_present=bool(normalized_expected),
     )
 
 
 def _attributed_source_survived(
     attribution: LegacySourceAttribution, block_content: str
 ) -> bool:
+    if not attribution.resolved_payload_present:
+        return False
     if attribution.start < 0 or attribution.end < attribution.start:
         return False
     if len(block_content) < attribution.end:

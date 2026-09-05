@@ -61,6 +61,7 @@ def test_aggregate_renderers_preserve_prompt_text_and_distinct_source_spans() ->
     )
     assert character.field_spans["name"] != character.field_spans["personality"]
     assert character.field_spans["personality"] != character.field_spans["speech_style"]
+    assert character.field_spans["personality"][0] < character.field_spans["speech_style"][0]
     for span in character.field_spans.values():
         assert character.content[slice(*span)] == shared
 
@@ -83,6 +84,18 @@ def test_aggregate_renderers_preserve_prompt_text_and_distinct_source_spans() ->
         resolved.content[slice(*resolved.field_spans["personality"])]
         == "테라"
     )
+
+    empty_resolved = render_character_block(
+        SimpleNamespace(
+            name="세라",
+            personality="{{missing.variable}}",
+            speech_style="말투",
+        ),
+        transform=lambda value: "" if value == "{{missing.variable}}" else value,
+    )
+    assert empty_resolved.content == "이름: 세라\n성격: \n말투: 말투"
+    personality_span = empty_resolved.field_spans["personality"]
+    assert personality_span[0] == personality_span[1]
 
 
 def test_character_projects_only_approved_fields_and_stable_keys() -> None:

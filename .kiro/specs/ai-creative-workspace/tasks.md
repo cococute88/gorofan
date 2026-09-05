@@ -147,7 +147,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** Claude Opus 5 / High (스키마 결정이 되돌리기 어려우므로 설계 리뷰 필수).
 
 #### P1-8 legacy Character/World/Lore ↔ Entry 동등성 브릿지 (읽기 비교, 백필 없음)
-- **상태:** **PR #28 blocker 수정 완료 — 독립 재리뷰 대기.** pure projection/comparison, typed owner-safe API, Chat/Novel shadow에 source-level final-budget span attribution, `not_applicable` order 격리, explicit Memory evaluation time, regenerate timestamp-tie unsupported evidence, selected/non-selected chronology evidence를 보강했다. focused 44, backend full 243, 관련 regression 165 tests가 통과했다. DB write·provider call·migration·backfill·authority cutover·flag 변경은 없다. future/unknown `story.summary` eligibility correctness 자체는 별도 chronology gate다.
+- **상태:** **PR #28 잔여 3개 blocker 수정 완료 — 최종 독립 재리뷰 대기.** non-empty projection이 resolution 후 empty가 된 source를 runtime absent로 처리하고, Novel aggregate는 실제 inner span 순서를 사용하며, exact-match summary가 retrieval/assembly/final budget에서 탈락해도 final-selection 기준 future/unknown chronology와 exclusion stage를 함께 보존한다. 기존 5개 blocker 수정도 유지된다. focused 48, backend full 247, 관련 regression 230 tests가 통과했다. DB write·provider call·migration·backfill·authority cutover·flag 변경은 없다. future/unknown `story.summary` eligibility correctness 자체는 별도 chronology gate다.
 - **목적:** RFC-002 §12의 안전 순서 중 4단계(레거시 ↔ Entry 투영 비교)를 먼저 확보한다. 전환 스위치·삭제는 하지 않는다.
 - **선행 의존성:** P1-5, P1-6.
 - **예상 변경 범위:** `backend/app/services/`(레거시 → Entry 투영/비교 순수 함수와 owner-safe read service), `schemas/entry.py`·`api/v1/entries.py`(authenticated non-mutating diagnostic caller), `tests/golden/`·통합 테스트(레거시/Entry coverage와 runtime-selection 동등성), 문서(전환 기준·잔여 격차 목록).
@@ -365,7 +365,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 | 순서 | 작업 | 근거 | 추천 모델 / effort |
 |---|---|---|---|
 | 1 | ~~**P1-8 design**~~ | **완료:** PR #27에서 coverage/runtime 독립 계약을 승인했다. | GPT-5.6 Sol / High |
-| 2 | **P1-8 implementation 독립 재리뷰** | 5개 blocker 수정과 regression은 완료했으나 Draft PR #28은 아직 독립 재리뷰 전이다. merge하거나 다음 gate로 넘어가지 않는다. | GPT-5.6 Sol / High |
+| 2 | **P1-8 implementation 최종 독립 재리뷰** | 기존 5개 blocker 수정에 더해 두 번째 review의 zero-length source, aggregate rendered order, exact-rejected summary chronology 3개 blocker와 regression까지 완료했으나 Draft PR #28은 아직 최종 독립 재리뷰 전이다. merge하거나 다음 gate로 넘어가지 않는다. | GPT-5.6 Sol / High |
 | 3 | **Story-summary chronology correctness gate** | P1-8 evidence가 현재 Entry retrieval이 DB timestamp recency를 사용하며 future/unknown chapter summary를 배제하지 않음을 재현했다. shared Generation Preparation이 이 selection을 상속하기 전에 eligibility/order 계약과 수정 범위를 별도 PR로 고정한다. | Claude Opus 5 / High |
 | 4 | **AOS-1 Generation Preparation + dual-route architecture contract** | chronology gate 결과 위에서 Story/Character/Relationship/Chapter/Scene 경계, shared selection/budget/trace, direct Provider Adapter와 external Prompt Packet의 terminal seam, apply/import linkage를 고정한다. Taste/Voice는 optional이다. | Claude Opus 5 / High |
 
