@@ -29,6 +29,7 @@ from app.engines.prompt.engine import PromptEngine
 from app.engines.shared.summarizer import Summarizer
 from app.services.ai_config_service import AIConfigService
 from app.services.chat_service import ChatService
+from app.services.legacy_entry_equivalence import LegacyEntryEquivalenceService
 from app.services.novel_service import NovelService
 from app.services.summary_job import make_summarize_handler
 
@@ -67,6 +68,13 @@ async def lifespan(app: FastAPI):
     chat_service = ChatService(sessionmaker, settings, registry, chat_engine, job_queue)
     novel_service = NovelService(sessionmaker, settings, registry, novel_engine)
     ai_config_service = AIConfigService(settings, registry)
+    equivalence_service = LegacyEntryEquivalenceService(
+        settings,
+        registry,
+        prompt_engine,
+        prompt_assets,
+        memory_engine,
+    )
 
     # auth (only wired when enabled and configured)
     auth_service = None
@@ -95,6 +103,7 @@ async def lifespan(app: FastAPI):
     app.state.chat_service = chat_service
     app.state.novel_service = novel_service
     app.state.ai_config_service = ai_config_service
+    app.state.equivalence_service = equivalence_service
     app.state.auth_service = auth_service
 
     log.info("startup.complete")

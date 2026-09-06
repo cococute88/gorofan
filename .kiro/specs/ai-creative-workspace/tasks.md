@@ -59,7 +59,7 @@
 ## 2. Architecture Phase 로드맵
 
 ```
-Phase 1  잔여 Core 정리          ← 지금 여기 (필수 9개 중 7개 완료, 77.8%)
+Phase 1  잔여 Core 정리          ← 지금 여기 (필수 9개 중 7개 완료 + P1-8 독립 재리뷰 대기)
   └→ Phase 2  Analyst (text → proposed Entries)
        ├→ Phase 3  Writer (loop over declarative stages)
        │    └→ Phase 4  Story Bible (canonical view + continuity loop)
@@ -75,7 +75,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 
 기존 Phase 1~6은 architecture capability 순서로 보존한다. 실제 사용자 milestone은 [`docs/architecture/personal-author-os-roadmap.md`](../../../docs/architecture/personal-author-os-roadmap.md)의 dependency track을 따른다.
 
-`P1-8 design → P1-8 implementation → AOS-1 shared Generation Preparation/dual-route contract → minimum Novel preparation + Scene input → direct Provider API + Prompt Packet API → Novel workspace UI → Chapter apply/import → optional explicit Taste/Voice → edit-diff read → Taste/Voice candidate Analyst`
+`P1-8 design ✓ → P1-8 implementation blocker fixes (독립 재리뷰 대기) → story-summary chronology correctness gate → AOS-1 shared Generation Preparation/dual-route contract → minimum Novel preparation + Scene input → direct Provider API + Prompt Packet API → Novel workspace UI → Chapter apply/import → optional explicit Taste/Voice → edit-diff read → Taste/Voice candidate Analyst`
 
 이 순서에서 하나의 Generation Preparation이 RFC-009의 provider-neutral composition seam에서 retrieval·ordering·budget·trace를 고정하고, 마지막 단계에서만 기존 Provider Adapter 직접 실행 또는 thin external Prompt Packet formatting으로 갈라진다. 기존 RFC-004 Writer와 Chat provider execution은 삭제하거나 재정의하지 않는다. 장편소설 제작이 주 제품이고 Character Chat은 독립 보조 기능이다. Taste는 Story Canon이 아니고, Voice는 Taste가 아니며, Scene Brief는 operation-local working state이고 chat-private Memory는 Novel context로 자동 유입되지 않는다. Taste/Voice 부재는 첫 usable loop를 막지 않으며, 🍰 별식은 generation별 Taste 제외 모드로서 데이터를 변경하지 않는다.
 
@@ -147,7 +147,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** Claude Opus 5 / High (스키마 결정이 되돌리기 어려우므로 설계 리뷰 필수).
 
 #### P1-8 legacy Character/World/Lore ↔ Entry 동등성 브릿지 (읽기 비교, 백필 없음)
-- **상태:** **설계 PR 진행 중.** `docs/architecture/legacy-entry-equivalence-design.md`가 coverage/runtime을 독립 axis로 분리하고, deterministic precedence와 복수 diagnostic code, exact payload·duplicate/order 규칙, `chat_id` + request mode 및 `chapter_id` + instruction/target_words runtime anchor, known gaps, 별도 lore scanner cutover gate를 제안한다. 구현은 설계 승인 후 별도 PR이다.
+- **상태:** **PR #28 regenerate timestamp-tie fail-closed blocker 수정 완료 — 최종 독립 재리뷰 대기.** non-empty projection이 resolution 후 empty가 된 source를 runtime absent로 처리하고, Novel aggregate는 실제 inner span 순서를 사용하며, exact-match summary가 retrieval/assembly/final budget에서 탈락해도 final-selection 기준 future/unknown chronology와 exclusion stage를 함께 보존한다. assistant/user regenerate timestamp tie는 ambiguous content를 선택하지 않고 Memory/Entry/Prompt/provider diagnostic 이전에 unsupported로 종료한다. 기존 5개 blocker 수정도 유지된다. focused 53 tests가 통과했고, 나머지 검증은 이번 repair 후 재실행한다. DB write·provider call·migration·backfill·authority cutover·flag 변경은 없다. future/unknown `story.summary` eligibility correctness 자체는 별도 chronology gate다.
 - **목적:** RFC-002 §12의 안전 순서 중 4단계(레거시 ↔ Entry 투영 비교)를 먼저 확보한다. 전환 스위치·삭제는 하지 않는다.
 - **선행 의존성:** P1-5, P1-6.
 - **예상 변경 범위:** `backend/app/services/`(레거시 → Entry 투영/비교 순수 함수와 owner-safe read service), `schemas/entry.py`·`api/v1/entries.py`(authenticated non-mutating diagnostic caller), `tests/golden/`·통합 테스트(레거시/Entry coverage와 runtime-selection 동등성), 문서(전환 기준·잔여 격차 목록).
@@ -364,11 +364,12 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 
 | 순서 | 작업 | 근거 | 추천 모델 / effort |
 |---|---|---|---|
-| 1 | **P1-8 design** | legacy stored coverage와 concrete runtime selection의 의미가 다르고 Lore/summary 정책도 다르므로 비교 계약을 먼저 고정한다. | GPT-5.6 Sol / High |
-| 2 | **P1-8 implementation** | 승인된 projection/report 계약을 순수 함수·owner-safe read seam·golden/integration test로 구현한다. 백필/전환/flag 변경은 없다. | GPT-5.6 Sol / High |
-| 3 | **AOS-1 Generation Preparation + dual-route architecture contract** | P1-8 evidence 위에서 Story/Character/Relationship/Chapter/Scene 경계, shared selection/budget/trace, direct Provider Adapter와 external Prompt Packet의 terminal seam, apply/import linkage를 고정한다. Taste/Voice는 optional이다. | Claude Opus 5 / High |
+| 1 | ~~**P1-8 design**~~ | **완료:** PR #27에서 coverage/runtime 독립 계약을 승인했다. | GPT-5.6 Sol / High |
+| 2 | **P1-8 implementation 최종 독립 재리뷰** | 기존 5개 blocker 수정에 더해 두 번째 review의 zero-length source, aggregate rendered order, exact-rejected summary chronology 3개 blocker와 regression까지 완료했으나 Draft PR #28은 아직 최종 독립 재리뷰 전이다. merge하거나 다음 gate로 넘어가지 않는다. | GPT-5.6 Sol / High |
+| 3 | **Story-summary chronology correctness gate** | P1-8 evidence가 현재 Entry retrieval이 DB timestamp recency를 사용하며 future/unknown chapter summary를 배제하지 않음을 재현했다. shared Generation Preparation이 이 selection을 상속하기 전에 eligibility/order 계약과 수정 범위를 별도 PR로 고정한다. | Claude Opus 5 / High |
+| 4 | **AOS-1 Generation Preparation + dual-route architecture contract** | chronology gate 결과 위에서 Story/Character/Relationship/Chapter/Scene 경계, shared selection/budget/trace, direct Provider Adapter와 external Prompt Packet의 terminal seam, apply/import linkage를 고정한다. Taste/Voice는 optional이다. | Claude Opus 5 / High |
 
-**현재 순서:** P1-8 설계 승인 → P1-8 구현 → AOS-1 shared Generation Preparation/dual-route contract. 이어지는 AOS-2~AOS-5가 최소 Novel 준비, 직접 API/전체 복사, UI, Chapter apply/import loop를 완성한다. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
+**현재 순서:** PR #28 blocker 수정 완료 → 새로운 독립 세션의 P1-8 재리뷰 → 통과 시에만 story-summary chronology correctness gate → AOS-1 shared Generation Preparation/dual-route contract. P1-8은 authority cutover나 legacy 제거가 아니다. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
 
 ---
 

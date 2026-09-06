@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, get_db
+from app.core.deps import get_current_user, get_db, get_state
 from app.core.errors import ValidationAppError
 from app.core.pagination import PageParams
 from app.models.user import User
@@ -20,10 +20,29 @@ from app.schemas.entry import (
     EntrySubjectType,
     EntryType,
 )
+from app.schemas.equivalence import (
+    EquivalenceCompareRequest,
+    EquivalenceDiagnosticReport,
+)
 from app.services.entry_service import EntryService
 
 router = APIRouter()
 _entries = EntryService()
+
+
+@router.post(
+    "/equivalence:compare",
+    response_model=EquivalenceDiagnosticReport,
+)
+async def compare_legacy_entry_equivalence(
+    dto: EquivalenceCompareRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    state=Depends(get_state),
+):
+    """Compare one owned runtime situation without writes or provider calls."""
+
+    return await state.equivalence_service.compare(db, user_id=user.id, request=dto)
 
 
 @router.get("/review", response_model=list[EntryRead])
@@ -125,6 +144,7 @@ async def list_entries(
     if scope_kind is EntryScope.USER and scope_id is not None:
         raise ValidationAppError("user scope cannot have scope_id")
     if scope_kind in {EntryScope.COLLECTION, EntryScope.WORK, EntryScope.CHARACTER, EntryScope.WORLD} and scope_id is None:
+        assert scope_kind is not None
         raise ValidationAppError(f"{scope_kind.value} scope requires scope_id")
     if scope_id is not None and scope_kind is None:
         raise ValidationAppError("scope_id requires scope")
