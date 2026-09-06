@@ -1,7 +1,7 @@
 # Implementation Status (검증 기준 스냅샷)
 
-- **확정 시각:** 2026-09-06 — PR #28 regenerate timestamp-tie fail-closed blocker 수정 후 재검증. **최종 독립 재리뷰 대기 중이며 merge 완료 상태가 아니다.**
-- **기준 main:** `9deb643c1c506e604f1341a6d3e072c30220ab88` — PR #27 architecture contract merge commit. P1-8 구현은 이 commit에서 새 branch로 시작했다.
+- **확정 시각:** 2026-09-06 — PR #28 merge 후 story-summary chronology Architecture Contract 작성 시점. **Contract는 독립 review/merge 대기이며 production implementation은 시작하지 않았다.**
+- **기준 main:** `ac791ba8369aa1a7f6856cd9f573e0650995ea74` — PR #28 `feat(entry): implement P1-8 legacy equivalence diagnostics` merge commit. PR #28 merged head는 `e1ae734959815ae02cb9e6fd105a40dd85a254b9`다.
 - **판정 기준:** 파일 존재만으로 완료 처리하지 않는다. **실행되는 코드 경로 + API 노출 + 통과하는 테스트**를 근거로 `완료 / 부분 완료 / 미구현`을 판정한다.
 - **문서 우선순위:** ADR → RFC-001 → RFC-002…RFC-012 → `docs/architecture/README.md` → 본 문서 → (참고용) 구 `.kiro/specs` M0~M7 계획.
 
@@ -38,7 +38,7 @@
    - `stash@{0}` (`codex/phase1-review-card-api`): Review Card API 작업본 — 내용이 이미 `bdc2cfb`로 main에 병합됨. 사실상 중복.
    - `stash@{1}` (`codex/new`): **Architecture Frozen 이전의 폐기 노선** — `engines/reference/*`, `engines/planning/*`, `models/reference.py`, `models/planning.py`, 마이그레이션 `0002_story_bible.py` / `0003_reference.py`, 프론트 `reference/`·`plan/` 화면 등 43파일 5,081줄. ADR-002/ADR-003(엔진·per-도메인 테이블 금지), ADR-004(별도 Story Bible 스토어 금지)와 정면 충돌한다. **병합하지 말 것.** 필요한 개념은 Entry `type` + Analyst facet + 프롬프트 파일로 재구현한다.
 3. **빈 잔여 디렉터리:** `backend/app/engines/reference/`, `backend/app/engines/planning/` — git 추적 파일 없음(`git ls-files` 확인). 2번 폐기 노선의 흔적.
-4. 기존 `codex/phase1-*` 원격 브랜치는 모두 main에 병합 완료된 작업 브랜치이거나 폐기 노선이다. 현재 활성 미병합 작업은 `feature/p1-8-equivalence-implementation` 하나이며 PR #27 merge commit에서 분기했다.
+4. 기존 `codex/phase1-*`와 `feature/p1-8-equivalence-implementation` 원격 브랜치는 main에 병합 완료된 작업 브랜치이거나 폐기 노선이다. 현재 작업은 `docs/story-summary-chronology-contract`의 문서 전용 Architecture Contract다.
 
 ---
 
@@ -60,7 +60,8 @@
 | `PromptTemplate` compatibility boundary (P1-4) | frozen `0001` legacy/user-authored `PromptTemplate` table과 기존 `GET/POST` API를 유지하고, repository asset의 identifier/version/body/digest가 유일한 architecture creative source임을 코드·ADR·asset 문서에 명시 | `tests/integration/test_prompt_template_boundary.py` + `test_api.py` POST/GET-list + 기존 asset/Chat/Novel/Summary 회귀 |
 | Entry authoring / canonical + audit read API (P1-5) | `api/v1/entries.py`, `schemas/entry.py`, `services/entry_service.py`, `repositories/entry_repository.py` — 인증 사용자만 server-issued `user`/`human-authored` provenance로 canon을 작성하며, correction은 불변 supersession을 재사용한다. `GET /entries`는 기본 canon/live anchor만 반환하고 `include_history=true`에서 명시적 감사 이력을 제공한다. | `tests/unit/test_entry_authoring_schema.py`, `tests/integration/test_entry_authoring_api.py`, Ruff, P1-5 범위 MyPy, PR #19 GitHub Actions 4건 성공 |
 | retrieve() → Context Assembly 실사용 결선 (P1-6) | `services/entry_generation_context.py`(신규, 유일한 프로덕션 호출 지점) — Chat/Novel이 각각 T1 세션 안·스트리밍 이전에 정확히 1회 retrieve → assemble → PromptEngine으로 주입한다. 독립 `entry` BlockKind(priority 65), `FEATURES["entry_store_context"]` 기본 OFF, `AssembleInput.entry_blocks`/`entry_context_trace` seam, retrieval/assembly 분리 trace. Chat은 work scope를 선언하지 않는다(RFC-003 §13.3). 레거시 lore 스캐너·Memory·prompt asset 경계는 불변이며 마이그레이션 0. 설계 근거는 `docs/architecture/entry-context-integration.md`. | `tests/unit/test_entry_prompt_integration.py`, `tests/unit/test_entry_generation_context.py`, `tests/integration/test_entry_context_generation.py` (41건) + `tests/golden/*`·`test_prompt_budget.py`·`test_streaming.py` 회귀 + mutation 검증 6건 |
-| Legacy ↔ Entry equivalence diagnostics (P1-8, 최종 독립 재리뷰 대기) | `services/legacy_entry_equivalence.py`, `schemas/equivalence.py`, `POST /api/v1/entries/equivalence:compare` — Character/World/Glossary/Lore/Chapter-summary pure projection, deterministic coverage precedence, 독립 Chat/Novel runtime shadow, owner-scoped read-only report. regenerate timestamp ties are unsupported before ambiguous content can reach a downstream diagnostic. feature flag는 변경하지 않고 상태를 evidence로 노출한다. | focused **53 passed**; tie fail-closed and prior blocker regressions are in `tests/integration/test_legacy_entry_equivalence_api.py`, aggregate renderer span 검증은 `tests/unit/test_legacy_entry_equivalence.py`. |
+| Legacy ↔ Entry equivalence diagnostics (P1-8, PR #28 merge 완료) | `services/legacy_entry_equivalence.py`, `schemas/equivalence.py`, `POST /api/v1/entries/equivalence:compare` — Character/World/Glossary/Lore/Chapter-summary pure projection, deterministic coverage precedence, 독립 Chat/Novel runtime shadow, owner-scoped read-only report. regenerate timestamp ties are unsupported before ambiguous content can reach a downstream diagnostic. feature flag는 변경하지 않고 상태를 evidence로 노출한다. | focused **53 passed**; tie fail-closed and prior blocker regressions are in `tests/integration/test_legacy_entry_equivalence_api.py`, aggregate renderer span 검증은 `tests/unit/test_legacy_entry_equivalence.py`. |
+| Story-summary chronology Architecture Contract (독립 review 대기) | `docs/architecture/story-summary-chronology.md` — target Chapter anchor, strict-prior eligibility, current/future/unknown fail-safe exclusion, ascending story order, duplicate/legacy-overlap/lifecycle, Retrieval/Assembly/budget 책임을 정의. **Docs only; implementation 0.** | §20 behavioral matrix 작성. 구현 테스트는 후속 별도 PR 소유. |
 
 **보존된 불변식(코드로 확인됨):** `status=canon`을 직접 받는 API 없음 · AI 생산자의 canon 직접 기록 경로 없음 · chat-private `Memory`는 Entry로 저장되지 않음 · per-library 테이블 없음 · `misc` 타입 없음 · `0001` 미수정.
 
@@ -70,14 +71,15 @@
 
 | # | gap | 확인 결과 |
 |---|---|---|
-| G6 | **legacy Character/World/Lore ↔ Entry Store authority gap** | **관찰 계층의 잔여 3개 blocker 수정 완료, 최종 독립 재리뷰 대기; authority gap은 의도적으로 유지.** owner-safe coverage/runtime report는 resolved-empty source absence, 실제 aggregate span 순서, not-applicable order 격리, explicit Memory evaluation time, regenerate tie ambiguity, exact/entry-only summary의 final-selection chronology를 구분한다. World 배열·Glossary consumer 부재, `Lorebook.enabled` 무시, equal-priority Lore 순서 불확정, Entry DB-timestamp recency 및 future/unknown summary 가능성은 계속 evidence로 남는다. |
+| G6 | **legacy Character/World/Lore ↔ Entry Store authority gap** | **P1-8 관찰 계층은 PR #28로 merge 완료; authority gap은 의도적으로 유지.** owner-safe coverage/runtime report는 resolved-empty source absence, 실제 aggregate span 순서, not-applicable order 격리, explicit Memory evaluation time, regenerate tie ambiguity, exact/entry-only summary의 final-selection chronology를 구분한다. World 배열·Glossary consumer 부재, `Lorebook.enabled` 무시, equal-priority Lore 순서 불확정은 계속 evidence로 남는다. |
+| G11 | **Entry `story.summary` chronology correctness** | P1-8이 DB timestamp recency와 future/unknown summary 선택 가능성을 재현했다. Architecture Contract는 작성됐지만 독립 review/merge 전이며 classifier, pre-rank eligibility, deterministic ordering, trace/tests를 포함한 production implementation은 **미착수**다. |
 | ~~G7~~ | ~~**retrieve()/Context Assembly가 실사용 경로에 미연결**~~ | **해소됨 (P1-6).** `services/entry_generation_context.py`가 유일한 프로덕션 호출 지점으로서 Chat/Novel 양쪽에서 `EntryService.retrieve()` → `assemble_entry_context()` → PromptEngine을 결선한다. 단 기본 OFF 플래그 뒤에 있으므로, 플래그를 켜기 전까지 실제 생성 프롬프트는 종전과 동일하다. RFC-003 §16.8의 "두 개의 권위 있는 검색 경로" 문제는 **의도적으로 미해소** 상태이며 P1-8에서 다룬다. |
 | G8 | ~~edit-diff capture 미구현~~ → **구현 완료** | `docs/architecture/edit-diff-capture-design.md`의 승인된 계약이 구현되었다. 추가된 것: 마이그레이션 `0003_edit_diff_capture`(신규 `edit_diff_captures` 테이블만 생성, 기존 테이블 ALTER 0, `0001`·`0002` 무수정, 백필 없음 — 소급 수집은 불가능하다), `models/edit_diff.py`, `repositories/edit_diff_repository.py`, `repositories/chapter_repository.py`, `services/edit_diff_capture.py`. 손실 지점 2곳이 모두 막혔다: (1) Path A — `EntryService.edit_review_entry()`가 AI pre-image를 파괴적 쓰기와 **동일 트랜잭션**에서 capture하며, content hash가 같으면 row를 쓰지 않는다(Tier 1 atomic, 실패 시 edit rollback). (2) Path B — `NovelService._append_chapter()`가 스트림 세그먼트를 병합 전에 capture한다(Tier 2 atomic). Path B settle은 **동일 chapter의 다음 이어쓰기** T1에서 수행되며 best-effort(Tier 3)다 — 실패해도 요청을 막지 않고 structured warning만 남기며 row는 pending으로 유지된다. `settled_at IS NULL`인 마지막 row는 정상 종료 상태다(after-side는 살아 있는 `chapters.content_text`). `_append_chapter()`와 settle 경로 모두 chapter를 `with_for_update()`로 잠근 뒤 `sequence`를 도출한다. `before_state`/`after_state`는 직교 컬럼이고 `payload_state`는 존재하지 않는다. capture 테이블을 가리키는 ORM relationship이 없으므로 삭제 cascade는 DB가 수행한다. 초과 크기(`EDIT_DIFF_MAX_CHARS = 100_000`/side, 코드 상수 — 스키마 의존 없음)는 절대 truncate하지 않고 해당 side를 NULL + hash/length 유지로 기록한다. HTTP endpoint·DTO·프론트 변경 0, Entry 생성/변경 0. **미구현(의도적):** 설계 §13 read contract `list_edit_diff_captures`는 P2-5 소유다. |
 | G10 | **review 감사 필드 미결정** | 확인됨. `accepted_at`/`rejected_at`/`superseded_at`/`human-edited` provenance는 있으나 review actor·action history·edit diff·되돌림 메타데이터가 없다. `review-card-api.md`가 별도 승인된 persistence 설계 필요로 명시. |
 
 ### 3.1 Phase 1 항목별 재판정
 
-필수 항목은 P1-1~P1-9이며 P1-10은 사용자 데이터 때문에 자동 수행하지 않는 선택 작업이다. 현재 확정 완료는 **7/9**, P1-8은 blocker 수정 완료 후 **독립 재리뷰 대기**다. 이는 diagnostic evidence layer의 review 상태이며 authority cutover 완료율이 아니다.
+필수 항목은 P1-1~P1-9이며 P1-10은 사용자 데이터 때문에 자동 수행하지 않는 선택 작업이다. 현재 확정 완료는 **8/9**이고 P1-9는 미착수다. P1-8 완료는 diagnostic evidence layer의 상태이며 authority cutover 완료를 뜻하지 않는다. 별도 chronology correctness gate는 Architecture Contract 독립 review 대기, 구현 미착수다.
 
 | 항목 | 판정 | 실행 근거와 예외 |
 |---|---|---|
@@ -88,7 +90,7 @@
 | P1-5 direct Entry authoring/audit read | Complete | 승인된 범위인 authenticated create/list/get API와 integration tests 존재; generic direct Entry authoring frontend는 없음 |
 | P1-6 generation wiring | Complete | Chat/Novel/Chat-regenerate production callers와 41 integration/unit tests 존재; feature flag default OFF라 기본 사용자 prompt에는 비활성 |
 | P1-7 edit-diff capture | Complete | Review edit와 Novel continuation production write boundaries, migration `0003`, integration tests 존재; read/distillation consumer는 의도적 후속 |
-| P1-8 legacy equivalence | Review Pending | 기존 5개 blocker 수정과 두 번째 review의 잔여 3개 blocker regression은 완료했으나 최종 독립 재리뷰 전이다. authority cutover는 범위 밖 |
+| P1-8 legacy equivalence | Complete | PR #28 merge commit `ac791ba`; read-only diagnostics이며 authority cutover는 범위 밖 |
 | P1-9 review audit persistence | Not Started | actor/action history 계약과 migration 모두 없음 |
 | P1-10 local cleanup | Partial | 선택 작업. stash 2건과 stale local DB stamp를 확인했으나 사용자 데이터 보호를 위해 변경하지 않음 |
 
@@ -149,11 +151,11 @@
 | 영역 | 진행도 |
 |---|---|
 | Substrate (M0~M7 기반) | 약 90% — 잔여는 Prompt Cache, 메타 요약 상한, refresh 회전/denylist, JSON Export |
-| Architecture Phase 1 (Store/Retrieval/Review gate) | **필수 7/9 완료 + P1-8 독립 재리뷰 대기** — P1-9 미착수. P1-8은 authority cutover나 legacy 제거가 아니다. |
+| Architecture Phase 1 (Store/Retrieval/Review gate) | **필수 8/9 완료** — P1-9 미착수. P1-8은 authority cutover나 legacy 제거가 아니며 chronology implementation도 아직 시작하지 않았다. |
 | Phase 2 Analyst | 0% |
 | Phase 3 Writer | 0% (기존 single-pass 이어쓰기는 substrate로 보존) |
 | Phase 4 Story Bible | 0% (별도 스토어 없음 = 의도된 상태) |
 | Phase 5 Character Chat 공유 지식 통합 | 약 25% — P1-6이 character/world/user canon 주입 경로를 열었다. 명시적 work 선택·relationship.state·북마크 승격은 미구현 |
 | Phase 6 Bench | 약 15% — retrieval/context 골든 픽스처만 |
 
-전체적으로 **"substrate는 서 있고, Store/legacy의 stored coverage와 실제 선택 차이를 진단할 수 있지만 기본 OFF 플래그와 legacy authority는 그대로인 상태"** 다. P1-8이 재현한 future/unknown `story.summary` 선택 가능성은 shared Generation Preparation이 상속해서는 안 되는 chronology correctness risk다. 다음 작업은 이 eligibility/order 계약을 별도 correctness PR로 고정하는 것이며, 그 뒤 AOS-1 shared Generation Preparation 기반 dual-generation milestone로 진행한다. P1-9 review audit은 여전히 미착수 독립 작업이다.
+전체적으로 **"substrate는 서 있고, Store/legacy의 stored coverage와 실제 선택 차이를 진단할 수 있지만 기본 OFF 플래그와 legacy authority는 그대로인 상태"** 다. P1-8이 재현한 future/unknown `story.summary` 위험에 대해 docs-only chronology contract가 작성됐고 독립 review/merge를 기다린다. 다음 작업은 새 branch/new session의 chronology implementation이며, 그 뒤 AOS-1 shared Generation Preparation 기반 dual-generation milestone로 진행한다. P1-9 review audit은 여전히 미착수 독립 작업이다.
