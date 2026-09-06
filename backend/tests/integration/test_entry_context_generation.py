@@ -14,15 +14,21 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.adapters.base import AssembledPrompt, Completion, ModelCapability, ProviderRequest
 from app.config import FEATURE_ENTRY_STORE_CONTEXT, get_settings
+from app.core.errors import Conflict
 from app.models.entry import Entry
+from app.models.novel import Chapter
 from app.models.user import User
 from app.schemas.entry import EntryScope, EntryStatus, EntryType
+from app.services import entry_generation_context as entry_generation_context_module
+from app.services import novel_service as novel_service_module
 from app.services.entry_generation_context import ENTRY_CONTEXT_LIMIT
 from app.services.entry_service import EntryService
+from app.services.novel_service import NovelService
 
 _CAPTURED: list[AssembledPrompt] = []
 
@@ -120,25 +126,30 @@ def _entry(
     status: EntryStatus = EntryStatus.CANON,
     user_id: str | None = None,
     priority: int = 100,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
+    data: dict[str, object] | None = None,
+    created_at_chapter_id: str | None = None,
 ) -> Entry:
     return Entry(
         user_id=user_id or _owner_id(),
         scope_kind=scope_kind.value,
         scope_id=scope_id,
-        subject_type=None,
-        subject_id=None,
+        subject_type=subject_type,
+        subject_id=subject_id,
         subject_data={},
         type=entry_type.value,
         status=status.value,
         title=None,
         content=content,
-        data={},
+        data=data or {},
         provenance={
             "source_kind": "user",
             "capture_method": "human-authored",
             "producer": "p1-6-test",
         },
         priority=priority,
+        created_at_chapter_id=created_at_chapter_id,
         accepted_at=datetime(2026, 1, 1, tzinfo=UTC) if status is EntryStatus.CANON else None,
     )
 
@@ -163,6 +174,22 @@ def _write(*rows) -> list[str]:
         return ids
 
     return asyncio.run(_run())
+
+
+def _set_chapter_summary(chapter_id: str, summary: str) -> None:
+    async def _run() -> None:
+        engine = create_async_engine(os.environ["DATABASE_URL"])
+        sessionmaker = async_sessionmaker(
+            engine, expire_on_commit=False, class_=AsyncSession
+        )
+        async with sessionmaker() as session:
+            chapter = await session.get(Chapter, chapter_id)
+            assert chapter is not None
+            chapter.summary = summary
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(_run())
 
 
 def _foreign_owner() -> str:
@@ -697,3 +724,386 @@ def test_novel_retrieval_failure_is_not_swallowed(make_client, monkeypatch) -> N
     assert _CAPTURED == []
     chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
     assert chapter["content_text"] == "그는 문을 열었다."
+
+
+def test_novel_provider_receives_only_prior_summaries_in_story_order(
+    make_client, retrieve_calls
+) -> None:
+    client = make_client(entry_context=True)
+    work = client.post("/api/v1/works", json={"title": "Chronology"}).json()
+    chapters = [
+        client.post(
+            f"/api/v1/works/{work['id']}/chapters",
+            json={"title": f"{index}", "content_text": f"chapter {index}"},
+        ).json()
+        for index in range(1, 8)
+    ]
+    chapter_1, chapter_2, target, *_middle, chapter_7 = chapters
+    summary_1, summary_2, current, future, unknown = _write(
+        _entry(
+            content="SUMMARY ONE",
+            scope_kind=EntryScope.WORK,
+            scope_id=work["id"],
+            entry_type=EntryType.STORY_SUMMARY,
+            subject_type="chapter",
+            subject_id=chapter_1["id"],
+            priority=1,
+            created_at_chapter_id=chapter_2["id"],
+        ),
+        _entry(
+            content="SUMMARY TWO",
+            scope_kind=EntryScope.WORK,
+            scope_id=work["id"],
+            entry_type=EntryType.STORY_SUMMARY,
+            subject_type="chapter",
+            subject_id=chapter_2["id"],
+            priority=100,
+        ),
+        _entry(
+            content="CURRENT LEAK",
+            scope_kind=EntryScope.WORK,
+            scope_id=work["id"],
+            entry_type=EntryType.STORY_SUMMARY,
+            subject_type="chapter",
+            subject_id=target["id"],
+            priority=100,
+        ),
+        _entry(
+            content="FUTURE LEAK " * 100,
+            scope_kind=EntryScope.WORK,
+            scope_id=work["id"],
+            entry_type=EntryType.STORY_SUMMARY,
+            subject_type="chapter",
+            subject_id=chapter_7["id"],
+            priority=100,
+        ),
+        _entry(
+            content="UNKNOWN LEAK",
+            scope_kind=EntryScope.WORK,
+            scope_id=work["id"],
+            entry_type=EntryType.STORY_SUMMARY,
+            subject_type="work",
+            subject_id=work["id"],
+            priority=100,
+        ),
+    )
+
+    response = client.post(
+        f"/api/v1/works/chapters/{target['id']}/continue",
+        json={"instruction": "continue", "target_words": 100},
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(_CAPTURED) == 1
+    text = _prompt_text(_CAPTURED[0])
+    assert text.index("SUMMARY ONE") < text.index("SUMMARY TWO")
+    assert "CURRENT LEAK" not in text
+    assert "FUTURE LEAK" not in text
+    assert "UNKNOWN LEAK" not in text
+    trace = _CAPTURED[0].trace["entry_context"]
+    assert [
+        entry_id
+        for entry_id in trace["selected_entry_ids"]
+        if entry_id in {summary_1, summary_2}
+    ] == [summary_1, summary_2]
+    chronology_exclusions = {
+        item["entry_id"]: item["reason"]
+        for item in trace["retrieval_exclusions"]["story_summary_chronology"]
+    }
+    assert {
+        entry_id: chronology_exclusions[entry_id]
+        for entry_id in (current, future, unknown)
+    } == {
+        current: "current_chapter_summary",
+        future: "future_chapter_summary",
+        unknown: "missing_chapter_subject",
+    }
+    assert future not in trace["retrieval_exclusions"][
+        "retrieval_budget_rejected_entry_ids"
+    ]
+    assert future not in trace["retrieval_exclusions"]["limit_rejected_entry_ids"]
+    assert len(retrieve_calls) == 1
+
+
+def test_novel_interleaves_legacy_and_entry_summaries_by_story_order(make_client) -> None:
+    client = make_client(entry_context=True)
+    work = client.post("/api/v1/works", json={"title": "Mixed chronology"}).json()
+    chapter_1, chapter_2, target = [
+        client.post(
+            f"/api/v1/works/{work['id']}/chapters",
+            json={"title": str(index), "content_text": f"chapter {index}"},
+        ).json()
+        for index in range(1, 4)
+    ]
+    _set_chapter_summary(chapter_1["id"], "LEGACY CHAPTER ONE")
+    _write(
+        _entry(
+            content="ENTRY CHAPTER TWO",
+            scope_kind=EntryScope.WORK,
+            scope_id=work["id"],
+            entry_type=EntryType.STORY_SUMMARY,
+            subject_type="chapter",
+            subject_id=chapter_2["id"],
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/works/chapters/{target['id']}/continue",
+        json={"instruction": "continue", "target_words": 100},
+    )
+
+    assert response.status_code == 200, response.text
+    text = _prompt_text(_CAPTURED[0])
+    assert text.index("LEGACY CHAPTER ONE") < text.index("ENTRY CHAPTER TWO")
+
+
+@pytest.mark.parametrize("legacy_summary", ["", "   ", "\n\n", "legacy prose"])
+def test_novel_legacy_substantive_predicate_applies_with_flag_off(
+    make_client, legacy_summary: str
+) -> None:
+    client = make_client(entry_context=False)
+    _, work_id, target_id = _novel_setup(
+        client, title=f"legacy-{repr(legacy_summary)}", world_name="Legacy World"
+    )
+    _set_chapter_summary(target_id, legacy_summary)
+    next_chapter = client.post(
+        f"/api/v1/works/{work_id}/chapters",
+        json={"title": "2", "content_text": "next"},
+    ).json()
+
+    response = client.post(
+        f"/api/v1/works/chapters/{next_chapter['id']}/continue",
+        json={"instruction": "continue", "target_words": 100},
+    )
+
+    assert response.status_code == 200, response.text
+    text = _prompt_text(_CAPTURED[0])
+    if legacy_summary.strip():
+        assert "legacy prose" in text
+    else:
+        assert not any(
+            item["kind"] == "chapter" for item in _CAPTURED[0].trace["entries"]
+        )
+
+
+def test_novel_reorder_during_preparation_uses_one_pre_reorder_view(
+    make_client, monkeypatch
+) -> None:
+    client = make_client(entry_context=True)
+    work = client.post("/api/v1/works", json={"title": "Concurrent"}).json()
+    source = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "S", "content_text": "source"},
+    ).json()
+    target = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "T", "content_text": "target"},
+    ).json()
+
+    async def _set_initial() -> None:
+        sessionmaker = cast(Any, client.app).state.sessionmaker
+        async with sessionmaker() as session:
+            rows = list(
+                (
+                    await session.execute(
+                        select(Chapter).where(Chapter.work_id == work["id"])
+                    )
+                ).scalars().all()
+            )
+            for chapter in rows:
+                chapter.index += 100000
+            await session.flush()
+            by_id = {chapter.id: chapter for chapter in rows}
+            by_id[source["id"]].index = 2
+            by_id[source["id"]].summary = "CONSISTENT LEGACY SOURCE"
+            by_id[target["id"]].index = 10
+            await session.commit()
+
+    asyncio.run(_set_initial())
+    entry_id = _write(
+        _entry(
+            content="CONSISTENT ENTRY SOURCE",
+            scope_kind=EntryScope.WORK,
+            scope_id=work["id"],
+            entry_type=EntryType.STORY_SUMMARY,
+            subject_type="chapter",
+            subject_id=source["id"],
+        )
+    )[0]
+    original = NovelService._build_story_context
+    reordered = False
+
+    async def _reorder_between_target_and_evidence(self, session, loaded_work, chapter):  # noqa: ANN001
+        nonlocal reordered
+        if not reordered:
+            reordered = True
+            async with self.sm() as writer:
+                rows = list(
+                    (
+                        await writer.execute(
+                            select(Chapter).where(Chapter.work_id == work["id"])
+                        )
+                    ).scalars().all()
+                )
+                for row in rows:
+                    row.index += 100000
+                await writer.flush()
+                by_id = {row.id: row for row in rows}
+                by_id[target["id"]].index = 3
+                by_id[source["id"]].index = 4
+                await writer.commit()
+        return await original(self, session, loaded_work, chapter)
+
+    monkeypatch.setattr(
+        NovelService, "_build_story_context", _reorder_between_target_and_evidence
+    )
+
+    response = client.post(
+        f"/api/v1/works/chapters/{target['id']}/continue",
+        json={"instruction": "continue", "target_words": 100},
+    )
+
+    assert response.status_code == 200, response.text
+    assert reordered is True
+    assert len(_CAPTURED) == 1
+    text = _prompt_text(_CAPTURED[0])
+    assert text.count("CONSISTENT LEGACY SOURCE") == 1
+    assert "CONSISTENT ENTRY SOURCE" not in text
+    exclusions = _CAPTURED[0].trace["entry_context"]["retrieval_exclusions"][
+        "story_summary_chronology"
+    ]
+    assert exclusions == [
+        {
+            "entry_id": entry_id,
+            "disposition": "prior",
+            "reason": "legacy_summary_authority_overlap",
+            "source_chapter_id": source["id"],
+            "source_chapter_index": 2,
+        }
+    ]
+    after = client.get(f"/api/v1/works/{work['id']}/chapters").json()
+    assert [(chapter["id"], chapter["index"]) for chapter in after] == [
+        (target["id"], 3),
+        (source["id"], 4),
+    ]
+
+
+def test_stale_anchor_fails_before_assembly_prompt_and_provider(
+    make_client, monkeypatch
+) -> None:
+    client = make_client(entry_context=True)
+    _, _work_id, target_id = _novel_setup(
+        client, title="Stale", world_name="Stale World"
+    )
+    calls = {"retrieval": 0, "assembly": 0, "prompt": 0}
+    original_factory = novel_service_module.build_novel_retrieve_request
+    original_retrieve = EntryService.retrieve
+    original_assembly = entry_generation_context_module.assemble_entry_context
+    novel_engine = cast(Any, client.app).state.novel_service.engine
+    original_prompt = novel_engine.assemble_continue
+
+    def _stale_factory(**kwargs):  # noqa: ANN003, ANN202
+        request = original_factory(**kwargs)
+        policy = request.story_summary_chronology
+        assert policy is not None
+        stale_anchor = policy.anchor.model_copy(
+            update={"chapter_index": policy.anchor.chapter_index + 1}
+        )
+        return request.model_copy(
+            update={
+                "story_summary_chronology": policy.model_copy(
+                    update={"anchor": stale_anchor}
+                )
+            }
+        )
+
+    async def _count_retrieval(self, session, request):  # noqa: ANN001
+        calls["retrieval"] += 1
+        return await original_retrieve(self, session, request)
+
+    def _count_assembly(request):  # noqa: ANN001, ANN202
+        calls["assembly"] += 1
+        return original_assembly(request)
+
+    def _count_prompt(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        calls["prompt"] += 1
+        return original_prompt(*args, **kwargs)
+
+    monkeypatch.setattr(
+        novel_service_module, "build_novel_retrieve_request", _stale_factory
+    )
+    monkeypatch.setattr(EntryService, "retrieve", _count_retrieval)
+    monkeypatch.setattr(
+        entry_generation_context_module, "assemble_entry_context", _count_assembly
+    )
+    monkeypatch.setattr(
+        novel_engine,
+        "assemble_continue",
+        _count_prompt,
+    )
+
+    with pytest.raises(RuntimeError, match="response already started") as error:
+        client.post(
+            f"/api/v1/works/chapters/{target_id}/continue",
+            json={"instruction": "continue", "target_words": 100},
+        )
+
+    assert isinstance(error.value.__cause__, Conflict)
+    assert "anchor drifted" in str(error.value.__cause__)
+    assert calls == {"retrieval": 1, "assembly": 0, "prompt": 0}
+    assert _CAPTURED == []
+
+
+def test_reorder_after_preparation_keeps_immutable_context_without_provider_lock(
+    make_client, monkeypatch
+) -> None:
+    client = make_client(entry_context=True)
+    work = client.post("/api/v1/works", json={"title": "After preparation"}).json()
+    source = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "S", "content_text": "source"},
+    ).json()
+    target = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "T", "content_text": "target"},
+    ).json()
+    _set_chapter_summary(source["id"], "PREPARED LEGACY CONTEXT")
+    reorder_committed_before_provider = False
+
+    async def _reorder_after_preparation(self, user_id, chapter_id):  # noqa: ANN001
+        nonlocal reorder_committed_before_provider
+        async with self.sm() as writer:
+            rows = list(
+                (
+                    await writer.execute(
+                        select(Chapter).where(Chapter.work_id == work["id"])
+                    )
+                ).scalars().all()
+            )
+            for row in rows:
+                row.index += 100000
+            await writer.flush()
+            by_id = {row.id: row for row in rows}
+            by_id[target["id"]].index = 1
+            by_id[source["id"]].index = 2
+            await writer.commit()
+        reorder_committed_before_provider = True
+
+    monkeypatch.setattr(
+        NovelService, "_settle_chapter_captures", _reorder_after_preparation
+    )
+
+    response = client.post(
+        f"/api/v1/works/chapters/{target['id']}/continue",
+        json={"instruction": "continue", "target_words": 100},
+    )
+
+    assert response.status_code == 200, response.text
+    assert reorder_committed_before_provider is True
+    assert len(_CAPTURED) == 1
+    assert "PREPARED LEGACY CONTEXT" in _prompt_text(_CAPTURED[0])
+    after = client.get(f"/api/v1/works/{work['id']}/chapters").json()
+    assert [(chapter["id"], chapter["index"]) for chapter in after] == [
+        (target["id"], 1),
+        (source["id"], 2),
+    ]

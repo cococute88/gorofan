@@ -24,6 +24,8 @@ from app.schemas.entry import (
     EntryStatus,
     EntrySubjectType,
     EntryType,
+    StorySummaryChronologyAnchor,
+    StorySummaryGenerationOperation,
 )
 
 NOW = datetime(2026, 7, 13, tzinfo=UTC)
@@ -129,6 +131,29 @@ def test_selected_order_and_rendered_text_are_deterministic() -> None:
     assert first.included_entry_ids == ["entry-b", "entry-a"]
     assert [block.content for block in first.blocks] == [block.content for block in second.blocks]
     assert first.blocks[0].content == "[story.fact] 두 번째\n황궁의 비밀 통로는 북쪽 벽 뒤에 있다."
+
+
+def test_anchored_summary_without_retrieval_evidence_fails_closed() -> None:
+    retrieval = _result(
+        [
+            _item(
+                "unsafe-summary",
+                entry_type=EntryType.STORY_SUMMARY,
+                subject_type=EntrySubjectType.CHAPTER,
+                subject_id="chapter-1",
+            )
+        ]
+    )
+    retrieval.story_summary_chronology_anchor = StorySummaryChronologyAnchor(
+        owner_id="owner",
+        work_id="work-1",
+        chapter_id="chapter-3",
+        chapter_index=3,
+        operation=StorySummaryGenerationOperation.CONTINUE,
+    )
+
+    with pytest.raises(ValueError, match="without prior chronology evidence"):
+        assemble_entry_context(EntryContextAssemblyRequest(retrieval, budget=4096))
 
 
 def test_metadata_preserves_entry_and_retrieval_trace_fields() -> None:

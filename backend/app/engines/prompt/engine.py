@@ -93,6 +93,7 @@ class AssembleInput:
     memory_long: list | None = None  # list[Memory-like]
     history: list | None = None  # list[Message-like]
     chapter_prior_summaries: list[str] | None = None
+    chapter_prior_summary_indexes: list[int] | None = None
     # Already-assembled Entry Store blocks (P1-6). The caller owns retrieval and
     # Context Assembly; the engine only collects, orders, and budgets them.
     entry_blocks: list[PromptBlock] | None = None
@@ -164,7 +165,16 @@ class PromptEngine:
     def _collect(self, inp: AssembleInput) -> list[PromptBlock]:
         blocks: list[PromptBlock] = []
 
-        def add(kind: BlockKind, role, content: str, *, priority=None, truncatable=True, bid=None):
+        def add(
+            kind: BlockKind,
+            role,
+            content: str,
+            *,
+            priority=None,
+            truncatable=True,
+            bid=None,
+            metadata: dict[str, object] | None = None,
+        ):
             if not content:
                 return
             blocks.append(
@@ -175,6 +185,7 @@ class PromptEngine:
                     content=content,
                     priority=priority if priority is not None else DEFAULT_PRIORITY[kind],
                     truncatable=truncatable,
+                    metadata=dict(metadata or {}),
                 )
             )
 
@@ -195,8 +206,21 @@ class PromptEngine:
         blocks.extend(inp.entry_blocks or [])
         for mem in inp.memory_long or []:
             add("memory", "system", getattr(mem, "content", ""), priority=60)
-        for s in inp.chapter_prior_summaries or []:
-            add("chapter", "system", s, priority=DEFAULT_PRIORITY["chapter"])
+        prior_summary_indexes = inp.chapter_prior_summary_indexes or []
+        for position, summary in enumerate(inp.chapter_prior_summaries or []):
+            metadata: dict[str, object] = {}
+            if position < len(prior_summary_indexes):
+                metadata = {
+                    "prepared_render_group": "story_summary",
+                    "prepared_render_order": prior_summary_indexes[position],
+                }
+            add(
+                "chapter",
+                "system",
+                summary,
+                priority=DEFAULT_PRIORITY["chapter"],
+                metadata=metadata,
+            )
         # short-term/history as conversation turns
         history_src = (inp.memory_short or []) + (inp.history or [])
         seen_ids = set()
@@ -218,9 +242,17 @@ class PromptEngine:
 
     def _order(self, blocks: list[PromptBlock]) -> list[PromptBlock]:
         order_index = {k: i for i, k in enumerate(LAYER_ORDER)}
+
+        def key(block: PromptBlock) -> tuple[int, int, int]:
+            if block.metadata.get("prepared_render_group") == "story_summary":
+                render_order = block.metadata.get("prepared_render_order")
+                if isinstance(render_order, int) and not isinstance(render_order, bool):
+                    return (order_index["chapter"], render_order, 0)
+            return (order_index.get(block.kind, 99), 0, -block.priority)
+
         return sorted(
             blocks,
-            key=lambda b: (order_index.get(b.kind, 99), -b.priority),
+            key=key,
         )
 
     # ----- assemble (design 9.6) -----

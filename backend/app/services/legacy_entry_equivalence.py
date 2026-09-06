@@ -70,6 +70,11 @@ from app.services.entry_generation_context import (
 )
 from app.services.entry_retrieval import RETRIEVAL_POLICY_VERSION
 from app.services.entry_service import EntryService
+from app.services.story_order_snapshot import begin_story_order_snapshot
+from app.services.story_summary_chronology import (
+    classify_chapter_story_position,
+    is_substantive_legacy_summary,
+)
 
 PROJECTION_POLICY_VERSION = "legacy-entry-equivalence-v1"
 _SUPPORTED_ENTRY_TYPES = {
@@ -630,6 +635,11 @@ class LegacyEntryEquivalenceService:
         if request.chat is not None:
             return await self._compare_chat(session, user_id, request)
         assert request.novel is not None
+        # Authentication has already read the owner through this request-scoped
+        # session. End that read transaction so the Novel diagnostic can pin the
+        # same story-order snapshot contract as production preparation.
+        await session.rollback()
+        await begin_story_order_snapshot(session)
         return await self._compare_novel(session, user_id, request)
 
     async def _compare_chat(
@@ -717,6 +727,7 @@ class LegacyEntryEquivalenceService:
                 entries=entries,
                 candidates=candidates,
                 target_chapter_index=None,
+                target_chapter_id=None,
             )
         retrieve_request = build_chat_retrieve_request(
             user_id=user_id,
@@ -750,6 +761,7 @@ class LegacyEntryEquivalenceService:
             retrieval=retrieval,
             assembled_entry_ids=list(assembled.included_entry_ids),
             target_chapter_index=None,
+            target_chapter_id=None,
             legacy_attribution=legacy_attribution,
         )
         return self._report(
@@ -764,6 +776,7 @@ class LegacyEntryEquivalenceService:
             entries=entries,
             candidates=candidates,
             target_chapter_index=None,
+            target_chapter_id=None,
         )
 
     async def _compare_novel(
@@ -864,6 +877,12 @@ class LegacyEntryEquivalenceService:
             chapter=chapter,
             instruction=dto.instruction,
             context_window=budget.context_window,
+            substantive_legacy_summary_chapter_ids=tuple(
+                item.id
+                for item in chapters
+                if item.index < chapter.index
+                and is_substantive_legacy_summary(item.summary)
+            ),
         )
         retrieval = await self.entries.retrieve(session, retrieve_request)
         assembled = assemble_entry_context(
@@ -872,7 +891,8 @@ class LegacyEntryEquivalenceService:
         prior = [
             item.summary
             for item in chapters
-            if item.index < chapter.index and item.summary
+            if item.index < chapter.index
+            and is_substantive_legacy_summary(item.summary)
         ]
         legacy_prompt, entry_prompt, legacy_attribution = self._novel_prompts(
             chapter=chapter,
@@ -894,6 +914,7 @@ class LegacyEntryEquivalenceService:
             retrieval=retrieval,
             assembled_entry_ids=list(assembled.included_entry_ids),
             target_chapter_index=chapter.index,
+            target_chapter_id=chapter.id,
             legacy_attribution=legacy_attribution,
         )
         return self._report(
@@ -908,6 +929,7 @@ class LegacyEntryEquivalenceService:
             entries=entries,
             candidates=candidates,
             target_chapter_index=chapter.index,
+            target_chapter_id=chapter.id,
         )
 
     async def _owned_world(
@@ -1431,6 +1453,7 @@ class LegacyEntryEquivalenceService:
         retrieval: EntryRetrievalResult,
         assembled_entry_ids: list[str],
         target_chapter_index: int | None,
+        target_chapter_id: str | None,
         legacy_attribution: dict[str, LegacySourceAttribution],
     ) -> RuntimeReport:
         coverage_by_key = {record.projection.source_key: record for record in coverage}
@@ -1438,6 +1461,10 @@ class LegacyEntryEquivalenceService:
         retrieval_items = list(retrieval.items)
         retrieval_ids = [item.entry.id for item in retrieval_items]
         retrieval_trace = retrieval.trace
+        chronology_exclusions_by_id = {
+            exclusion.entry_id: exclusion
+            for exclusion in retrieval_trace.story_summary_chronology_exclusions
+        }
         final_entry_ids = _final_entry_ids(entry_prompt, assembled_entry_ids)
         entry_positions = {entry_id: index for index, entry_id in enumerate(final_entry_ids)}
         legacy_trace_rows = list(legacy_prompt.trace.get("entries", []))
@@ -1630,7 +1657,18 @@ class LegacyEntryEquivalenceService:
             final_exact = [entry_id for entry_id in assembled_exact if entry_id in final_entry_ids]
             entry_exclusion: str | None = None
             if not final_exact:
-                if any(entry_id in retrieval_trace.limit_rejected_entry_ids for entry_id in exact_ids):
+                chronology_reasons = sorted(
+                    {
+                        chronology_exclusions_by_id[entry_id].reason
+                        for entry_id in exact_ids
+                        if entry_id in chronology_exclusions_by_id
+                    }
+                )
+                if chronology_reasons:
+                    entry_exclusion = chronology_reasons[0]
+                    codes.add("entry_chronology_excluded")
+                    codes.update(chronology_reasons)
+                elif any(entry_id in retrieval_trace.limit_rejected_entry_ids for entry_id in exact_ids):
                     entry_exclusion = "entry_limit_rejected"
                     codes.add(entry_exclusion)
                 elif any(entry_id in retrieval_trace.budget_rejected_entry_ids for entry_id in exact_ids):
@@ -1667,6 +1705,7 @@ class LegacyEntryEquivalenceService:
                         _story_position_codes(
                             candidate,
                             target_chapter_index,
+                            target_chapter_id,
                             selected=entry_id in final_exact,
                         )
                     )
@@ -1773,7 +1812,10 @@ class LegacyEntryEquivalenceService:
             ):
                 codes.update(
                     _story_position_codes(
-                        entry_only_candidate, target_chapter_index, selected=True
+                        entry_only_candidate,
+                        target_chapter_index,
+                        target_chapter_id,
+                        selected=True,
                     )
                 )
             records.append(
@@ -1817,6 +1859,7 @@ class LegacyEntryEquivalenceService:
         entries: list[Entry],
         candidates: list[EntrySnapshot],
         target_chapter_index: int | None,
+        target_chapter_id: str | None,
     ) -> EquivalenceDiagnosticReport:
         exact_entry_ids = {
             candidate.entry_id
@@ -1849,6 +1892,7 @@ class LegacyEntryEquivalenceService:
                     _story_position_codes(
                         candidate,
                         target_chapter_index,
+                        target_chapter_id,
                         selected=runtime_selected,
                     )
                 )
@@ -1965,18 +2009,25 @@ def _attributed_source_survived(
 def _story_position_codes(
     candidate: EntrySnapshot,
     target_chapter_index: int | None,
+    target_chapter_id: str | None,
     *,
     selected: bool,
 ) -> set[str]:
-    if target_chapter_index is None:
+    if target_chapter_index is None or target_chapter_id is None:
         return set()
     codes: set[str] = set()
     unknown = False
     future = False
     if candidate.subject_type == "chapter":
-        if candidate.subject_story_position is None:
+        classification = classify_chapter_story_position(
+            target_chapter_id=target_chapter_id,
+            target_chapter_index=target_chapter_index,
+            source_chapter_id=candidate.subject_id,
+            source_chapter_index=candidate.subject_story_position,
+        )
+        if classification.disposition.value == "unknown":
             unknown = True
-        elif candidate.subject_story_position >= target_chapter_index:
+        elif classification.disposition.value in {"current", "future"}:
             future = True
     else:
         unknown = True

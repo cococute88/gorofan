@@ -10,10 +10,10 @@ import builtins
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFound, ValidationAppError
+from app.core.errors import Conflict, NotFound, ValidationAppError
 from app.core.pagination import Page, PageParams
 from app.db.base import utcnow
 from app.models.character import Character
@@ -37,12 +37,22 @@ from app.schemas.entry import (
     EntryType,
     ProvenanceCaptureMethod,
     ProvenanceSourceKind,
+    StorySummaryChronologyDisposition,
+    StorySummaryChronologyEvidence,
+    StorySummaryChronologyExclusion,
 )
 from app.services.edit_diff_capture import EditDiffCaptureService
 from app.services.entry_retrieval import (
     RETRIEVAL_POLICY_VERSION,
+    order_selected_story_summaries,
     rank_entries,
     select_entries,
+)
+from app.services.story_summary_chronology import (
+    StorySummaryClassification,
+    StorySummarySourceEvidence,
+    classify_story_summary,
+    is_substantive_legacy_summary,
 )
 
 ALLOWED_STATUS_TRANSITIONS: dict[EntryStatus, set[EntryStatus]] = {
@@ -389,11 +399,27 @@ class EntryService:
             subjects=subjects,
         )
 
+        chronology_evidence: dict[str, StorySummaryChronologyEvidence] = {}
+        chronology_exclusions: list[StorySummaryChronologyExclusion] = []
+        if request.story_summary_chronology is not None:
+            (
+                candidates,
+                chronology_evidence,
+                chronology_exclusions,
+            ) = await self._apply_story_summary_chronology(
+                session, request, candidates
+            )
+
         candidates, orphaned_ids = await self._exclude_orphaned_candidates(
             session, request.user_id, candidates
         )
-        ranked = rank_entries(candidates, request)
+        ranked = rank_entries(
+            candidates,
+            request,
+            story_summary_chronology_by_entry_id=chronology_evidence,
+        )
         selected, budget_rejected, limit_rejected = select_entries(ranked, request)
+        selected = order_selected_story_summaries(selected)
         return EntryRetrievalResult(
             items=selected,
             total_estimated_tokens=sum(item.estimated_tokens for item in selected),
@@ -401,10 +427,184 @@ class EntryService:
             policy_version=RETRIEVAL_POLICY_VERSION,
             trace=EntryRetrievalTrace(
                 excluded_orphaned_entry_ids=orphaned_ids,
+                story_summary_chronology_exclusions=chronology_exclusions,
                 budget_rejected_entry_ids=budget_rejected,
                 limit_rejected_entry_ids=limit_rejected,
             ),
+            story_summary_chronology_anchor=(
+                request.story_summary_chronology.anchor
+                if request.story_summary_chronology is not None
+                else None
+            ),
         )
+
+    async def _apply_story_summary_chronology(
+        self,
+        session: AsyncSession,
+        request: EntryRetrieveRequest,
+        candidates: builtins.list[Entry],
+    ) -> tuple[
+        builtins.list[Entry],
+        dict[str, StorySummaryChronologyEvidence],
+        builtins.list[StorySummaryChronologyExclusion],
+    ]:
+        """Exclude unsafe Chapter summaries before ranking or token counting."""
+
+        policy = request.story_summary_chronology
+        assert policy is not None
+        anchor = policy.anchor
+        if anchor.owner_id != request.user_id:
+            raise Conflict("Story chronology owner does not match retrieval owner")
+
+        summaries = [
+            entry for entry in candidates if entry.type == EntryType.STORY_SUMMARY.value
+        ]
+        subject_ids = {
+            entry.subject_id
+            for entry in summaries
+            if entry.subject_type == EntrySubjectType.CHAPTER.value
+            and entry.subject_id is not None
+        }
+        relevant_chapter_ids = subject_ids | {anchor.chapter_id}
+        stmt = (
+            select(Chapter, Work)
+            .join(Work, Work.id == Chapter.work_id)
+            .where(
+                or_(
+                    Chapter.work_id == anchor.work_id,
+                    Chapter.id.in_(relevant_chapter_ids),
+                )
+            )
+        )
+        chapter_rows = list((await session.execute(stmt)).tuples().all())
+        chapters_by_id = {chapter.id: (chapter, work) for chapter, work in chapter_rows}
+        target_row = chapters_by_id.get(anchor.chapter_id)
+        if target_row is None:
+            raise Conflict("Story chronology target is no longer available")
+        target, target_work = target_row
+        if (
+            target.work_id != anchor.work_id
+            or target.index != anchor.chapter_index
+            or target.user_id != anchor.owner_id
+            or target_work.user_id != anchor.owner_id
+            or target_work.deleted_at is not None
+        ):
+            raise Conflict("Story chronology anchor drifted before retrieval")
+
+        same_work_rows = [
+            (chapter, work)
+            for chapter, work in chapter_rows
+            if chapter.work_id == anchor.work_id
+            and chapter.user_id == anchor.owner_id
+            and work.user_id == anchor.owner_id
+            and work.deleted_at is None
+        ]
+        chapters_at_position: dict[int, set[str]] = {}
+        for chapter, _work in same_work_rows:
+            chapters_at_position.setdefault(chapter.index, set()).add(chapter.id)
+        if len(chapters_at_position.get(anchor.chapter_index, set())) != 1:
+            raise Conflict("Story chronology target position is ambiguous")
+        ambiguous_positions = {
+            index for index, chapter_ids in chapters_at_position.items() if len(chapter_ids) > 1
+        }
+
+        actual_legacy_ids = {
+            chapter.id
+            for chapter, _work in same_work_rows
+            if chapter.index < anchor.chapter_index
+            and is_substantive_legacy_summary(chapter.summary)
+        }
+        if actual_legacy_ids != set(policy.substantive_legacy_chapter_ids):
+            raise Conflict("Legacy summary evidence drifted before retrieval")
+
+        classifications: dict[str, StorySummaryClassification] = {}
+        for entry in summaries:
+            source_row = chapters_by_id.get(entry.subject_id or "")
+            source, source_work = source_row if source_row is not None else (None, None)
+            classification = classify_story_summary(
+                anchor,
+                StorySummarySourceEvidence(
+                    scope_kind=entry.scope_kind,
+                    scope_id=entry.scope_id,
+                    subject_type=entry.subject_type,
+                    subject_id=entry.subject_id,
+                    summary_level=(entry.data or {}).get("level"),
+                    status=entry.status,
+                    superseded_by_entry_id=entry.superseded_by_entry_id,
+                    source_chapter_id=source.id if source is not None else None,
+                    source_work_id=source.work_id if source is not None else None,
+                    source_chapter_index=source.index if source is not None else None,
+                    source_owner_id=source.user_id if source is not None else None,
+                    source_work_owner_id=(
+                        source_work.user_id if source_work is not None else None
+                    ),
+                    source_work_active=(
+                        source_work is not None and source_work.deleted_at is None
+                    ),
+                ),
+            )
+            if (
+                classification.source_chapter_index in ambiguous_positions
+                and classification.source_chapter_id != anchor.chapter_id
+            ):
+                classification = StorySummaryClassification(
+                    StorySummaryChronologyDisposition.UNKNOWN,
+                    "ambiguous_source_position",
+                    classification.source_chapter_id,
+                    classification.source_chapter_index,
+                )
+            classifications[entry.id] = classification
+
+        prior_by_source: dict[str, builtins.list[str]] = {}
+        for entry in summaries:
+            classification = classifications[entry.id]
+            if classification.eligible and classification.source_chapter_id is not None:
+                prior_by_source.setdefault(classification.source_chapter_id, []).append(
+                    entry.id
+                )
+        duplicate_ids = {
+            entry_id
+            for entry_ids in prior_by_source.values()
+            if len(entry_ids) > 1
+            for entry_id in entry_ids
+        }
+
+        included: builtins.list[Entry] = []
+        evidence_by_entry_id: dict[str, StorySummaryChronologyEvidence] = {}
+        exclusions: builtins.list[StorySummaryChronologyExclusion] = []
+        for entry in candidates:
+            if entry.type != EntryType.STORY_SUMMARY.value:
+                included.append(entry)
+                continue
+            classification = classifications[entry.id]
+            reason = classification.reason
+            if entry.id in duplicate_ids:
+                reason = "duplicate_active_chapter_summary"
+            elif (
+                classification.eligible
+                and classification.source_chapter_id in actual_legacy_ids
+            ):
+                reason = "legacy_summary_authority_overlap"
+            elif classification.eligible:
+                assert classification.source_chapter_id is not None
+                assert classification.source_chapter_index is not None
+                included.append(entry)
+                evidence_by_entry_id[entry.id] = StorySummaryChronologyEvidence(
+                    disposition=classification.disposition,
+                    source_chapter_id=classification.source_chapter_id,
+                    source_chapter_index=classification.source_chapter_index,
+                )
+                continue
+            exclusions.append(
+                StorySummaryChronologyExclusion(
+                    entry_id=entry.id,
+                    disposition=classification.disposition,
+                    reason=reason,
+                    source_chapter_id=classification.source_chapter_id,
+                    source_chapter_index=classification.source_chapter_index,
+                )
+            )
+        return included, evidence_by_entry_id, exclusions
 
     async def update_status(
         self,

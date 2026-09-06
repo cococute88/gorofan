@@ -193,7 +193,7 @@ def test_novel_request_declares_work_world_and_cast() -> None:
         work=_Row("work-1"),
         world=_Row("world-1"),
         characters=[_Row("char-b"), _Row("char-a")],
-        chapter=_Row("chapter-1", content_text="마지막 문단입니다."),
+        chapter=_Row("chapter-1", index=3, content_text="마지막 문단입니다."),
         instruction="다음 장면을 이어써라",
         context_window=8192,
     )
@@ -209,6 +209,9 @@ def test_novel_request_declares_work_world_and_cast() -> None:
     assert request.task_kind is EntryRetrievalTaskKind.SCENE
     assert request.beat == "다음 장면을 이어써라 마지막 문단입니다."
     assert request.status_filters is None
+    assert request.story_summary_chronology is not None
+    assert request.story_summary_chronology.anchor.chapter_id == "chapter-1"
+    assert request.story_summary_chronology.anchor.chapter_index == 3
 
 
 def test_novel_request_is_deterministic_regardless_of_cast_ordering() -> None:
@@ -218,7 +221,7 @@ def test_novel_request_is_deterministic_regardless_of_cast_ordering() -> None:
             work=_Row("work-1"),
             world=None,
             characters=characters,
-            chapter=_Row("chapter-1", content_text="본문"),
+            chapter=_Row("chapter-1", index=3, content_text="본문"),
             instruction=None,
             context_window=8192,
         )

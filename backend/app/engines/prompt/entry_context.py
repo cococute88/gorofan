@@ -17,6 +17,8 @@ from app.schemas.entry import (
     EntryRetrievalResult,
     EntryRetrievalTrace,
     EntryRetrieveRequest,
+    EntryType,
+    StorySummaryChronologyDisposition,
 )
 
 ENTRY_STORE_SOURCE = "entry_store"
@@ -109,6 +111,11 @@ def entry_retrieval_item_to_prompt_block(
         "confidence": entry.confidence,
         "priority": entry.priority,
         "retrieval_estimated_tokens": item.estimated_tokens,
+        "story_summary_chronology": (
+            item.story_summary_chronology.model_dump(mode="json")
+            if item.story_summary_chronology is not None
+            else None
+        ),
     }
     token_count = tokenizer.count(content)
     metadata["rendered_estimated_tokens"] = token_count
@@ -140,6 +147,18 @@ def assemble_entry_context(
     used = 0
 
     for item in retrieval.items:
+        if (
+            retrieval.story_summary_chronology_anchor is not None
+            and item.entry.type is EntryType.STORY_SUMMARY
+            and (
+                item.story_summary_chronology is None
+                or item.story_summary_chronology.disposition
+                is not StorySummaryChronologyDisposition.PRIOR
+            )
+        ):
+            raise ValueError(
+                "Anchored story.summary reached assembly without prior chronology evidence"
+            )
         block = entry_retrieval_item_to_prompt_block(
             item,
             policy_version=retrieval.policy_version,
@@ -210,6 +229,10 @@ def build_entry_context_trace(
     )
     retrieval_excluded = (
         list(retrieval_trace.excluded_orphaned_entry_ids)
+        + [
+            exclusion.entry_id
+            for exclusion in retrieval_trace.story_summary_chronology_exclusions
+        ]
         + list(retrieval_trace.budget_rejected_entry_ids)
         + list(retrieval_trace.limit_rejected_entry_ids)
     )
@@ -217,6 +240,11 @@ def build_entry_context_trace(
         "feature_enabled": True,
         "retrieval_invoked": True,
         "task_kind": request.task_kind.value,
+        "story_summary_chronology_anchor": (
+            result.story_summary_chronology_anchor.model_dump(mode="json")
+            if result.story_summary_chronology_anchor is not None
+            else None
+        ),
         "requested_scopes": [
             {"scope_kind": selector.scope_kind.value, "scope_id": selector.scope_id}
             for selector in request.scopes
@@ -256,6 +284,10 @@ def build_entry_context_trace(
         "no_eligible_entries": not result.items,
         "retrieval_exclusions": {
             "orphaned_entry_ids": list(retrieval_trace.excluded_orphaned_entry_ids),
+            "story_summary_chronology": [
+                exclusion.model_dump(mode="json")
+                for exclusion in retrieval_trace.story_summary_chronology_exclusions
+            ],
             "retrieval_budget_rejected_entry_ids": list(
                 retrieval_trace.budget_rejected_entry_ids
             ),

@@ -13,11 +13,14 @@ from app.schemas.entry import (
     EntryRetrieveRequest,
     EntryScope,
     EntryScopeSelector,
+    StorySummaryChronologyDisposition,
+    StorySummaryChronologyEvidence,
 )
 from app.services.entry_retrieval import (
     CONFIDENCE_FACTOR_MULTIPLIER,
     HUMAN_AUTHORITY_WEIGHT,
     NEUTRAL_CONFIDENCE,
+    order_selected_story_summaries,
     rank_entries,
     select_entries,
 )
@@ -201,3 +204,51 @@ def test_cast_and_location_are_identity_hints_not_scope_expansion() -> None:
     assert {candidate.item.entry.id for candidate in ranked[:2]} == {"cast", "location"}
     assert ranked[0].item.score_breakdown.identity > 0
     assert ranked[1].item.score_breakdown.identity > 0
+
+
+def test_chapter_summary_database_timestamps_do_not_score_or_order_survivors() -> None:
+    chapter_1 = _entry(
+        "summary-1", updated_at=datetime(2026, 2, 1, tzinfo=UTC)
+    )
+    chapter_2 = _entry(
+        "summary-2", updated_at=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    for entry, chapter_id in (
+        (chapter_1, "chapter-1"),
+        (chapter_2, "chapter-2"),
+    ):
+        entry.type = "story.summary"
+        entry.scope_kind = "work"
+        entry.scope_id = "work-1"
+        entry.subject_type = "chapter"
+        entry.subject_id = chapter_id
+    evidence = {
+        "summary-1": StorySummaryChronologyEvidence(
+            disposition=StorySummaryChronologyDisposition.PRIOR,
+            source_chapter_id="chapter-1",
+            source_chapter_index=1,
+        ),
+        "summary-2": StorySummaryChronologyEvidence(
+            disposition=StorySummaryChronologyDisposition.PRIOR,
+            source_chapter_id="chapter-2",
+            source_chapter_index=2,
+        ),
+    }
+
+    ranked = rank_entries(
+        [chapter_1, chapter_2],
+        _request(budget=4096),
+        story_summary_chronology_by_entry_id=evidence,
+    )
+
+    by_id = {candidate.item.entry.id: candidate.item for candidate in ranked}
+    assert by_id["summary-1"].score_breakdown.recency == 0.0
+    assert by_id["summary-2"].score_breakdown.recency == 0.0
+    assert [candidate.item.entry.id for candidate in ranked] == [
+        "summary-2",
+        "summary-1",
+    ]
+    ordered = order_selected_story_summaries(
+        [candidate.item for candidate in ranked]
+    )
+    assert [item.entry.id for item in ordered] == ["summary-1", "summary-2"]
