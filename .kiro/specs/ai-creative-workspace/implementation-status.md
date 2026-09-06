@@ -1,6 +1,6 @@
 # Implementation Status (검증 기준 스냅샷)
 
-- **확정 시각:** 2026-09-05 — PR #28 두 번째 독립 Implementation Review에서 재현된 잔여 3개 blocker 수정 후 재검증. **최종 독립 재리뷰 대기 중이며 merge 완료 상태가 아니다.**
+- **확정 시각:** 2026-09-06 — PR #28 regenerate timestamp-tie fail-closed blocker 수정 후 재검증. **최종 독립 재리뷰 대기 중이며 merge 완료 상태가 아니다.**
 - **기준 main:** `9deb643c1c506e604f1341a6d3e072c30220ab88` — PR #27 architecture contract merge commit. P1-8 구현은 이 commit에서 새 branch로 시작했다.
 - **판정 기준:** 파일 존재만으로 완료 처리하지 않는다. **실행되는 코드 경로 + API 노출 + 통과하는 테스트**를 근거로 `완료 / 부분 완료 / 미구현`을 판정한다.
 - **문서 우선순위:** ADR → RFC-001 → RFC-002…RFC-012 → `docs/architecture/README.md` → 본 문서 → (참고용) 구 `.kiro/specs` M0~M7 계획.
@@ -13,8 +13,8 @@
 
 | 검증 항목 | 명령 | 결과 |
 |---|---|---|
-| 백엔드 전체 테스트 | `backend/.venv/Scripts/python -m pytest` | **247 passed, 0 failed**. |
-| P1-8 대상 테스트 | `backend/.venv/Scripts/python -m pytest tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **48 passed** — 기존 5개 blocker와 zero-length resolved source, multi-Character 실제 span 순서 양방향, exact future-summary retrieval 탈락 chronology 직접 회귀 포함. |
+| 백엔드 전체 테스트 | `backend/.venv/Scripts/python -m pytest` | **252 passed, 0 failed**. |
+| P1-8 대상 테스트 | `backend/.venv/Scripts/python -m pytest tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **53 passed** — 기존 5개 blocker와 zero-length resolved source, multi-Character 실제 span 순서 양방향, exact future-summary retrieval 탈락 chronology, regenerate assistant/user timestamp-tie의 Memory/Entry/Prompt/provider spy fail-closed 회귀 포함. |
 | 관련 회귀 묶음 | Entry lifecycle/retrieval/context/review, Chat/Novel/Memory/streaming, prompt budget/assets, edit-diff, golden, migrations | **230 passed, 0 failed**. |
 | P1-6 대상 테스트 | `backend/.venv/Scripts/python -m pytest -q tests/unit/test_entry_prompt_integration.py tests/unit/test_entry_generation_context.py tests/integration/test_entry_context_generation.py` | **41건 통과** (exit 0) |
 | P1-6 회귀 테스트 | `backend/.venv/Scripts/python -m pytest -q tests/unit/test_entry_context_assembly.py tests/golden tests/property/test_prompt_budget.py tests/integration/test_streaming.py` | **통과** (exit 0) |
@@ -60,7 +60,7 @@
 | `PromptTemplate` compatibility boundary (P1-4) | frozen `0001` legacy/user-authored `PromptTemplate` table과 기존 `GET/POST` API를 유지하고, repository asset의 identifier/version/body/digest가 유일한 architecture creative source임을 코드·ADR·asset 문서에 명시 | `tests/integration/test_prompt_template_boundary.py` + `test_api.py` POST/GET-list + 기존 asset/Chat/Novel/Summary 회귀 |
 | Entry authoring / canonical + audit read API (P1-5) | `api/v1/entries.py`, `schemas/entry.py`, `services/entry_service.py`, `repositories/entry_repository.py` — 인증 사용자만 server-issued `user`/`human-authored` provenance로 canon을 작성하며, correction은 불변 supersession을 재사용한다. `GET /entries`는 기본 canon/live anchor만 반환하고 `include_history=true`에서 명시적 감사 이력을 제공한다. | `tests/unit/test_entry_authoring_schema.py`, `tests/integration/test_entry_authoring_api.py`, Ruff, P1-5 범위 MyPy, PR #19 GitHub Actions 4건 성공 |
 | retrieve() → Context Assembly 실사용 결선 (P1-6) | `services/entry_generation_context.py`(신규, 유일한 프로덕션 호출 지점) — Chat/Novel이 각각 T1 세션 안·스트리밍 이전에 정확히 1회 retrieve → assemble → PromptEngine으로 주입한다. 독립 `entry` BlockKind(priority 65), `FEATURES["entry_store_context"]` 기본 OFF, `AssembleInput.entry_blocks`/`entry_context_trace` seam, retrieval/assembly 분리 trace. Chat은 work scope를 선언하지 않는다(RFC-003 §13.3). 레거시 lore 스캐너·Memory·prompt asset 경계는 불변이며 마이그레이션 0. 설계 근거는 `docs/architecture/entry-context-integration.md`. | `tests/unit/test_entry_prompt_integration.py`, `tests/unit/test_entry_generation_context.py`, `tests/integration/test_entry_context_generation.py` (41건) + `tests/golden/*`·`test_prompt_budget.py`·`test_streaming.py` 회귀 + mutation 검증 6건 |
-| Legacy ↔ Entry equivalence diagnostics (P1-8, 최종 독립 재리뷰 대기) | `services/legacy_entry_equivalence.py`, `schemas/equivalence.py`, `POST /api/v1/entries/equivalence:compare` — Character/World/Glossary/Lore/Chapter-summary pure projection, deterministic coverage precedence, 독립 Chat/Novel runtime shadow, owner-scoped read-only report. resolved-empty source presence, aggregate inner-span ordering, exact/entry-only summary의 final-selection chronology를 포함해 diagnostic evidence를 보강했다. feature flag는 변경하지 않고 상태를 evidence로 노출한다. | focused **48 passed**; 잔여 3개 blocker 직접 regression은 `tests/integration/test_legacy_entry_equivalence_api.py`, aggregate renderer span 검증은 `tests/unit/test_legacy_entry_equivalence.py`. |
+| Legacy ↔ Entry equivalence diagnostics (P1-8, 최종 독립 재리뷰 대기) | `services/legacy_entry_equivalence.py`, `schemas/equivalence.py`, `POST /api/v1/entries/equivalence:compare` — Character/World/Glossary/Lore/Chapter-summary pure projection, deterministic coverage precedence, 독립 Chat/Novel runtime shadow, owner-scoped read-only report. regenerate timestamp ties are unsupported before ambiguous content can reach a downstream diagnostic. feature flag는 변경하지 않고 상태를 evidence로 노출한다. | focused **53 passed**; tie fail-closed and prior blocker regressions are in `tests/integration/test_legacy_entry_equivalence_api.py`, aggregate renderer span 검증은 `tests/unit/test_legacy_entry_equivalence.py`. |
 
 **보존된 불변식(코드로 확인됨):** `status=canon`을 직접 받는 API 없음 · AI 생산자의 canon 직접 기록 경로 없음 · chat-private `Memory`는 Entry로 저장되지 않음 · per-library 테이블 없음 · `misc` 타입 없음 · `0001` 미수정.
 

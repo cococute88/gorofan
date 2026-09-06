@@ -1084,11 +1084,19 @@ class LegacyEntryEquivalenceService:
         if mode is ChatDiagnosticMode.REGENERATE:
             assistants = [message for message in active if message.role == "assistant"]
             if assistants:
-                latest_assistant_time = assistants[-1].created_at
+                latest_assistant_time = max(message.created_at for message in assistants)
                 if sum(
                     message.created_at == latest_assistant_time for message in assistants
                 ) > 1:
-                    unsupported_codes.add("regenerate_assistant_timestamp_tie")
+                    # A timestamp tie has no production regenerate tie-break.
+                    # Stop before selecting any message content or invoking a
+                    # content-dependent diagnostic path.
+                    return ChatMemoryShadow(
+                        user_text="",
+                        short=[],
+                        long=[],
+                        unsupported_codes=("regenerate_assistant_timestamp_tie",),
+                    )
                 active.remove(assistants[-1])
             users = list(
                 (
@@ -1103,9 +1111,17 @@ class LegacyEntryEquivalenceService:
                 ).scalars().all()
             )
             if users:
-                latest_user_time = users[-1].created_at
+                latest_user_time = max(message.created_at for message in users)
                 if sum(message.created_at == latest_user_time for message in users) > 1:
-                    unsupported_codes.add("regenerate_user_timestamp_tie")
+                    # Do not turn an arbitrary id-ordered tie candidate into a
+                    # Memory query.  The unsupported report needs no message
+                    # payload, so the fail-closed boundary is here.
+                    return ChatMemoryShadow(
+                        user_text="",
+                        short=[],
+                        long=[],
+                        unsupported_codes=("regenerate_user_timestamp_tie",),
+                    )
             user_text = users[-1].content if users else ""
         else:
             assert supplied_message is not None

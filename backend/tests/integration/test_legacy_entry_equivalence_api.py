@@ -131,6 +131,43 @@ def _compare_chat(client, chat_id: str, *, mode: str, message: str | None = None
     )
 
 
+def _regenerate_downstream_spies(client, monkeypatch):  # noqa: ANN001, ANN202
+    """Observe diagnostic-only seams without changing their normal behavior."""
+
+    service = cast(Any, client.app).state.equivalence_service
+    calls: dict[str, list[object]] = {
+        "memory_search": [],
+        "entry_retrieve": [],
+        "prompt_assemble": [],
+        "provider": [],
+    }
+    original_search = service.memory_engine.retriever.search
+    original_retrieve = EntryService.retrieve
+    original_assemble = service.prompt_engine.assemble
+
+    async def counting_search(session, chat_id, query, k):  # noqa: ANN001, ANN202
+        calls["memory_search"].append((chat_id, query, k))
+        return await original_search(session, chat_id, query, k)
+
+    async def counting_retrieve(self, session, request):  # noqa: ANN001, ANN202
+        calls["entry_retrieve"].append(request)
+        return await original_retrieve(self, session, request)
+
+    def counting_assemble(inp):  # noqa: ANN001, ANN202
+        calls["prompt_assemble"].append(inp)
+        return original_assemble(inp)
+
+    def forbidden_provider(*args, **kwargs):  # noqa: ANN001, ANN202
+        calls["provider"].append((args, kwargs))
+        raise AssertionError("equivalence diagnostic must not call a provider")
+
+    monkeypatch.setattr(service.memory_engine.retriever, "search", counting_search)
+    monkeypatch.setattr(EntryService, "retrieve", counting_retrieve)
+    monkeypatch.setattr(service.prompt_engine, "assemble", counting_assemble)
+    monkeypatch.setattr(service.registry, "stream_with_resilience", forbidden_provider)
+    return calls
+
+
 async def _chat_state(client, chat_id: str) -> tuple:  # noqa: ANN001
     sm = cast(Any, client.app).state.sessionmaker
     async with sm() as session:
@@ -1356,7 +1393,7 @@ async def _seed_regenerate_user_timestamp_tie(client, chat_id: str) -> None:  # 
                 chat_session_id=chat_id,
                 user_id=_owner_id(),
                 role="user",
-                content=f"동률 사용자 {suffix}",
+                content=f"AMBIGUOUS-{suffix}",
                 token_count=5,
                 status="complete",
                 created_at=tied,
@@ -1400,6 +1437,173 @@ def test_regenerate_user_timestamp_tie_is_also_unsupported(client) -> None:  # n
     )
     assert runtime["runtime_state"] == "unsupported_legacy_semantics"
     assert "regenerate_user_timestamp_tie" in runtime["diagnostic_codes"]
+
+
+@pytest.mark.parametrize(
+    ("seed_memory", "evaluation_time"),
+    [
+        (False, None),
+        (True, None),
+        (True, datetime(2026, 3, 2, tzinfo=UTC)),
+    ],
+)
+def test_regenerate_user_timestamp_tie_fails_closed_before_downstream(
+    client, monkeypatch, seed_memory: bool, evaluation_time: datetime | None
+) -> None:  # noqa: ANN001
+    character = client.post(
+        "/api/v1/characters",
+        json={"name": "사용자 동률 조기 종료", "personality": "조기 종료 성격"},
+    ).json()
+    chat = client.post(
+        "/api/v1/chats", json={"character_id": character["id"]}
+    ).json()
+    _run(_seed_regenerate_user_timestamp_tie(client, chat["id"]))
+    if seed_memory:
+        _run(
+            _seed_memory_competition(
+                client, chat["id"], datetime(2026, 3, 1, tzinfo=UTC)
+            )
+        )
+    calls = _regenerate_downstream_spies(client, monkeypatch)
+
+    payload: dict[str, object] = {
+        "chat": {"chat_id": chat["id"], "mode": "regenerate"},
+        "budget_override": _OVERRIDE,
+    }
+    if evaluation_time is not None:
+        payload["chat"] = {
+            "chat_id": chat["id"],
+            "mode": "regenerate",
+            "evaluation_time": evaluation_time.isoformat(),
+        }
+    response = client.post("/api/v1/entries/equivalence:compare", json=payload)
+
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert "AMBIGUOUS-A" not in response.text
+    assert "AMBIGUOUS-B" not in response.text
+    assert all(
+        row["runtime_state"] == "unsupported_legacy_semantics"
+        for row in report["runtime"]["records"]
+    )
+    assert calls == {
+        "memory_search": [],
+        "entry_retrieve": [],
+        "prompt_assemble": [],
+        "provider": [],
+    }
+    assert all(
+        "regenerate_user_timestamp_tie" in row["diagnostic_codes"]
+        and "memory_evaluation_time_required" not in row["diagnostic_codes"]
+        for row in report["runtime"]["records"]
+    )
+
+
+def test_regenerate_assistant_timestamp_tie_fails_closed_before_downstream(
+    client, monkeypatch
+) -> None:  # noqa: ANN001
+    character = client.post(
+        "/api/v1/characters",
+        json={"name": "응답 동률 조기 종료", "personality": "조기 종료 성격"},
+    ).json()
+    chat = client.post(
+        "/api/v1/chats", json={"character_id": character["id"]}
+    ).json()
+    _run(_seed_regenerate_timestamp_tie(client, chat["id"]))
+    calls = _regenerate_downstream_spies(client, monkeypatch)
+
+    response = _compare_chat(client, chat["id"], mode="regenerate")
+
+    assert response.status_code == 200, response.text
+    assert calls == {
+        "memory_search": [],
+        "entry_retrieve": [],
+        "prompt_assemble": [],
+        "provider": [],
+    }
+    assert all(
+        "regenerate_assistant_timestamp_tie" in row["diagnostic_codes"]
+        for row in response.json()["runtime"]["records"]
+    )
+
+
+async def _seed_normal_regenerate(client, chat_id: str) -> None:  # noqa: ANN001
+    sm = cast(Any, client.app).state.sessionmaker
+    created = datetime(2026, 4, 1, tzinfo=UTC)
+    async with sm() as session:
+        user = Message(
+            chat_session_id=chat_id,
+            user_id=_owner_id(),
+            role="user",
+            content="NORMAL-REGENERATE",
+            token_count=5,
+            status="complete",
+            created_at=created,
+            updated_at=created,
+        )
+        session.add(user)
+        await session.flush()
+        session.add_all(
+            [
+                Message(
+                    chat_session_id=chat_id,
+                    user_id=_owner_id(),
+                    parent_message_id=user.id,
+                    role="assistant",
+                    content="정상 응답",
+                    token_count=5,
+                    status="complete",
+                    created_at=created + timedelta(seconds=1),
+                    updated_at=created + timedelta(seconds=1),
+                ),
+                Memory(
+                    chat_session_id=chat_id,
+                    user_id=_owner_id(),
+                    kind="fact",
+                    content="NORMAL-REGENERATE memory",
+                    version=1,
+                    token_count=5,
+                    created_at=created,
+                    updated_at=created,
+                ),
+            ]
+        )
+        await session.commit()
+
+
+def test_normal_regenerate_still_runs_diagnostic_shadows(client, monkeypatch) -> None:  # noqa: ANN001
+    character = client.post(
+        "/api/v1/characters",
+        json={"name": "정상 재생성", "personality": "정상 재생성 성격"},
+    ).json()
+    chat = client.post(
+        "/api/v1/chats", json={"character_id": character["id"]}
+    ).json()
+    _run(_seed_normal_regenerate(client, chat["id"]))
+    calls = _regenerate_downstream_spies(client, monkeypatch)
+
+    response = client.post(
+        "/api/v1/entries/equivalence:compare",
+        json={
+            "chat": {
+                "chat_id": chat["id"],
+                "mode": "regenerate",
+                "evaluation_time": datetime(2026, 4, 2, tzinfo=UTC).isoformat(),
+            },
+            "budget_override": _OVERRIDE,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert all(
+        "regenerate_assistant_timestamp_tie" not in row["diagnostic_codes"]
+        and "regenerate_user_timestamp_tie" not in row["diagnostic_codes"]
+        for row in response.json()["runtime"]["records"]
+    )
+    assert calls["memory_search"] == [(chat["id"], "NORMAL-REGENERATE", 6)]
+    assert len(calls["entry_retrieve"]) == 1
+    assert len(calls["prompt_assemble"]) == 2
+    assert calls["provider"] == []
 
 
 def test_future_summary_codes_distinguish_selected_and_not_selected_entries(
