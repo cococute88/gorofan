@@ -168,24 +168,26 @@ Every row is one reviewable PR. A design PR and its implementation PR remain sep
 
 | Order | PR | Prerequisite | Purpose and user value |
 |---|---|---|---|
-| 1 | P1-8 design | P1-5, P1-6 | freeze read-only legacy/Entry comparison semantics |
-| 2 | P1-8 implementation | approved design | produce real equivalence evidence without writes or cutover |
-| 3 | AOS-1 Generation Preparation + dual-route architecture contract | P1-8 evidence | freeze Story/Character/Relationship/Chapter/Scene boundaries, shared trace and budget, direct/external terminal seam, import linkage, and explicit canon-source precedence; Taste/Voice optional |
-| 4 | AOS-2 minimum Novel preparation + Scene input | AOS-1 | build owned provider-neutral preparation from current Story/Canon, cast/state, recent Chapter context, simple Scene Brief/instruction, and constraints without requiring Taste/Voice |
-| 5 | AOS-3 dual execution API | AOS-2 | feed the same preparation to the existing direct Provider Adapter path or thin Generic/ChatGPT/Claude Prompt Packet formatters; no duplicated selection policy |
-| 6 | AOS-4 Novel generation workspace UI | AOS-3 | choose direct generation or complete prompt copy, inspect the shared context trace, and receive streamed/generated prose on desktop/tablet/mobile |
-| 7 | AOS-5 Chapter apply/import loop | AOS-3 | apply direct output or paste external output into the existing Chapter draft flow with optimistic concurrency, preparation provenance, and P1-7 edit-diff continuity |
-| 8 | AOS-6 explicit Taste foundation | AOS-1, usable novel loop | add user-authored positive/anti preferences and cake-mode semantics as optional preparation sections; no inference yet |
-| 9 | AOS-7 Voice foundation | AOS-1, usable novel loop | save/select optional high-level voice guidance or a work default; no imitation engine and no generation dependency |
-| 10 | AOS-8 edit-diff read contract | P1-7, AOS-5 | expose owned before/after evidence safely to Analyst; no inference yet |
-| 11 | AOS-9 Taste/Voice candidate Analyst | AOS-6/7/8 | accumulate repeated evidence, confidence, count, source, and proposals; never auto-confirm from one diff |
-| 12 | AOS-10 Taste/Voice review UX | AOS-9 | confirm/reject/edit/disable candidates and prevent unsupported reactivation |
-| 13 | AOS-11 Writer-loop evolution | AOS-3 | evolve RFC-004 orchestration on the shared preparation without deleting the usable single-pass path |
-| 14 | AOS-12 Bench expansion | AOS-2 onward | deterministic Story/character/relationship/Taste/Voice/repetition/pacing/goal/forbidden-pattern metrics; optional LLM judge only |
+| 1 | P1-8 design | P1-5, P1-6 | **Merged:** freeze read-only legacy/Entry comparison semantics |
+| 2 | P1-8 implementation | approved design | **Merged in PR #28:** produce real equivalence evidence without writes or cutover |
+| 3 | Story-summary chronology architecture contract | P1-8 evidence | define target-Chapter authority, strict-prior eligibility/order, fail-safe future/current/unknown handling, and responsibility/budget boundaries; docs only |
+| 4 | Story-summary chronology implementation | accepted chronology contract | prevent future/unknown leaks in real Entry generation context while the existing flag remains default OFF and legacy remains authoritative |
+| 5 | AOS-1 Generation Preparation + dual-route architecture contract | chronology implementation | freeze Story/Character/Relationship/Chapter/Scene boundaries, shared trace and budget, direct/external terminal seam, import linkage, and explicit canon-source precedence; Taste/Voice optional |
+| 6 | AOS-2 minimum Novel preparation + Scene input | AOS-1 | build owned provider-neutral preparation from current Story/Canon, cast/state, recent Chapter context, simple Scene Brief/instruction, and constraints without requiring Taste/Voice |
+| 7 | AOS-3 dual execution API | AOS-2 | feed the same preparation to the existing direct Provider Adapter path or thin Generic/ChatGPT/Claude Prompt Packet formatters; no duplicated selection policy |
+| 8 | AOS-4 Novel generation workspace UI | AOS-3 | choose direct generation or complete prompt copy, inspect the shared context trace, and receive streamed/generated prose on desktop/tablet/mobile |
+| 9 | AOS-5 Chapter apply/import loop | AOS-3 | apply direct output or paste external output into the existing Chapter draft flow with optimistic concurrency, preparation provenance, and P1-7 edit-diff continuity |
+| 10 | AOS-6 explicit Taste foundation | AOS-1, usable novel loop | add user-authored positive/anti preferences and cake-mode semantics as optional preparation sections; no inference yet |
+| 11 | AOS-7 Voice foundation | AOS-1, usable novel loop | save/select optional high-level voice guidance or a work default; no imitation engine and no generation dependency |
+| 12 | AOS-8 edit-diff read contract | P1-7, AOS-5 | expose owned before/after evidence safely to Analyst; no inference yet |
+| 13 | AOS-9 Taste/Voice candidate Analyst | AOS-6/7/8 | accumulate repeated evidence, confidence, count, source, and proposals; never auto-confirm from one diff |
+| 14 | AOS-10 Taste/Voice review UX | AOS-9 | confirm/reject/edit/disable candidates and prevent unsupported reactivation |
+| 15 | AOS-11 Writer-loop evolution | AOS-3 | evolve RFC-004 orchestration on the shared preparation without deleting the usable single-pass path |
+| 16 | AOS-12 Bench expansion | AOS-2 onward | deterministic Story/character/relationship/Taste/Voice/repetition/pacing/goal/forbidden-pattern metrics; optional LLM judge only |
 
 P1-9 review actor/action persistence remains an independent Phase 1 architecture task. It should not block Milestone A unless AOS-1 proves packet/Taste review needs the same durable audit semantics.
 
-P1-8 evidence is a decision gate, not an automatic cutover. If the report is clean enough, a separate P1-8 authority-rollout PR may enable Entry reads and later retire legacy scanning under the documented gate. If gaps remain, AOS-1 must name one temporary authoritative source per packet section and trace compatibility supplements; the compiler may not silently treat both legacy and Entry text as equal authorities or depend permanently on the diagnostic bridge.
+P1-8 evidence is a decision gate, not an automatic cutover. Its future/unknown summary finding is resolved first by the [Story Summary Chronology Contract](story-summary-chronology.md) and its separate implementation. If the broader report is clean enough, a later authority-rollout PR may enable Entry reads and retire legacy scanning under the documented gate. If gaps remain, AOS-1 must name one temporary authoritative source per packet section and trace compatibility supplements; the compiler may not silently treat both legacy and Entry text as equal authorities or depend permanently on the diagnostic bridge.
 
 ## 6. Milestones
 
@@ -193,7 +195,7 @@ P1-8 evidence is a decision gate, not an automatic cutover. If the report is cle
 
 Required after this design PR:
 
-1. P1-8 implementation;
+1. story-summary chronology contract review/merge and implementation;
 2. AOS-1 Generation Preparation + dual-route contract;
 3. AOS-2 minimum Novel preparation + Scene input;
 4. AOS-3 dual execution API;
@@ -313,10 +315,11 @@ An automatic LLM judge is optional and out of band. It is never required for pre
 
 Only these points currently require architecture decisions before implementation:
 
-1. P1-8 exact equivalence semantics — fixed in the companion P1-8 design.
-2. Generation Preparation identity/trace, editable/persisted boundary, shared direct/external seam, target rendering, and import linkage — AOS-1.
-3. Taste candidate lifecycle and whether existing Review Card semantics can be reused without conflating Story Canon review — AOS-1/AOS-6.
-4. Voice preset identity and persistence — AOS-1/AOS-7.
-5. Scene Brief persistence only if operation-local state proves insufficient — AOS-2, based on actual use.
+1. P1-8 exact equivalence semantics — fixed and implemented by the P1-8 design and merged PR #28.
+2. Chapter-level `story.summary` chronology eligibility/order — defined in the companion chronology contract; implementation begins only after independent review and merge.
+3. Generation Preparation identity/trace, editable/persisted boundary, shared direct/external seam, target rendering, and import linkage — AOS-1 after chronology implementation.
+4. Taste candidate lifecycle and whether existing Review Card semantics can be reused without conflating Story Canon review — AOS-1/AOS-6.
+5. Voice preset identity and persistence — AOS-1/AOS-7.
+6. Scene Brief persistence only if operation-local state proves insufficient — AOS-2, based on actual use.
 
 Everything else should proceed as small, reversible implementation PRs after those contracts are fixed.
