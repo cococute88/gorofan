@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -15,9 +16,11 @@ from app.schemas.entry import (
     EntryRetrievalScore,
     EntryRetrievalTaskKind,
     EntryRetrieveRequest,
+    EntryType,
+    StorySummaryChronologyEvidence,
 )
 
-RETRIEVAL_POLICY_VERSION = "entry-keyword-v1"
+RETRIEVAL_POLICY_VERSION = "entry-keyword-v2"
 NEUTRAL_CONFIDENCE = 0.5
 HUMAN_AUTHORITY_WEIGHT = 0.31
 CONFIDENCE_FACTOR_MULTIPLIER = 0.6
@@ -154,16 +157,25 @@ def rank_entries(
     request: EntryRetrieveRequest,
     *,
     tokenizer: Tokenizer = default_tokenizer,
+    story_summary_chronology_by_entry_id: Mapping[
+        str, StorySummaryChronologyEvidence
+    ] | None = None,
 ) -> list[RankedEntry]:
     terms = _terms(request)
-    chronology = {entry.id: _chronology(entry) for entry in entries}
-    oldest = min(chronology.values(), default=0.0)
-    newest = max(chronology.values(), default=0.0)
+    summary_chronology = story_summary_chronology_by_entry_id or {}
+    database_chronology = {
+        entry.id: _chronology(entry)
+        for entry in entries
+        if entry.id not in summary_chronology
+    }
+    oldest = min(database_chronology.values(), default=0.0)
+    newest = max(database_chronology.values(), default=0.0)
     span = newest - oldest
     task_weights = _TASK_TYPE_BOOST.get(request.task_kind, {})
     ranked: list[RankedEntry] = []
 
     for entry in entries:
+        summary_evidence = summary_chronology.get(entry.id)
         searchable = normalize_keyword_text(
             " ".join(
                 [
@@ -181,7 +193,15 @@ def rank_entries(
             entry.type, 0.0
         )
         status = _STATUS_WEIGHT.get(entry.status, 0.0)
-        recency = ((chronology[entry.id] - oldest) / span * 0.5) if span else 0.0
+        recency = (
+            0.0
+            if summary_evidence is not None
+            else (
+                (database_chronology[entry.id] - oldest) / span * 0.5
+                if span
+                else 0.0
+            )
+        )
         priority = entry.priority / 100.0
         confidence, applicable_confidence = _confidence_factor(entry)
         authority = _authority_factor(entry)
@@ -212,9 +232,14 @@ def rank_entries(
                     score_breakdown=breakdown,
                     reason=reasons or ["eligible"],
                     estimated_tokens=tokenizer.count(entry.content),
+                    story_summary_chronology=summary_evidence,
                 ),
                 applicable_confidence=applicable_confidence,
-                chronology=chronology[entry.id],
+                chronology=(
+                    float(summary_evidence.source_chapter_index)
+                    if summary_evidence is not None
+                    else database_chronology[entry.id]
+                ),
             )
         )
 
@@ -228,6 +253,30 @@ def rank_entries(
             candidate.item.entry.id,
         ),
     )
+
+
+def order_selected_story_summaries(
+    selected: list[EntryRetrievalItem],
+) -> list[EntryRetrievalItem]:
+    """Order summary survivors by story position without moving other types."""
+
+    summary_slots = [
+        index
+        for index, item in enumerate(selected)
+        if item.entry.type is EntryType.STORY_SUMMARY
+    ]
+    ordered_summaries = sorted(
+        (selected[index] for index in summary_slots),
+        key=lambda item: (
+            item.story_summary_chronology.source_chapter_index
+            if item.story_summary_chronology is not None
+            else 0
+        ),
+    )
+    ordered = list(selected)
+    for index, item in zip(summary_slots, ordered_summaries, strict=True):
+        ordered[index] = item
+    return ordered
 
 
 def select_entries(

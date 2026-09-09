@@ -1,6 +1,6 @@
 # Implementation Plan: AI Native Creative Workspace (Architecture Frozen 기준 재확정)
 
-- **재확정 시각:** 2026-08-30 · **기준 main:** `10683313321be4ee9d81d634943d55fa67f3f4cb` (로컬 `main` == `origin/main`)
+- **재확정 시각:** 2026-09-06 · **기준 main:** `e5ffc730174a0416ebdc7c8042bea0c1baed2152` (PR #29 merge commit)
 - **상태 근거 문서:** [`implementation-status.md`](./implementation-status.md) — 파일 존재가 아닌 *실행 코드 경로 · API 노출 · 통과 테스트*로 판정한 검증 스냅샷.
 - **단일 진실 공급원(우선순위):** `docs/architecture/adr/*` → `docs/architecture/rfc/RFC-001` → `RFC-002…RFC-012` → `docs/architecture/README.md` → **본 문서** → (참고 이력) `design.md` · `requirements.md`.
 
@@ -59,7 +59,7 @@
 ## 2. Architecture Phase 로드맵
 
 ```
-Phase 1  잔여 Core 정리          ← 지금 여기 (필수 9개 중 8개 완료 + chronology contract targeted 재리뷰 대기)
+Phase 1  잔여 Core 정리          ← 지금 여기 (필수 9개 중 8개 완료 + chronology implementation 독립 review 대기)
   └→ Phase 2  Analyst (text → proposed Entries)
        ├→ Phase 3  Writer (loop over declarative stages)
        │    └→ Phase 4  Story Bible (canonical view + continuity loop)
@@ -75,7 +75,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 
 기존 Phase 1~6은 architecture capability 순서로 보존한다. 실제 사용자 milestone은 [`docs/architecture/personal-author-os-roadmap.md`](../../../docs/architecture/personal-author-os-roadmap.md)의 dependency track을 따른다.
 
-`P1-8 design/implementation ✓ → story-summary chronology Architecture Contract (독립 review) → chronology implementation → AOS-1 shared Generation Preparation/dual-route contract → minimum Novel preparation + Scene input → direct Provider API + Prompt Packet API → Novel workspace UI → Chapter apply/import → optional explicit Taste/Voice → edit-diff read → Taste/Voice candidate Analyst`
+`P1-8 design/implementation ✓ → story-summary chronology Architecture Contract ✓ → chronology implementation (독립 review) → AOS-1 shared Generation Preparation/dual-route contract → minimum Novel preparation + Scene input → direct Provider API + Prompt Packet API → Novel workspace UI → Chapter apply/import → optional explicit Taste/Voice → edit-diff read → Taste/Voice candidate Analyst`
 
 이 순서에서 하나의 Generation Preparation이 RFC-009의 provider-neutral composition seam에서 retrieval·ordering·budget·trace를 고정하고, 마지막 단계에서만 기존 Provider Adapter 직접 실행 또는 thin external Prompt Packet formatting으로 갈라진다. 기존 RFC-004 Writer와 Chat provider execution은 삭제하거나 재정의하지 않는다. 장편소설 제작이 주 제품이고 Character Chat은 독립 보조 기능이다. Taste는 Story Canon이 아니고, Voice는 Taste가 아니며, Scene Brief는 operation-local working state이고 chat-private Memory는 Novel context로 자동 유입되지 않는다. Taste/Voice 부재는 첫 usable loop를 막지 않으며, 🍰 별식은 generation별 Taste 제외 모드로서 데이터를 변경하지 않는다.
 
@@ -156,11 +156,11 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** GPT-5.6 Sol / High (대규모 대조·검증 성격).
 
 #### Post-P1-8 story.summary chronology correctness gate
-- **상태:** **PR #29 blocking review 보완 완료, targeted 독립 재리뷰/merge 대기. Production implementation 미착수.** [`docs/architecture/story-summary-chronology.md`](../../../docs/architecture/story-summary-chronology.md)가 승인된 기존 결정을 유지하면서 target/legacy/Entry-source/overlap의 no-mixed-story-order-view invariant, snapshot/serialization/drift-retry의 mechanism-neutral 선택지, legacy `strip()` predicate, scoped provenance 규칙을 추가한다.
+- **상태:** **PR #29 merge 완료, production implementation 완료 및 Draft PR 독립 review 대기.** [`docs/architecture/story-summary-chronology.md`](../../../docs/architecture/story-summary-chronology.md)의 no-mixed-story-order-view invariant를 preparation-scoped consistent snapshot, shared classifier, Novel anchor, pre-rank exclusion, legacy overlap, Chapter-index ordering으로 구현했다.
 - **목적:** P1-8이 재현한 future/unknown Chapter-summary leak과 DB timestamp ordering을 shared Generation Preparation 이전에 차단할 계약을 고정한다.
 - **선행 의존성:** P1-8 implementation merge.
-- **후속 구현 예상 범위:** production DB/repository에 맞는 consistent-view mechanism, chronology classifier/helper, Novel retrieval request anchor, legacy prior-summary/overlap read alignment, Entry pre-rank eligibility/trace, deterministic selected-summary order, 필요 시 assembly assertion, behavioral/property/integration tests, 최소 P1-8 diagnostic alignment. Production 로직은 계약 PR에 포함하지 않는다.
-- **완료 조건:** Architecture PR targeted 독립 재리뷰/merge 후 별도 branch/session에서 구현 · mixed story-order view 불허 · feature flag default OFF · legacy authority/scanner 유지(일관된 read boundary를 위한 최소 구조 조정은 허용) · migration/API/UI/provider 변경 없음 · §20 test matrix 충족.
+- **구현 범위:** PostgreSQL transaction-local `REPEATABLE READ`, SQLite explicit snapshot, pure classifier, Novel retrieval anchor, legacy/Entry 동일 read window, pre-rank eligibility/trace, deterministic Chapter-index order, assembly assertion, stale/reorder/provider-spy regression, 최소 P1-8 alignment.
+- **완료 조건:** mixed story-order view 불허 · feature flag default OFF · legacy authority/scanner 유지 · migration/API/UI/provider 변경 없음 · §20 test matrix 충족 · 독립 implementation review 전 Ready/merge 금지.
 - **Migration 판단:** **B** — `Chapter.id/work_id/index`, `UNIQUE(work_id,index)`, Entry Chapter subject와 lifecycle 필드로 충분하나 application invariant/validation 보강이 필요하다. schema migration은 불필요하다.
 - **추천 모델/effort:** Claude Opus 5 / High (cross-cutting correctness contract).
 
@@ -375,11 +375,11 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 |---|---|---|---|
 | 1 | ~~**P1-8 design**~~ | **완료:** PR #27에서 coverage/runtime 독립 계약을 승인했다. | GPT-5.6 Sol / High |
 | 2 | ~~**P1-8 implementation**~~ | **완료:** PR #28 merge commit `ac791ba`; diagnostics only, authority cutover 없음. | GPT-5.6 Sol / High |
-| 3 | **Story-summary chronology Architecture Contract targeted 독립 재리뷰/merge** | PR #29의 기존 방향은 승인됐다. 보완된 concurrent reorder consistency invariant와 legacy blank/provenance scope 두 clarification만 targeted 재검증한다. | Claude Opus 5 / High |
-| 4 | **Story-summary chronology implementation** | 승인된 계약의 classifier, pre-rank eligibility, deterministic ordering, trace와 test matrix만 별도 PR로 구현한다. | GPT-5.6 Sol / High |
+| 3 | ~~**Story-summary chronology Architecture Contract**~~ | **완료:** PR #29 merge commit `e5ffc730`; concurrent reorder와 legacy blank/provenance scope 포함. | Claude Opus 5 / High |
+| 4 | **Story-summary chronology implementation 독립 review** | 구현 Draft PR의 snapshot semantics, pre-rank exclusion, mixed legacy/Entry order, stale/reorder fail-closed를 깨보는 단계다. | GPT-5.6 Sol / High |
 | 5 | **AOS-1 Generation Preparation + dual-route architecture contract** | chronology 구현 위에서 Story/Character/Relationship/Chapter/Scene 경계, shared selection/budget/trace, direct Provider Adapter와 external Prompt Packet의 terminal seam, apply/import linkage를 고정한다. Taste/Voice는 optional이다. | Claude Opus 5 / High |
 
-**현재 순서:** PR #28 merge 완료 → PR #29 chronology Contract targeted 독립 재리뷰/merge → 새 branch/new Codex session의 chronology implementation → AOS-1 shared Generation Preparation/dual-route contract. P1-8과 chronology contract는 authority cutover나 legacy 제거가 아니다. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
+**현재 순서:** PR #28 merge 완료 → PR #29 chronology Contract merge 완료 → chronology implementation Draft PR 독립 review → AOS-1 shared Generation Preparation/dual-route contract. P1-8과 chronology implementation은 authority cutover나 legacy 제거가 아니다. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
 
 ---
 

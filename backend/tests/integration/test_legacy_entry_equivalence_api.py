@@ -335,7 +335,7 @@ def test_chat_diagnostic_is_typed_deterministic_and_read_only(
         "safety_ratio": 0.08,
         "budget_source": "diagnostic_override",
         "entry_context_feature_enabled": False,
-        "retrieval_policy_version": "entry-keyword-v1",
+        "retrieval_policy_version": "entry-keyword-v2",
         "assembly_policy_version": "entry-prompt-block-v1",
         "projection_policy_version": "legacy-entry-equivalence-v1",
     }
@@ -880,17 +880,20 @@ def test_novel_reports_prior_and_future_summary_without_mutation(client) -> None
         if row["source_key"] == f"chapter:{chapters[2]['id']}:summary:0"
     )
     assert future_runtime["legacy"]["selected"] is False
-    assert future_runtime["entry"]["selected"] is True
-    assert future_runtime["runtime_state"] == "selection_mismatch"
-    assert "future_story_position_selected" in future_runtime["diagnostic_codes"]
+    assert future_runtime["entry"]["selected"] is False
+    assert future_runtime["entry"]["exclusion_code"] == "future_chapter_summary"
+    assert future_runtime["runtime_state"] == "equivalent"
+    assert "future_story_position_not_selected" in future_runtime["diagnostic_codes"]
+    assert "entry_chronology_excluded" in future_runtime["diagnostic_codes"]
     assert "database_timestamp_recency" in future_runtime["diagnostic_codes"]
     prior_runtime = next(
         row
         for row in report["runtime"]["records"]
         if row["source_key"] == f"chapter:{chapters[0]['id']}:summary:0"
     )
-    assert prior_runtime["entry"]["selected"] is True
-    assert "future_story_position_selected" in prior_runtime["diagnostic_codes"]
+    assert prior_runtime["entry"]["selected"] is False
+    assert prior_runtime["entry"]["exclusion_code"] == "legacy_summary_authority_overlap"
+    assert "future_story_position_not_selected" in prior_runtime["diagnostic_codes"]
     character_runtime = next(
         row
         for row in report["runtime"]["records"]
@@ -898,9 +901,9 @@ def test_novel_reports_prior_and_future_summary_without_mutation(client) -> None
     )
     assert character_runtime["legacy"]["selected"] is True
     unknown_runtime = next(
-        row for row in report["runtime"]["records"] if row["entry_id"] == unknown_entry
+        row for row in report["entry_only"] if row["entry_id"] == unknown_entry
     )
-    assert unknown_runtime["entry"]["selected"] is True
+    assert unknown_runtime["runtime_selected"] is False
     assert "unknown_story_position" in unknown_runtime["diagnostic_codes"]
 
 
@@ -1651,8 +1654,8 @@ def test_future_summary_codes_distinguish_selected_and_not_selected_entries(
     )
     assert response.status_code == 200, response.text
     entry_only = {row["entry_id"]: row for row in response.json()["entry_only"]}
-    assert entry_only[selected_id]["runtime_selected"] is True
-    assert "future_story_position_selected" in entry_only[selected_id]["diagnostic_codes"]
+    assert entry_only[selected_id]["runtime_selected"] is False
+    assert "future_story_position_not_selected" in entry_only[selected_id]["diagnostic_codes"]
     assert entry_only[not_selected_id]["runtime_selected"] is False
     assert "future_story_position_selected" not in entry_only[not_selected_id]["diagnostic_codes"]
     assert "future_story_position_not_selected" in entry_only[not_selected_id]["diagnostic_codes"]
@@ -1865,8 +1868,8 @@ def test_exact_future_summary_rejected_by_retrieval_has_not_selected_chronology(
     assert runtime["entry"]["retrieval_selected"] is False
     assert runtime["entry"]["selected"] is False
     assert runtime["entry"]["final_prompt_selected"] is False
-    assert runtime["entry"]["exclusion_code"] == "entry_retrieval_budget_rejected"
-    assert "entry_retrieval_budget_rejected" in runtime["diagnostic_codes"]
+    assert runtime["entry"]["exclusion_code"] == "future_chapter_summary"
+    assert "entry_chronology_excluded" in runtime["diagnostic_codes"]
     assert "database_timestamp_recency" in runtime["diagnostic_codes"]
     assert "future_story_position_not_selected" in runtime["diagnostic_codes"]
     assert "future_story_position_selected" not in runtime["diagnostic_codes"]

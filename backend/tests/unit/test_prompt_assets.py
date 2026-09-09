@@ -142,6 +142,7 @@ def test_novel_continue_uses_the_asset_and_records_trace_identity() -> None:
         work=object(),
         current_chapter=SimpleNamespace(content_text=""),
         prior_summaries=[],
+        prior_summary_chapter_indexes=(),
         characters=[],
         world=None,
         lore_entries=[],

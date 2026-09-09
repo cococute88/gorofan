@@ -2,9 +2,9 @@
 
 > **Canonical handoff document for a new AI session.**
 >
-> **Verified at:** 2026-09-06T14:14:08+09:00
-> **Verified `main`:** `ac791ba8369aa1a7f6856cd9f573e0650995ea74`
-> **Current docs-only branch:** `docs/story-summary-chronology-contract`
+> **Verified at:** 2026-09-06
+> **Verified `main`:** `e5ffc730174a0416ebdc7c8042bea0c1baed2152`
+> **Current implementation branch:** `feature/story-summary-chronology-implementation`
 
 ## Contents
 
@@ -18,7 +18,7 @@
 8. [Environment cautions](#8-environment-cautions)
 9. [Remaining Phase 1 work](#9-remaining-phase-1-work)
 10. [The P1-7 contract as merged](#10-the-p1-7-contract-as-merged)
-11. [P1-8 merged result and chronology contract gate](#11-p1-8-merged-result-and-chronology-contract-gate)
+11. [P1-8 and chronology implementation](#11-p1-8-and-chronology-implementation)
 12. [First-run checklist for a new AI](#12-first-run-checklist-for-a-new-ai)
 13. [Completion-report rules](#13-completion-report-rules)
 14. [Copyable next-task prompt](#14-copyable-next-task-prompt)
@@ -31,7 +31,7 @@ Before changing anything:
 
 - Read this file **and** the relevant ADR/RFC originals in `docs/architecture/`.
 - Confirm the verification timestamp and `main` SHA above.
-- If `origin/main` has advanced after `ac791ba8369aa1a7f6856cd9f573e0650995ea74`, re-verify the affected GitHub, code, task/status, and test facts before relying on this handoff.
+- If `origin/main` has advanced after `e5ffc730174a0416ebdc7c8042bea0c1baed2152`, re-verify the affected GitHub, code, task/status, and test facts before relying on this handoff.
 - Do not infer implementation completion from file presence. Follow executed production paths, API exposure, and passing tests.
 
 ## 2. Repository identity
@@ -56,7 +56,8 @@ Before changing anything:
 | PR #27 merge commit | `9deb643c1c506e604f1341a6d3e072c30220ab88` |
 | PR #28 | [`feat(entry): implement P1-8 legacy equivalence diagnostics`](https://github.com/cococute88/gorofan/pull/28), merged — **P1-8 diagnostic implementation** |
 | PR #28 merged head / merge commit | `e1ae734959815ae02cb9e6fd105a40dd85a254b9` / `ac791ba8369aa1a7f6856cd9f573e0650995ea74` |
-| Current work | PR #29 docs-only `story.summary` chronology Architecture Contract; concurrent-reorder blocker amended, targeted independent re-review pending, production implementation not started |
+| PR #29 | `story.summary` chronology Architecture Contract, merged head `a794f14`, merge commit `e5ffc730` |
+| Current work | Production chronology implementation complete on `feature/story-summary-chronology-implementation`; Draft PR independent review pending |
 | Backend | Python 3.11+; FastAPI; async SQLAlchemy 2; Alembic; SQLite-first with PostgreSQL seam; pytest, Hypothesis, Ruff, MyPy |
 | Frontend | TypeScript; Next.js 14 App Router; React 18; TanStack Query; TipTap; Tailwind; Vitest; PWA |
 | CI | GitHub Actions on Ubuntu, Python 3.12 and Node 20; backend + frontend jobs in `.github/workflows/ci.yml` |
@@ -77,7 +78,7 @@ Use the repository's actual architecture precedence in this order:
 
 The ADRs are the architectural constitution. `RFC-001` is the system-level reference; later RFCs refine components under it. The architecture README is an onboarding map, not a higher authority. If an older `.kiro` plan conflicts with ADR/RFC architecture, **ADR/RFC wins**. In particular, do not resurrect the old separate Story Bible, Reference, or Planning engine/table direction.
 
-Three merged implementation notes now sit beside the ADR/RFC set as binding contracts for shipped work: `docs/architecture/entry-context-integration.md` (P1-6), `docs/architecture/edit-diff-capture-design.md` (P1-7), and `docs/architecture/legacy-entry-equivalence-design.md` (P1-8, accepted in PR #27 and implemented by PR #28). The proposed `docs/architecture/story-summary-chronology.md` is the next docs-only correctness contract and requires independent review before implementation. These notes record decisions made *inside* the space the ADR/RFC set fixed; where they appear to conflict with an ADR or RFC, those govern.
+Four merged implementation notes now sit beside the ADR/RFC set as binding contracts: `docs/architecture/entry-context-integration.md` (P1-6), `docs/architecture/edit-diff-capture-design.md` (P1-7), `docs/architecture/legacy-entry-equivalence-design.md` (P1-8), and `docs/architecture/story-summary-chronology.md` (PR #29). These notes record decisions made *inside* the space the ADR/RFC set fixed; where they appear to conflict with an ADR or RFC, those govern.
 
 ## 4. Architecture invariants
 
@@ -134,7 +135,7 @@ All rows below were checked against GitHub metadata and the current code/history
 - **P1-6 production wiring (PR #21):** `backend/app/services/entry_generation_context.py` is the single production call site chaining `EntryService.retrieve()` → `assemble_entry_context()` → `PromptEngine`. Chat and Novel each invoke it inside T1, before any token is streamed, exactly once per request — including the Chat regenerate path.
 - **P1-7 edit-diff capture (PR #25):** both data-destroying paths now preserve the AI pre-image. `EntryService.edit_review_entry()` reads the pre-image under the existing Entry row lock and inserts the capture in the same transaction as the destructive field assignment; `NovelService._append_chapter()` captures the streamed segment before concatenating it into `Chapter.content_text`, under an explicit chapter row lock. The prior segment is settled at T1 of the next continuation of the same chapter. See [section 10](#10-the-p1-7-contract-as-merged) for the full contract.
 - **P1-8 diagnostic implementation (PR #28 merged):** `legacy_entry_equivalence.py` and the authenticated compare endpoint implement PR #27's pure projections, coverage precedence, and provider-free Chat/Novel shadows. Future/unknown summary selection remains measured rather than repaired, and regenerate assistant/user timestamp ties fail closed before ambiguous content reaches downstream diagnostic work. It does not change authority.
-- **Chronology correctness contract (PR #29):** `docs/architecture/story-summary-chronology.md` defines the explicit target-Chapter anchor, strict-prior Entry summary eligibility, current/future/unknown fail-safe exclusion, ascending story order, duplicate/legacy-overlap handling, Retrieval ownership, budget isolation, and Migration Decision B. After blocking review it additionally requires target/legacy/Entry-source/overlap reads to belong to one consistent story-order view and permits snapshot, serialization, drift-retry, or equivalent implementation. Production implementation remains zero pending targeted re-review and merge.
+- **Chronology correctness implementation:** PR #29's contract is implemented with a preparation-scoped consistent database snapshot, explicit Novel anchor, shared pure classifier, strict pre-rank exclusion, duplicate/legacy-overlap fail-closed handling, Chapter-index provider ordering, and retrieval/assembly evidence. PostgreSQL uses transaction-local `REPEATABLE READ`; SQLite pins an explicit read snapshot. Provider I/O begins only after the session closes.
 
 ### P1-6 contract as merged
 
@@ -276,8 +277,8 @@ The current `tasks.md`, `implementation-status.md`, and production code agree on
 | ~~**P1-6**~~ `retrieve()` → Context Assembly → real generation path | **Complete** (PR #21, `1b2a850`). Single production call site wired for Chat and Novel behind an OFF-by-default flag. | — | — | Done. |
 | ~~**P1-7**~~ edit-diff capture | **Complete** (design PR #23 `39cf740`, implementation PR #25 `271e27c`). Both destroying paths capture the pair; `alembic heads` is `0003_edit_diff_capture`. The permanent-data-loss clock has stopped. | — | — | Done. The §13 read contract belongs to **P2-5**, not to a follow-up here. |
 | ~~**P1-8**~~ legacy Character/World/Lore ↔ Entry equivalence bridge | **Complete** (design PR #27, implementation PR #28, merge `ac791ba`). Pure projections, coverage precedence, typed owner-safe API, and Chat/Novel runtime shadows are covered by 53 focused tests. Legacy remains authoritative and `_make_lore_blocks()` still runs. | — | Backfill, legacy deletion, read cutover, migration, or flipping the flag as part of the bridge. | Done; chronology evidence feeds the next gate. |
-| **Story-summary chronology contract** | PR #29 blocking review amendment written; targeted architecture re-review/merge pending. Production implementation not started. | P1-8 merged. | Generation Preparation implementation, migrations, authority cutover, legacy removal, provider/UI/style work. | Re-review only concurrent reorder and the two minor clarifications, then merge by separate decision. |
-| **Story-summary chronology implementation** | Not started. Current Entry retrieval still lacks target-Chapter as-of eligibility and uses DB timestamp recency. | Accepted chronology contract. | AOS-1 or broader retrieval redesign. | Immediately before AOS-1. |
+| ~~**Story-summary chronology contract**~~ | **Complete** (PR #29 merge `e5ffc730`). | P1-8 merged. | — | Done. |
+| **Story-summary chronology implementation** | Implementation and local validation complete; Draft PR independent review pending. Explicit target anchor, consistent snapshot, prior-only eligibility, Chapter-index order, overlap/duplicate fail-closed, and P1-8 alignment are present. | Accepted chronology contract. | AOS-1 or broader retrieval redesign. | Independent review, then separate Ready/merge decision. |
 | **P1-9** review audit persistence decision | Not implemented. Current Entries have lifecycle/provenance but no approved actor/action history design. P1-7 deliberately defined no actor or action vocabulary. | P1-1 complete. | Unapproved JSON schema, implementation migration in the design PR, reusing `edit_diff_captures` as a review timeline. | Independent of the chronology/AOS path unless architecture review chooses earlier. |
 | **P1-10** local development environment cleanup | Optional and blocked by user-data safety. Local DB stamp is stale; protected stashes exist. | Explicit user approval for data/stash actions. | Automatic DB recreation, `alembic stamp`, stash application/deletion. | Last, and only with approval. |
 
@@ -357,28 +358,28 @@ Neither is a defect, and neither blocked the merge:
 
 Three smaller observations recorded by the pre-merge review, all accepted as non-blocking: design §9.2's "increment a counter" is satisfied by the structured log because the repository has no metrics substrate and building one would exceed P1-7's scope; a Tier-2 failure on the success path ends the SSE stream without an `error` event, which the design's stated outcome permits; and `insert_offset` is `len(content_text)` *before* concatenation exactly as design §6.3 defines it, which is two characters ahead of the separator when the chapter is non-empty — an alignment detail for P2-5, not an error.
 
-## 11. P1-8 merged result and chronology contract gate
+## 11. P1-8 and chronology implementation
 
 PR #28 is merged at `ac791ba8369aa1a7f6856cd9f573e0650995ea74` (merged head `e1ae734959815ae02cb9e6fd105a40dd85a254b9`). Its owner-safe, read-only diagnostic preserves the repaired source attribution/order, final-selection chronology evidence, and regenerate timestamp-tie fail-closed behavior. P1-8 intentionally moved no authority and changed no production eligibility.
 
-The production debt it proved is now specified in `docs/architecture/story-summary-chronology.md`. The current Novel operation is continuation of an explicitly addressed Chapter; `Chapter.id` is stable target identity and live `work_id/index` are membership/position evidence confirmed in one consistent story-order view. Only live same-Work Chapter-subject summaries at a strictly lower `Chapter.index` are eligible. Current, future, unknown, duplicated, foreign, and deleted/orphaned summaries are excluded before ranking or budget. Selected prior summaries render in ascending Chapter index; Entry DB timestamps are audit/diagnostic evidence only. Legacy remains authoritative during coexistence and wins same-Chapter substantive overlap.
+PR #29 merged the contract at `e5ffc730174a0416ebdc7c8042bea0c1baed2152`. The current Novel operation is continuation of an explicitly addressed Chapter; `Chapter.id` is stable target identity and live `work_id/index` are membership/position evidence confirmed in one consistent story-order view. Only live same-Work Chapter-subject summaries at a strictly lower `Chapter.index` are eligible. Current, future, unknown, duplicated, foreign, and deleted/orphaned summaries are excluded before ranking or budget. Selected legacy and Entry prior summaries render together in ascending Chapter index; Entry DB timestamps are audit/diagnostic evidence only. Legacy remains authoritative during coexistence and wins same-Chapter substantive overlap.
 
-The first independent review approved that direction and Migration Decision **B**, but blocked a mixed-snapshot gap: a cached target index and source positions read after a concurrent reorder could invert prior/future. The amended contract requires target position, legacy prior scan, Entry source positions, and legacy-overlap evidence to come from one consistent view. It fixes the invariant, not one mechanism: consistent snapshot, shared reorder serialization, whole-evidence optimistic drift detection/retry, or equivalent strength are allowed. The boundary ends once the valid chronology evidence is fixed for preparation; no provider-long DB transaction is required.
+The production implementation chooses a consistent snapshot: PostgreSQL starts transaction-local `REPEATABLE READ`, while SQLite explicitly begins a `SERIALIZABLE` read transaction so WAL readers retain the pre-reorder view. Target position, legacy prior scan, Entry source positions, and overlap evidence are resolved inside that boundary. Snapshot setup or evidence contradiction aborts before assembly, PromptEngine, or provider use; there is no retry. The session closes before provider network I/O, so a reorder after preparation does not invalidate the owned prompt context.
 
-Minor clarifications now define substantive legacy authority as non-empty after `strip()` and limit `created_at_chapter_id` contradiction handling to governed Chapter-derived paths. The subject Chapter remains the canonical summary locator. No migration is authorized because concurrent reorder is read consistency, not missing persisted chronology metadata. Targeted independent re-review is required before merge or implementation.
+Substantive legacy authority is non-empty after `strip()`. The subject Chapter remains the canonical summary locator, and no current production creation path declares a governed same-source invariant for `created_at_chapter_id`, so that field remains provenance/diagnostic evidence rather than an eligibility constraint. Required persisted provenance (`chapter`, `edit-diff`, and `chat-bookmark`) now reuses the acceptance-time owner/liveness policy during generation retrieval in the same story-order session and is excluded before ranking when its anchor has broken. Chapter indexes are loaded only for owner-owned Chapters in the target Work; foreign and same-owner cross-Work membership may retain a content-free exclusion reason, but their indexes are neither selected nor traced. Generic `user`, `import`, and `reference` provenance remains unaffected. No migration was added. The implementation Draft PR requires targeted independent re-review before Ready or merge.
 
 ## 12. First-run checklist for a new AI
 
-1. Read `AI-HANDOFF.md` and `docs/architecture/story-summary-chronology.md`. The next action is targeted independent re-review of PR #29's concurrent-reorder amendment and two minor clarifications, not implementation.
-2. Fetch and compare `origin/main`; if this handoff SHA (`ac791ba`) is no longer current, re-validate GitHub state, code call sites, and status documents.
+1. Read `AI-HANDOFF.md` and `docs/architecture/story-summary-chronology.md`. The next action is an independent code review of the chronology implementation Draft PR.
+2. Fetch and compare `origin/main`; if this handoff SHA (`e5ffc730`) is no longer current, re-validate GitHub state, code call sites, and status documents.
 3. Check the working tree and list stashes without modifying either. Keep user work, the local DB, and stashes untouched.
 4. Confirm `FEATURES["entry_store_context"]` still defaults OFF and Alembic head remains `0003_edit_diff_capture` without running or changing the user's local DB.
 5. Trace the real production path: `NovelService._continue_impl()` / `_build_story_context()`, `build_novel_retrieve_request()`, `EntryService.retrieve()`, `entry_retrieval.rank_entries()/select_entries()`, Context Assembly, and PromptEngine.
 6. Reproduce the stale-anchor counterexample `T=10, S=2 → reorder → T=3, S=4`; verify target, legacy scan, Entry sources, and overlap cannot form a mixed view and that the boundary does not require holding a transaction across provider I/O.
 7. Verify `summary.strip()` legacy authority and the scoped `created_at_chapter_id`/provenance rule without reopening already-approved chronology decisions.
 8. Confirm Migration Decision B remains valid because this is read consistency/serialization/revalidation, not absent stored chronology.
-9. Keep the review docs-only. Do not implement, change schemas, create migrations, enable the flag, remove legacy paths, or begin AOS/Generation Preparation.
-10. Verify `git diff --check`, strict UTF-8/no BOM, Markdown links, docs-only diff, no local DB/stash mutation, and the exact Draft PR base/head. Report the targeted verdict; merge only after a separate explicit decision.
+9. Review only; do not merge, enable the flag, remove legacy paths, create migrations, or begin AOS/Generation Preparation.
+10. Verify `git diff --check`, strict UTF-8/no BOM, no local DB/stash mutation, and the exact Draft PR base/head. Report findings to the author session; Ready/merge requires a separate decision.
 
 Use one PowerShell command per process and set the terminal working directory instead of shell-chaining commands. If the wrapper corrupts a command, use the `subprocess.run(argv, cwd=..., shell=False)` fallback described in [Environment cautions](#8-environment-cautions), not another identical wrapper retry.
 
@@ -420,21 +421,18 @@ cococute88/gorofan (note the spelling: gorofan, not gorafan).
 Start by reading C:\gv\rfrf\AI-HANDOFF.md, then the governing ADR/RFC originals it names.
 Do not trust this prompt over current GitHub, Git, architecture, code, or test state: fetch
 origin/main, inspect the working tree, and list stashes without touching them. The handoff
-snapshot is main ac791ba8369aa1a7f6856cd9f573e0650995ea74, where P1-8 implementation
-PR #28 is merged (merged head e1ae734959815ae02cb9e6fd105a40dd85a254b9).
+snapshot is main e5ffc730174a0416ebdc7c8042bea0c1baed2152, where chronology contract
+PR #29 is merged (merged head a794f14ca44ff17bba1f2d47f584659bdac62425).
 If main has advanced, re-verify before relying on any of it.
 
-Your task is a targeted independent Architecture Re-Review of docs-only PR #29. The previous
-review approved the core chronology policy and Migration Decision B, and raised one blocker plus
-two minor ambiguities. Review only the amendment unless it introduces a concrete new conflict.
+Your task is an independent implementation review of the story-summary chronology Draft PR.
+Do not modify the branch unless the author asks for a focused fix. Start with findings, ordered
+by severity, and treat the merged contract as authority.
 
-Reproduce the blocker: target T was index 10 and source S index 2; after the target read, a reorder
-commits T=3 and S=4. Verify the contract forbids cached T=10 plus fresh S=4 across target resolution,
-legacy prior-summary scan, Entry source positions, overlap evidence, ranking/budget, final prompt,
-and provider invocation. Confirm it permits a DB consistent snapshot, shared reorder serialization,
-whole-evidence optimistic drift detection/retry, or an equally strong mechanism, while ending the
-consistency boundary before provider network I/O. Re-reading only the target must not be accepted
-unless every position/overlap fact is proven coherent.
+Break the chosen snapshot implementation with the counterexample T=10/S=2 then T=3/S=4. Verify
+PostgreSQL transaction-local REPEATABLE READ and SQLite explicit snapshots cover target, legacy,
+Entry source, and overlap evidence together; fail-closed paths must invoke no provider. Verify a
+reorder after preparation is allowed and no provider-long transaction remains open.
 
 For the minor points, verify substantive legacy authority means NOT NULL Chapter.summary with
 summary.strip() non-empty, and that the subject Chapter is the canonical summary locator.
@@ -443,17 +441,13 @@ only a governed Chapter-derived path with an explicit same-source invariant may 
 as unknown. Confirm concurrent reorder remains a read-consistency problem, so Decision B requires no
 chronology version column/table or migration.
 
-Keep the review documentation-only. Do not implement production logic, change APIs or schemas,
-create a migration, enable the Entry flag, remove/deprecate legacy scanning, start AOS Generation
-Preparation, or modify local DB/stashes. The contract must preserve this sequence: independent
-review/merge, then a new branch/new Codex session for chronology implementation, then shared
-Generation Preparation, Scene input, Gemini direct + external Prompt Packet, Novel workspace,
-Chapter apply/import, and only later Voice/reference/Kiwi/semantic/hybrid style work.
+Test high-recency future isolation, target-not-latest, duplicate canon exclusion, legacy whitespace
+fallback, generic provenance, mixed legacy/Entry story order, flag OFF prompt compatibility, and
+P1-8 diagnostic alignment. Do not create a migration, enable the Entry flag, remove legacy scanning,
+start AOS Generation Preparation, modify local DB/stashes, mark Ready, or merge.
 
-Verify git diff --check, strict UTF-8/no BOM, Markdown links, docs-only diff, no migration or local
-DB/stash mutation, and the Draft PR base/head/CI. Do not modify or merge the PR unless separately
-asked. Report whether the concurrent-reorder blocker and the two minor clarifications are resolved,
-and whether the contract is safe to merge before a separate implementation session.
+Verify git diff --check, strict UTF-8/no BOM, no migration or local DB/stash mutation, and the Draft
+PR base/head/CI. Report actionable findings to the author session and stop before Ready or merge.
 ```
 
 **Recommended execution model:** Claude Code — Opus High; Codex — high reasoning; Cursor — strongest available reasoning model. Chronology is a correctness boundary, so review must prefer fail-safe exclusion over timestamp or identifier guesses.

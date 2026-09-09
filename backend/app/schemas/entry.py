@@ -340,6 +340,67 @@ class EntryRetrievalTaskKind(StrEnum):
     CHAT = "chat"
 
 
+class StorySummaryGenerationOperation(StrEnum):
+    CONTINUE = "continue"
+    INITIAL = "initial"
+    REGENERATE = "regenerate"
+
+
+class StorySummaryChronologyDisposition(StrEnum):
+    PRIOR = "prior"
+    CURRENT = "current"
+    FUTURE = "future"
+    UNKNOWN = "unknown"
+
+
+class StorySummaryChronologyAnchor(BaseModel):
+    """Owned Novel target whose live position was resolved in one story-order view."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    owner_id: str = Field(min_length=1)
+    work_id: str = Field(min_length=1)
+    chapter_id: str = Field(min_length=1)
+    chapter_index: int
+    operation: StorySummaryGenerationOperation
+
+
+class StorySummaryChronologyRequest(BaseModel):
+    """Novel-only chronology policy inputs captured with the target Chapter."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    anchor: StorySummaryChronologyAnchor
+    substantive_legacy_chapter_ids: tuple[str, ...] = ()
+
+    @field_validator("substantive_legacy_chapter_ids")
+    @classmethod
+    def normalize_legacy_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(sorted(set(value)))
+
+
+class StorySummaryChronologyEvidence(BaseModel):
+    """Retrieval-issued evidence carried to Context Assembly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    disposition: StorySummaryChronologyDisposition
+    source_chapter_id: str
+    source_chapter_index: int
+
+
+class StorySummaryChronologyExclusion(BaseModel):
+    """Content-free trace for a Chapter-summary hard exclusion."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    entry_id: str
+    disposition: StorySummaryChronologyDisposition
+    reason: str
+    source_chapter_id: str | None = None
+    source_chapter_index: int | None = None
+
+
 class EntryScopeSelector(BaseModel):
     scope_kind: EntryScope
     scope_id: str | None = None
@@ -405,6 +466,7 @@ class EntryRetrieveRequest(BaseModel):
     include_rejected: bool = False
     task_kind: EntryRetrievalTaskKind = EntryRetrievalTaskKind.GENERAL
     limit: int = Field(default=20, ge=1, le=100)
+    story_summary_chronology: StorySummaryChronologyRequest | None = None
 
 
 class EntryRetrievalScore(BaseModel):
@@ -427,10 +489,14 @@ class EntryRetrievalItem(BaseModel):
     reason: list[str]
     estimated_tokens: int
     truncated: bool = False
+    story_summary_chronology: StorySummaryChronologyEvidence | None = None
 
 
 class EntryRetrievalTrace(BaseModel):
     excluded_orphaned_entry_ids: list[str] = Field(default_factory=list)
+    story_summary_chronology_exclusions: list[StorySummaryChronologyExclusion] = Field(
+        default_factory=list
+    )
     budget_rejected_entry_ids: list[str] = Field(default_factory=list)
     limit_rejected_entry_ids: list[str] = Field(default_factory=list)
 
@@ -442,3 +508,4 @@ class EntryRetrievalResult(BaseModel):
     policy_version: str
     truncated: bool = False
     trace: EntryRetrievalTrace
+    story_summary_chronology_anchor: StorySummaryChronologyAnchor | None = None

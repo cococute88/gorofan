@@ -92,6 +92,7 @@ def test_repository_defaults_ignore_persisted_legacy_prompt_templates(client) ->
             work=object(),
             current_chapter=SimpleNamespace(content_text=""),
             prior_summaries=[],
+            prior_summary_chapter_indexes=(),
             characters=[],
             world=None,
             lore_entries=[],

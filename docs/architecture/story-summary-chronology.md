@@ -1,18 +1,18 @@
 # Story Summary Chronology Contract
 
-- **Status:** Proposed — concurrent-reorder blocker amended; targeted independent architecture re-review required
+- **Status:** Accepted in PR #29; production implementation complete on a Draft PR pending independent review
 - **Date:** 2026-09-06
-- **Baseline:** `main` at `ac791ba8369aa1a7f6856cd9f573e0650995ea74` (PR #28 merged)
+- **Baseline:** `main` at `e5ffc730174a0416ebdc7c8042bea0c1baed2152` (PR #29 merged)
 - **Scope:** Chapter-scoped `Entry(type="story.summary")` eligibility and ordering for Novel/Chapter prose-generation context
 - **Governing sources:** ADR-003, ADR-005, ADR-009, ADR-017, ADR-018; RFC-002, RFC-003, RFC-004, RFC-009; [P1-8 Legacy Context ↔ Entry Equivalence Bridge](legacy-entry-equivalence-design.md)
 
-> **Contract, not implementation.** This change defines the correctness boundary that a later implementation PR must enforce. It changes no Python, API, schema, migration, feature flag, prompt, provider call, or local database.
+> **Accepted contract and implementation status.** PR #29 fixed this correctness boundary without production changes. The follow-up implementation enforces it in the existing Novel retrieval seam without schema, migration, provider, UI, or feature-default changes.
 
 ## 1. Status
 
 This is the post-P1-8 chronology correctness gate. PR #28 merged the read-only equivalence diagnostic at `ac791ba`; it measured, but deliberately did not repair, the fact that Entry retrieval can select future or chronology-unknown `story.summary` rows.
 
-The contract becomes accepted only after independent review and merge. Production implementation has not started. `FEATURES["entry_store_context"]` remains default OFF, legacy Chapter summaries remain authoritative, and this document does not authorize an Entry authority cutover.
+PR #29 accepted and merged this contract. The follow-up implementation uses one preparation-scoped database snapshot, strict pre-ranking eligibility, Chapter-index ordering, and fail-closed evidence checks. `FEATURES["entry_store_context"]` remains default OFF, legacy Chapter summaries remain authoritative, and this document does not authorize an Entry authority cutover.
 
 ## 2. Problem
 

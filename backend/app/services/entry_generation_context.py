@@ -33,6 +33,9 @@ from app.schemas.entry import (
     EntryRetrieveRequest,
     EntryScope,
     EntryScopeSelector,
+    StorySummaryChronologyAnchor,
+    StorySummaryChronologyRequest,
+    StorySummaryGenerationOperation,
 )
 from app.services.entry_service import EntryService
 
@@ -135,6 +138,8 @@ def build_novel_retrieve_request(
     chapter: object,
     instruction: str | None,
     context_window: int,
+    operation: StorySummaryGenerationOperation = StorySummaryGenerationOperation.CONTINUE,
+    substantive_legacy_summary_chapter_ids: tuple[str, ...] = (),
 ) -> EntryRetrieveRequest:
     """Novel situation: user + this work + its world + its linked cast."""
 
@@ -146,10 +151,23 @@ def build_novel_retrieve_request(
     ]
     tail = (getattr(chapter, "content_text", "") or "")[-NOVEL_BEAT_TAIL_CHARS:]
     beat = " ".join(part for part in (instruction or "", tail) if part).strip()
+    work_id = getattr(work, "id", None)
+    chapter_id = getattr(chapter, "id", None)
+    chapter_index = getattr(chapter, "index", None)
+    chronology = StorySummaryChronologyRequest(
+        anchor=StorySummaryChronologyAnchor(
+            owner_id=user_id,
+            work_id=work_id,
+            chapter_id=chapter_id,
+            chapter_index=chapter_index,
+            operation=operation,
+        ),
+        substantive_legacy_chapter_ids=substantive_legacy_summary_chapter_ids,
+    )
     return EntryRetrieveRequest(
         user_id=user_id,
         scopes=_scope_selectors(
-            work_id=getattr(work, "id", None),
+            work_id=work_id,
             world_id=world_id,
             character_ids=character_ids,
         ),
@@ -158,6 +176,7 @@ def build_novel_retrieve_request(
         budget=entry_context_budget(context_window),
         task_kind=EntryRetrievalTaskKind.SCENE,
         limit=ENTRY_CONTEXT_LIMIT,
+        story_summary_chronology=chronology,
     )
 
 

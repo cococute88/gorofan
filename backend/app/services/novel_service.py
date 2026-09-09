@@ -18,6 +18,7 @@ from app.models.novel import Chapter, Work, WorkCharacter
 from app.models.world import Lorebook, LoreEntry, World
 from app.repositories.base import BaseRepository
 from app.repositories.chapter_repository import ChapterRepository
+from app.schemas.entry import StorySummaryGenerationOperation
 from app.schemas.novel import (
     ChapterCreate,
     ChapterUpdate,
@@ -32,6 +33,8 @@ from app.services.entry_generation_context import (
     load_entry_context,
 )
 from app.services.provider_resolve import resolve_provider_request
+from app.services.story_order_snapshot import begin_story_order_snapshot
+from app.services.story_summary_chronology import is_substantive_legacy_summary
 
 _active_continue: set[str] = set()
 
@@ -215,8 +218,9 @@ class NovelService:
         self, user_id: str, chapter_id: str, dto: ContinueRequest
     ) -> AsyncIterator[StreamEvent]:
         async with self.sm() as s:
+            await begin_story_order_snapshot(s)
             chapter = await self._owned_chapter(s, user_id, chapter_id)
-            work = await s.get(Work, chapter.work_id)
+            work = await self._owned_work(s, user_id, chapter.work_id)
             ctx = await self._build_story_context(s, work, chapter)
             req = await resolve_provider_request(
                 s, self.settings, self.registry,
@@ -238,6 +242,10 @@ class NovelService:
                     chapter=chapter,
                     instruction=dto.instruction,
                     context_window=req.context_window,
+                    operation=StorySummaryGenerationOperation.CONTINUE,
+                    substantive_legacy_summary_chapter_ids=(
+                        ctx.substantive_legacy_summary_chapter_ids
+                    ),
                 ),
             )
             prompt = self.engine.assemble_continue(
@@ -391,11 +399,18 @@ class NovelService:
     async def _build_story_context(self, s: AsyncSession, work: Work, chapter: Chapter) -> ChapterContext:
         prior_stmt = (
             select(Chapter)
-            .where(Chapter.work_id == work.id, Chapter.index < chapter.index)
+            .where(
+                Chapter.work_id == work.id,
+                Chapter.user_id == work.user_id,
+                Chapter.index < chapter.index,
+            )
             .order_by(Chapter.index)
         )
         prior = list((await s.execute(prior_stmt)).scalars().all())
-        prior_summaries = [c.summary for c in prior if c.summary]
+        substantive_prior = [
+            c for c in prior if is_substantive_legacy_summary(c.summary)
+        ]
+        prior_summaries = [c.summary for c in substantive_prior]
         wc_stmt = select(WorkCharacter).where(WorkCharacter.work_id == work.id)
         links = list((await s.execute(wc_stmt)).scalars().all())
         characters = []
@@ -414,7 +429,11 @@ class NovelService:
             lore = list((await s.execute(lstmt)).scalars().all())
         return ChapterContext(
             work=work, current_chapter=chapter, prior_summaries=prior_summaries,
+            prior_summary_chapter_indexes=tuple(c.index for c in substantive_prior),
             characters=characters, world=world, lore_entries=lore,
+            substantive_legacy_summary_chapter_ids=tuple(
+                c.id for c in substantive_prior
+            ),
         )
 
     # ----- helpers -----

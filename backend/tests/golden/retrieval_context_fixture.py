@@ -29,7 +29,7 @@ ORPHAN_ID = "bench-orphaned-work-entry"
 REJECTED_ID = "bench-rejected"
 SUPERSEDED_ID = "bench-superseded"
 
-RETRIEVAL_POLICY_VERSION = "entry-keyword-v1"
+RETRIEVAL_POLICY_VERSION = "entry-keyword-v2"
 ASSEMBLY_POLICY_VERSION = "entry-prompt-block-v1"
 RETRIEVAL_BUDGET = 2_000
 RETRIEVAL_LIMIT = 3

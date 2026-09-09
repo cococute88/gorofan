@@ -17,7 +17,7 @@ from app.engines.prompt.entry_context import (
 )
 from app.models.character import Character
 from app.models.entry import Entry
-from app.models.novel import Work
+from app.models.novel import Chapter, Work
 from app.models.user import User
 from app.schemas.entry import EntryScope, EntryStatus, EntrySubjectType, EntryType
 from app.services.entry_service import EntryService
@@ -117,6 +117,16 @@ async def _seed_frozen_snapshot(session: AsyncSession) -> None:
             ),
             Character(id=HARIN_ID, user_id=OWNER_ID, name="하린"),
         ]
+    )
+    await session.flush()
+    session.add(
+        Chapter(
+            id="bench-chapter-1",
+            work_id=WORK_ID,
+            user_id=OWNER_ID,
+            index=1,
+            title="Golden provenance anchor",
+        )
     )
     await session.flush()
     session.add_all(
