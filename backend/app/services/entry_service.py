@@ -10,7 +10,7 @@ import builtins
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import Conflict, NotFound, ValidationAppError
@@ -398,6 +398,11 @@ class EntryService:
             ),
             subjects=subjects,
         )
+        live_required_provenance_entry_ids = (
+            await self._entries_with_live_required_provenance(
+                session, request.user_id, candidates
+            )
+        )
 
         chronology_evidence: dict[str, StorySummaryChronologyEvidence] = {}
         chronology_exclusions: list[StorySummaryChronologyExclusion] = []
@@ -407,11 +412,17 @@ class EntryService:
                 chronology_evidence,
                 chronology_exclusions,
             ) = await self._apply_story_summary_chronology(
-                session, request, candidates
+                session,
+                request,
+                candidates,
+                live_required_provenance_entry_ids,
             )
 
         candidates, orphaned_ids = await self._exclude_orphaned_candidates(
-            session, request.user_id, candidates
+            session,
+            request.user_id,
+            candidates,
+            live_required_provenance_entry_ids=live_required_provenance_entry_ids,
         )
         ranked = rank_entries(
             candidates,
@@ -443,6 +454,7 @@ class EntryService:
         session: AsyncSession,
         request: EntryRetrieveRequest,
         candidates: builtins.list[Entry],
+        live_required_provenance_entry_ids: set[str],
     ) -> tuple[
         builtins.list[Entry],
         dict[str, StorySummaryChronologyEvidence],
@@ -465,19 +477,53 @@ class EntryService:
             if entry.subject_type == EntrySubjectType.CHAPTER.value
             and entry.subject_id is not None
         }
-        relevant_chapter_ids = subject_ids | {anchor.chapter_id}
         stmt = (
             select(Chapter, Work)
             .join(Work, Work.id == Chapter.work_id)
             .where(
-                or_(
-                    Chapter.work_id == anchor.work_id,
-                    Chapter.id.in_(relevant_chapter_ids),
-                )
+                Chapter.work_id == anchor.work_id,
+                Chapter.user_id == anchor.owner_id,
+                Work.user_id == anchor.owner_id,
+                Work.deleted_at.is_(None),
             )
         )
         chapter_rows = list((await session.execute(stmt)).tuples().all())
         chapters_by_id = {chapter.id: (chapter, work) for chapter, work in chapter_rows}
+
+        # Preserve useful foreign/cross-Work reasons without selecting or loading
+        # any unauthorized story-order value. Chapter.index is read only by the
+        # owner- and target-Work-scoped query above.
+        unresolved_subject_ids = subject_ids - set(chapters_by_id)
+        chapter_membership_by_id: dict[
+            str, tuple[str, str, str, object]
+        ] = {}
+        if unresolved_subject_ids:
+            membership_stmt = (
+                select(
+                    Chapter.id,
+                    Chapter.work_id,
+                    Chapter.user_id,
+                    Work.user_id,
+                    Work.deleted_at,
+                )
+                .join(Work, Work.id == Chapter.work_id)
+                .where(Chapter.id.in_(unresolved_subject_ids))
+            )
+            chapter_membership_by_id = {
+                chapter_id: (
+                    work_id,
+                    chapter_owner_id,
+                    work_owner_id,
+                    work_deleted_at,
+                )
+                for (
+                    chapter_id,
+                    work_id,
+                    chapter_owner_id,
+                    work_owner_id,
+                    work_deleted_at,
+                ) in (await session.execute(membership_stmt)).tuples().all()
+            }
         target_row = chapters_by_id.get(anchor.chapter_id)
         if target_row is None:
             raise Conflict("Story chronology target is no longer available")
@@ -519,8 +565,15 @@ class EntryService:
 
         classifications: dict[str, StorySummaryClassification] = {}
         for entry in summaries:
+            if entry.id not in live_required_provenance_entry_ids:
+                classifications[entry.id] = StorySummaryClassification(
+                    StorySummaryChronologyDisposition.UNKNOWN,
+                    "invalid_required_provenance_anchor",
+                )
+                continue
             source_row = chapters_by_id.get(entry.subject_id or "")
             source, source_work = source_row if source_row is not None else (None, None)
+            membership = chapter_membership_by_id.get(entry.subject_id or "")
             classification = classify_story_summary(
                 anchor,
                 StorySummarySourceEvidence(
@@ -531,15 +584,38 @@ class EntryService:
                     summary_level=(entry.data or {}).get("level"),
                     status=entry.status,
                     superseded_by_entry_id=entry.superseded_by_entry_id,
-                    source_chapter_id=source.id if source is not None else None,
-                    source_work_id=source.work_id if source is not None else None,
+                    source_chapter_id=(
+                        source.id
+                        if source is not None
+                        else entry.subject_id
+                        if membership is not None
+                        else None
+                    ),
+                    source_work_id=(
+                        source.work_id
+                        if source is not None
+                        else membership[0]
+                        if membership is not None
+                        else None
+                    ),
                     source_chapter_index=source.index if source is not None else None,
-                    source_owner_id=source.user_id if source is not None else None,
+                    source_owner_id=(
+                        source.user_id
+                        if source is not None
+                        else membership[1]
+                        if membership is not None
+                        else None
+                    ),
                     source_work_owner_id=(
-                        source_work.user_id if source_work is not None else None
+                        source_work.user_id
+                        if source_work is not None
+                        else membership[2]
+                        if membership is not None
+                        else None
                     ),
                     source_work_active=(
-                        source_work is not None and source_work.deleted_at is None
+                        (source_work is not None and source_work.deleted_at is None)
+                        or (membership is not None and membership[3] is None)
                     ),
                 ),
             )
@@ -729,7 +805,7 @@ class EntryService:
     ) -> None:
         """Recheck persisted owner/liveness anchors immediately before acceptance."""
         live_entries, _ = await self._exclude_orphaned_candidates(
-            session, user_id, [entry]
+            session, user_id, [entry], validate_required_provenance=False
         )
         if not live_entries:
             raise ValidationAppError(
@@ -742,34 +818,14 @@ class EntryService:
         except PydanticValidationError as exc:
             raise ValidationAppError("Proposed Entry has invalid provenance") from exc
 
-        source_kind = provenance.source_kind
-        source_id = provenance.source_id
-        if source_kind is ProvenanceSourceKind.USER:
-            if source_id is not None and source_id != user_id:
+        if entry.id not in await self._entries_with_live_required_provenance(
+            session, user_id, [entry]
+        ):
+            if provenance.source_kind is ProvenanceSourceKind.USER:
                 raise ValidationAppError("Entry provenance no longer belongs to the owner")
-        elif source_kind in {
-            ProvenanceSourceKind.CHAPTER,
-            ProvenanceSourceKind.EDIT_DIFF,
-        }:
-            await self._assert_active_chapter_anchor(
-                session, user_id, source_id, "provenance.source_id"
+            raise ValidationAppError(
+                "provenance.source_id must reference an owned active record"
             )
-        elif source_kind is ProvenanceSourceKind.CHAT_BOOKMARK:
-            if not isinstance(source_id, str):
-                raise ValidationAppError("provenance.source_id is required")
-            stmt = (
-                select(Message.id)
-                .join(ChatSession, ChatSession.id == Message.chat_session_id)
-                .where(
-                    Message.id == source_id,
-                    Message.user_id == user_id,
-                    ChatSession.user_id == user_id,
-                )
-            )
-            if (await session.execute(stmt)).scalar_one_or_none() is None:
-                raise ValidationAppError(
-                    "provenance.source_id must reference an owned active record"
-                )
 
         if entry.created_at_chapter_id is not None:
             await self._assert_active_chapter_anchor(
@@ -802,7 +858,13 @@ class EntryService:
             raise ValidationAppError(f"{field} must reference an owned active record")
 
     async def _exclude_orphaned_candidates(
-        self, session: AsyncSession, user_id: str, entries: builtins.list[Entry]
+        self,
+        session: AsyncSession,
+        user_id: str,
+        entries: builtins.list[Entry],
+        *,
+        validate_required_provenance: bool = True,
+        live_required_provenance_entry_ids: set[str] | None = None,
     ) -> tuple[builtins.list[Entry], builtins.list[str]]:
         """Pre-rank filter for missing, deleted, or owner-invisible anchors."""
         work_ids = {
@@ -862,10 +924,19 @@ class EntryService:
             )
             active_chapter_work_ids = dict((await session.execute(stmt)).tuples().all())
 
+        if live_required_provenance_entry_ids is None:
+            live_required_provenance_entry_ids = (
+                await self._entries_with_live_required_provenance(
+                    session, user_id, entries
+                )
+                if validate_required_provenance
+                else {entry.id for entry in entries}
+            )
+
         included: builtins.list[Entry] = []
         excluded: builtins.list[str] = []
         for entry in entries:
-            if self._anchors_are_live(
+            if entry.id in live_required_provenance_entry_ids and self._anchors_are_live(
                 entry,
                 active_work_ids=active_work_ids,
                 active_character_ids=active_character_ids,
@@ -876,6 +947,88 @@ class EntryService:
             else:
                 excluded.append(entry.id)
         return included, excluded
+
+    async def _entries_with_live_required_provenance(
+        self, session: AsyncSession, user_id: str, entries: builtins.list[Entry]
+    ) -> set[str]:
+        """Apply the acceptance-time persisted provenance policy in one session."""
+
+        parsed: dict[str, EntryProvenance] = {}
+        chapter_source_ids: set[str] = set()
+        bookmark_source_ids: set[str] = set()
+        for entry in entries:
+            try:
+                provenance = EntryProvenance.model_validate(entry.provenance)
+            except PydanticValidationError:
+                continue
+            parsed[entry.id] = provenance
+            if provenance.source_kind in {
+                ProvenanceSourceKind.CHAPTER,
+                ProvenanceSourceKind.EDIT_DIFF,
+            }:
+                assert provenance.source_id is not None
+                chapter_source_ids.add(provenance.source_id)
+            elif provenance.source_kind is ProvenanceSourceKind.CHAT_BOOKMARK:
+                assert provenance.source_id is not None
+                bookmark_source_ids.add(provenance.source_id)
+
+        active_chapter_source_ids = await self._active_chapter_anchor_ids(
+            session, user_id, chapter_source_ids
+        )
+        active_bookmark_source_ids: set[str] = set()
+        if bookmark_source_ids:
+            stmt = (
+                select(Message.id)
+                .join(ChatSession, ChatSession.id == Message.chat_session_id)
+                .where(
+                    Message.id.in_(bookmark_source_ids),
+                    Message.user_id == user_id,
+                    ChatSession.user_id == user_id,
+                )
+            )
+            active_bookmark_source_ids = set(
+                (await session.execute(stmt)).scalars().all()
+            )
+
+        live_entry_ids: set[str] = set()
+        for entry_id, provenance in parsed.items():
+            source_kind = provenance.source_kind
+            source_id = provenance.source_id
+            if source_kind is ProvenanceSourceKind.USER:
+                if source_id is None or source_id == user_id:
+                    live_entry_ids.add(entry_id)
+            elif source_kind in {
+                ProvenanceSourceKind.CHAPTER,
+                ProvenanceSourceKind.EDIT_DIFF,
+            }:
+                if source_id in active_chapter_source_ids:
+                    live_entry_ids.add(entry_id)
+            elif source_kind is ProvenanceSourceKind.CHAT_BOOKMARK:
+                if source_id in active_bookmark_source_ids:
+                    live_entry_ids.add(entry_id)
+            else:
+                # Import/reference provenance carries no persisted live-source
+                # requirement. Do not invent one from optional origin metadata.
+                live_entry_ids.add(entry_id)
+        return live_entry_ids
+
+    @staticmethod
+    async def _active_chapter_anchor_ids(
+        session: AsyncSession, user_id: str, chapter_ids: set[str]
+    ) -> set[str]:
+        if not chapter_ids:
+            return set()
+        stmt = (
+            select(Chapter.id)
+            .join(Work, Work.id == Chapter.work_id)
+            .where(
+                Chapter.id.in_(chapter_ids),
+                Chapter.user_id == user_id,
+                Work.user_id == user_id,
+                Work.deleted_at.is_(None),
+            )
+        )
+        return set((await session.execute(stmt)).scalars().all())
 
     @staticmethod
     async def _active_ids(

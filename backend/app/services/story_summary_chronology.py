@@ -1,4 +1,5 @@
 """Pure Chapter-summary chronology policy shared by production and diagnostics."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -102,10 +103,7 @@ def classify_story_summary(
     """Classify one summary without database access, ranking, or side effects."""
 
     unknown = StorySummaryChronologyDisposition.UNKNOWN
-    if (
-        source.status != EntryStatus.CANON.value
-        or source.superseded_by_entry_id is not None
-    ):
+    if source.status != EntryStatus.CANON.value or source.superseded_by_entry_id is not None:
         return StorySummaryClassification(unknown, "invalid_lifecycle")
     if source.scope_kind != EntryScope.WORK.value:
         return StorySummaryClassification(unknown, "invalid_summary_scope")
@@ -117,32 +115,31 @@ def classify_story_summary(
         return StorySummaryClassification(unknown, "unsupported_summary_level")
     if not source.governed_same_source_valid:
         return StorySummaryClassification(unknown, "governed_provenance_contradiction")
-    if source.source_chapter_id is None or source.source_chapter_index is None:
+    if source.source_chapter_id is None:
         return StorySummaryClassification(unknown, "orphan_source_chapter")
-    if (
-        source.source_owner_id != anchor.owner_id
-        or source.source_work_owner_id != anchor.owner_id
-    ):
+    if source.source_owner_id != anchor.owner_id or source.source_work_owner_id != anchor.owner_id:
         return StorySummaryClassification(
             unknown,
             "foreign_source_chapter",
             source.source_chapter_id,
-            source.source_chapter_index,
+            None,
         )
     if not source.source_work_active:
         return StorySummaryClassification(
             unknown,
             "orphan_source_chapter",
             source.source_chapter_id,
-            source.source_chapter_index,
+            None,
         )
     if source.source_work_id != anchor.work_id:
         return StorySummaryClassification(
             unknown,
             "cross_work_source_chapter",
             source.source_chapter_id,
-            source.source_chapter_index,
+            None,
         )
+    if source.source_chapter_index is None:
+        return StorySummaryClassification(unknown, "orphan_source_chapter")
     if source.source_chapter_id != source.subject_id:
         return StorySummaryClassification(unknown, "source_consistency_failure")
     return classify_chapter_story_position(

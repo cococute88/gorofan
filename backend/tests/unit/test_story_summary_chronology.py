@@ -1,4 +1,5 @@
 """Pure contract tests for Chapter-level story.summary chronology."""
+
 from __future__ import annotations
 
 import pytest
@@ -146,3 +147,19 @@ def test_generic_provenance_does_not_change_subject_chronology(
 
     assert provenance_kind in {"user", "import", "reference"}
     assert result.disposition is StorySummaryChronologyDisposition.PRIOR
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"source_owner_id": "foreign", "source_chapter_index": 987654},
+        {"source_work_id": "other-work", "source_chapter_index": 876543},
+    ],
+)
+def test_owner_boundary_strips_untrusted_chapter_index(
+    changes: dict[str, object],
+) -> None:
+    result = classify_story_summary(_anchor(), _source(**changes))
+
+    assert result.disposition is StorySummaryChronologyDisposition.UNKNOWN
+    assert result.source_chapter_index is None

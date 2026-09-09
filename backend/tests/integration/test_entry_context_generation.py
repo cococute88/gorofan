@@ -130,6 +130,7 @@ def _entry(
     subject_id: str | None = None,
     data: dict[str, object] | None = None,
     created_at_chapter_id: str | None = None,
+    provenance: dict[str, object] | None = None,
 ) -> Entry:
     return Entry(
         user_id=user_id or _owner_id(),
@@ -143,7 +144,8 @@ def _entry(
         title=None,
         content=content,
         data=data or {},
-        provenance={
+        provenance=provenance
+        or {
             "source_kind": "user",
             "capture_method": "human-authored",
             "producer": "p1-6-test",
@@ -186,6 +188,22 @@ def _set_chapter_summary(chapter_id: str, summary: str) -> None:
             chapter = await session.get(Chapter, chapter_id)
             assert chapter is not None
             chapter.summary = summary
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def _hard_delete_chapter(chapter_id: str) -> None:
+    async def _run() -> None:
+        engine = create_async_engine(os.environ["DATABASE_URL"])
+        sessionmaker = async_sessionmaker(
+            engine, expire_on_commit=False, class_=AsyncSession
+        )
+        async with sessionmaker() as session:
+            chapter = await session.get(Chapter, chapter_id)
+            assert chapter is not None
+            await session.delete(chapter)
             await session.commit()
         await engine.dispose()
 
@@ -823,6 +841,71 @@ def test_novel_provider_receives_only_prior_summaries_in_story_order(
     ]
     assert future not in trace["retrieval_exclusions"]["limit_rejected_entry_ids"]
     assert len(retrieve_calls) == 1
+
+
+def test_novel_excludes_deleted_required_provenance_before_assembly_and_prompt(
+    make_client,
+) -> None:
+    client = make_client(entry_context=True)
+    work = client.post("/api/v1/works", json={"title": "Provenance"}).json()
+    subject, provenance_source, normal_subject, target = [
+        client.post(
+            f"/api/v1/works/{work['id']}/chapters",
+            json={"title": str(index), "content_text": f"chapter {index}"},
+        ).json()
+        for index in range(1, 5)
+    ]
+    broken_id, normal_id = _write(
+        _entry(
+            content="BROKEN PROVENANCE MUST NOT REACH PROVIDER " * 100,
+            scope_kind=EntryScope.WORK,
+            scope_id=work["id"],
+            entry_type=EntryType.STORY_SUMMARY,
+            subject_type="chapter",
+            subject_id=subject["id"],
+            priority=100,
+            provenance={
+                "source_kind": "chapter",
+                "source_id": provenance_source["id"],
+                "capture_method": "ai-extracted",
+                "producer": "deleted-provenance-test",
+            },
+        ),
+        _entry(
+            content="NORMAL PRIOR SURVIVES",
+            scope_kind=EntryScope.WORK,
+            scope_id=work["id"],
+            entry_type=EntryType.STORY_SUMMARY,
+            subject_type="chapter",
+            subject_id=normal_subject["id"],
+            priority=1,
+        ),
+    )
+    _hard_delete_chapter(provenance_source["id"])
+
+    response = client.post(
+        f"/api/v1/works/chapters/{target['id']}/continue",
+        json={"instruction": "continue", "target_words": 100},
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(_CAPTURED) == 1
+    prompt = _CAPTURED[0]
+    assert "BROKEN PROVENANCE MUST NOT REACH PROVIDER" not in _prompt_text(prompt)
+    assert "NORMAL PRIOR SURVIVES" in _prompt_text(prompt)
+    assert f"entry:{broken_id}" not in _entry_block_ids(prompt)
+    assert f"entry:{normal_id}" in _entry_block_ids(prompt)
+    trace = prompt.trace["entry_context"]
+    assert normal_id in trace["selected_entry_ids"]
+    assert broken_id not in trace["selected_entry_ids"]
+    assert {
+        item["entry_id"]: item["reason"]
+        for item in trace["retrieval_exclusions"]["story_summary_chronology"]
+    }[broken_id] == "invalid_required_provenance_anchor"
+    assert broken_id not in trace["retrieval_exclusions"][
+        "retrieval_budget_rejected_entry_ids"
+    ]
+    assert broken_id not in trace["retrieval_exclusions"]["limit_rejected_entry_ids"]
 
 
 def test_novel_interleaves_legacy_and_entry_summaries_by_story_order(make_client) -> None:
