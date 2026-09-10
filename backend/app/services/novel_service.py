@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import cast
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -13,6 +14,21 @@ from app.core.errors import Conflict, NotFound, ValidationAppError
 from app.core.logging import get_logger
 from app.core.pagination import Page, PageParams
 from app.engines.novel.engine import ChapterContext, NovelEngine, words_to_tokens
+from app.engines.novel.generation_preparation import (
+    CURRENT_CHAPTER_TAIL_CHARS,
+    ContinueGenerationInput,
+    GenerationPreparation,
+    GenerationTarget,
+    PreparedChapterContext,
+    PreparedCharacterContext,
+    PreparedLoreContext,
+    PreparedPriorSummary,
+    PreparedWorkContext,
+    PreparedWorldContext,
+    freeze_mapping,
+    prepare_continue_generation,
+    snapshot_prompt_blocks,
+)
 from app.models.character import Character
 from app.models.novel import Chapter, Work, WorkCharacter
 from app.models.world import Lorebook, LoreEntry, World
@@ -214,6 +230,31 @@ class NovelService:
         finally:
             _active_continue.discard(chapter_id)
 
+    async def prepare_continue(
+        self,
+        user_id: str,
+        chapter_id: str,
+        dto: ContinueRequest,
+        *,
+        context_window: int,
+    ) -> GenerationPreparation:
+        """Prepare one continuation without resolving or invoking a provider."""
+
+        async with self.sm() as s:
+            await begin_story_order_snapshot(s)
+            chapter = await self._owned_chapter(s, user_id, chapter_id)
+            work = await self._owned_work(s, user_id, chapter.work_id)
+            ctx = await self._build_story_context(s, work, chapter)
+            return await self._prepare_continue_context(
+                s,
+                user_id=user_id,
+                work=work,
+                chapter=chapter,
+                ctx=ctx,
+                dto=dto,
+                context_window=context_window,
+            )
+
     async def _continue_impl(
         self, user_id: str, chapter_id: str, dto: ContinueRequest
     ) -> AsyncIterator[StreamEvent]:
@@ -228,33 +269,16 @@ class NovelService:
             )
             req.max_tokens = min(req.max_tokens, words_to_tokens(dto.target_words))
             base_version = chapter.version
-            # Entry Store canon is retrieved exactly once per request, inside T1,
-            # before any token is streamed (P1-6). Flag OFF short-circuits before
-            # any Entry query is issued.
-            entry_context = await load_entry_context(
+            preparation = await self._prepare_continue_context(
                 s,
-                settings=self.settings,
-                request_factory=lambda: build_novel_retrieve_request(
-                    user_id=user_id,
-                    work=work,
-                    world=ctx.world,
-                    characters=ctx.characters,
-                    chapter=chapter,
-                    instruction=dto.instruction,
-                    context_window=req.context_window,
-                    operation=StorySummaryGenerationOperation.CONTINUE,
-                    substantive_legacy_summary_chapter_ids=(
-                        ctx.substantive_legacy_summary_chapter_ids
-                    ),
-                ),
+                user_id=user_id,
+                work=work,
+                chapter=chapter,
+                ctx=ctx,
+                dto=dto,
+                context_window=req.context_window,
             )
-            prompt = self.engine.assemble_continue(
-                ctx,
-                instruction=dto.instruction,
-                req=req,
-                entry_blocks=entry_context.blocks,
-                entry_context_trace=entry_context.trace,
-            )
+            prompt = self.engine.assemble_continue(preparation, req=req)
 
         # Settle the previous continuation before this one destroys the
         # boundary, and before any token is streamed (design §6.3).
@@ -308,6 +332,119 @@ class NovelService:
             capture_context=capture_context, producer=producer,
         )
         yield StreamEvent(event="done", finish_reason="stop", token_count=len(buffer))
+
+    async def _prepare_continue_context(
+        self,
+        s: AsyncSession,
+        *,
+        user_id: str,
+        work: Work,
+        chapter: Chapter,
+        ctx: ChapterContext,
+        dto: ContinueRequest,
+        context_window: int,
+    ) -> GenerationPreparation:
+        """Bridge owner-scoped DB results into the pure AOS-1 preparation."""
+
+        # Entry Store canon is retrieved exactly once per request, inside T1,
+        # before any token is streamed (P1-6). Flag OFF short-circuits before
+        # any Entry query is issued. Chronology eligibility/order is finalized
+        # by that existing path; the pure preparation only snapshots the result.
+        entry_context = await load_entry_context(
+            s,
+            settings=self.settings,
+            request_factory=lambda: build_novel_retrieve_request(
+                user_id=user_id,
+                work=work,
+                world=ctx.world,
+                characters=ctx.characters,
+                chapter=chapter,
+                instruction=dto.instruction,
+                context_window=context_window,
+                operation=StorySummaryGenerationOperation.CONTINUE,
+                substantive_legacy_summary_chapter_ids=(
+                    ctx.substantive_legacy_summary_chapter_ids
+                ),
+            ),
+        )
+        if not (
+            len(ctx.prior_summaries)
+            == len(ctx.prior_summary_chapter_indexes)
+            == len(ctx.substantive_legacy_summary_chapter_ids)
+        ):
+            raise ValueError("Legacy chapter summary chronology evidence is incomplete")
+        world_source = cast(World | None, ctx.world)
+        world = (
+            PreparedWorldContext(
+                id=world_source.id,
+                owner_id=world_source.user_id,
+                name=world_source.name,
+                description=world_source.description,
+                era=world_source.era,
+            )
+            if world_source is not None
+            else None
+        )
+        value = ContinueGenerationInput(
+            target=GenerationTarget(
+                owner_id=user_id,
+                work_id=work.id,
+                chapter_id=chapter.id,
+            ),
+            work=PreparedWorkContext(
+                id=work.id,
+                owner_id=work.user_id,
+                title=work.title,
+                synopsis=work.synopsis,
+                genre=work.genre,
+                tags=tuple(work.tags),
+            ),
+            characters=tuple(
+                PreparedCharacterContext(
+                    id=character.id,
+                    owner_id=character.user_id,
+                    name=character.name,
+                    personality=character.personality,
+                    speech_style=character.speech_style,
+                )
+                for character in ctx.characters
+            ),
+            world=world,
+            lore=tuple(
+                PreparedLoreContext(
+                    id=entry.id,
+                    content=entry.content,
+                    keywords=tuple(entry.keywords),
+                    priority=entry.priority,
+                    scan_depth=entry.scan_depth,
+                    enabled=entry.enabled,
+                )
+                for entry in ctx.lore_entries
+            ),
+            prior_summaries=tuple(
+                PreparedPriorSummary(chapter_id=chapter_id, chapter_index=index, content=summary)
+                for chapter_id, index, summary in zip(
+                    ctx.substantive_legacy_summary_chapter_ids,
+                    ctx.prior_summary_chapter_indexes,
+                    ctx.prior_summaries,
+                    strict=True,
+                )
+            ),
+            current_chapter=PreparedChapterContext(
+                id=chapter.id,
+                work_id=chapter.work_id,
+                owner_id=chapter.user_id,
+                index=chapter.index,
+                title=chapter.title,
+                tail=(chapter.content_text or "")[-CURRENT_CHAPTER_TAIL_CHARS:],
+            ),
+            instruction=dto.instruction,
+            target_words=dto.target_words,
+            context_window=context_window,
+            entry_blocks=snapshot_prompt_blocks(entry_context.blocks),
+            entry_context_trace=freeze_mapping(entry_context.trace),
+        )
+        return prepare_continue_generation(value)
 
     async def _settle_chapter_captures(self, user_id: str, chapter_id: str) -> None:
         """Bracket this chapter's pending captures against the next segment.
@@ -411,20 +548,32 @@ class NovelService:
             c for c in prior if is_substantive_legacy_summary(c.summary)
         ]
         prior_summaries = [c.summary for c in substantive_prior]
-        wc_stmt = select(WorkCharacter).where(WorkCharacter.work_id == work.id)
-        links = list((await s.execute(wc_stmt)).scalars().all())
-        characters = []
-        for link in links:
-            c = await s.get(Character, link.character_id)
-            if c is not None:
-                characters.append(c)
-        world = await s.get(World, work.world_id) if work.world_id else None
+        character_stmt = (
+            select(Character)
+            .join(WorkCharacter, WorkCharacter.character_id == Character.id)
+            .where(
+                WorkCharacter.work_id == work.id,
+                Character.user_id == work.user_id,
+                Character.deleted_at.is_(None),
+            )
+            .order_by(WorkCharacter.character_id)
+        )
+        characters = list((await s.execute(character_stmt)).scalars().all())
+        world = None
+        if work.world_id:
+            world_stmt = select(World).where(
+                World.id == work.world_id,
+                World.user_id == work.user_id,
+                World.deleted_at.is_(None),
+            )
+            world = (await s.execute(world_stmt)).scalars().first()
         lore = []
         if world is not None:
             lstmt = (
                 select(LoreEntry)
                 .join(Lorebook, Lorebook.id == LoreEntry.lorebook_id)
                 .where(Lorebook.world_id == world.id, LoreEntry.enabled.is_(True))
+                .order_by(LoreEntry.priority.desc(), LoreEntry.id)
             )
             lore = list((await s.execute(lstmt)).scalars().all())
         return ChapterContext(

@@ -59,7 +59,7 @@
 ## 2. Architecture Phase 로드맵
 
 ```
-Phase 1  잔여 Core 정리          ← 지금 여기 (필수 9개 중 8개 완료 + chronology implementation 독립 review 대기)
+Phase 1  잔여 Core 정리          (필수 9개 중 8개 완료; P1-8와 chronology PR #30 merge 완료)
   └→ Phase 2  Analyst (text → proposed Entries)
        ├→ Phase 3  Writer (loop over declarative stages)
        │    └→ Phase 4  Story Bible (canonical view + continuity loop)
@@ -75,7 +75,7 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 
 기존 Phase 1~6은 architecture capability 순서로 보존한다. 실제 사용자 milestone은 [`docs/architecture/personal-author-os-roadmap.md`](../../../docs/architecture/personal-author-os-roadmap.md)의 dependency track을 따른다.
 
-`P1-8 design/implementation ✓ → story-summary chronology Architecture Contract ✓ → chronology implementation (독립 review) → AOS-1 shared Generation Preparation/dual-route contract → minimum Novel preparation + Scene input → direct Provider API + Prompt Packet API → Novel workspace UI → Chapter apply/import → optional explicit Taste/Voice → edit-diff read → Taste/Voice candidate Analyst`
+`P1-8 design/implementation ✓ → story-summary chronology Architecture Contract ✓ → chronology implementation PR #30 ✓ → AOS-1 shared Generation Preparation (독립 review) → minimum Scene/generation input → Gemini direct generation → external Prompt Packet → Novel workspace UI → Chapter apply/import → optional explicit Taste/Voice → edit-diff read → Taste/Voice candidate Analyst`
 
 이 순서에서 하나의 Generation Preparation이 RFC-009의 provider-neutral composition seam에서 retrieval·ordering·budget·trace를 고정하고, 마지막 단계에서만 기존 Provider Adapter 직접 실행 또는 thin external Prompt Packet formatting으로 갈라진다. 기존 RFC-004 Writer와 Chat provider execution은 삭제하거나 재정의하지 않는다. 장편소설 제작이 주 제품이고 Character Chat은 독립 보조 기능이다. Taste는 Story Canon이 아니고, Voice는 Taste가 아니며, Scene Brief는 operation-local working state이고 chat-private Memory는 Novel context로 자동 유입되지 않는다. Taste/Voice 부재는 첫 usable loop를 막지 않으며, 🍰 별식은 generation별 Taste 제외 모드로서 데이터를 변경하지 않는다.
 
@@ -156,11 +156,17 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **추천 모델/effort:** GPT-5.6 Sol / High (대규모 대조·검증 성격).
 
 #### Post-P1-8 story.summary chronology correctness gate
-- **상태:** **PR #29 merge 완료, production implementation 완료 및 Draft PR 독립 review 대기.** [`docs/architecture/story-summary-chronology.md`](../../../docs/architecture/story-summary-chronology.md)의 no-mixed-story-order-view invariant를 preparation-scoped consistent snapshot, shared classifier, Novel anchor, pre-rank exclusion, legacy overlap, Chapter-index ordering으로 구현했다.
+- **상태:** **PR #29 contract 및 PR #30 production implementation merge 완료.** [`docs/architecture/story-summary-chronology.md`](../../../docs/architecture/story-summary-chronology.md)의 no-mixed-story-order-view invariant를 preparation-scoped consistent snapshot, shared classifier, Novel anchor, pre-rank exclusion, legacy overlap, Chapter-index ordering으로 구현했다.
 - **목적:** P1-8이 재현한 future/unknown Chapter-summary leak과 DB timestamp ordering을 shared Generation Preparation 이전에 차단할 계약을 고정한다.
 - **선행 의존성:** P1-8 implementation merge.
 - **구현 범위:** PostgreSQL transaction-local `REPEATABLE READ`, SQLite explicit snapshot, pure classifier, Novel retrieval anchor, legacy/Entry 동일 read window, pre-rank eligibility/trace, deterministic Chapter-index order, assembly assertion, stale/reorder/provider-spy regression, 최소 P1-8 alignment.
 - **완료 조건:** mixed story-order view 불허 · feature flag default OFF · legacy authority/scanner 유지 · migration/API/UI/provider 변경 없음 · §20 test matrix 충족 · 독립 implementation review 전 Ready/merge 금지.
+
+#### AOS-1 shared provider-neutral Generation Preparation
+- **상태:** **`feature/aos-generation-preparation`에서 구현 완료, Draft PR 독립 review 대기.** 명시 owner/work/chapter/continue target, Work metadata, legacy Character/World/Lore, additive Entry Character/Relationship/Canon, chronology-safe prior summaries, 1200자 current Chapter tail, 사용자 instruction, target words/한국어/continue constraints, stable section order, frozen provenance와 기존 retrieval/assembly budget evidence를 하나의 immutable runtime 결과로 만든다.
+- **경계:** DB 조회와 chronology 판단은 기존 owner-scoped Novel/Entry 경로가 소유하고, AOS-1 pure layer는 이미 판정된 typed snapshot만 받는다. PromptEngine이 final ordering/budget/rendering을 계속 소유한다. provider DTO/SDK, provider 호출, schema/migration, Scene table/UI, Prompt Packet formatter는 없다.
+- **production 전략:** A — 기존 continuation이 preparation을 사용하지만 compatibility formatter로 기존 provider-visible prompt를 보존한다. Work metadata는 preparation에는 있으나 이번 PR에서 기존 prompt asset에 조용히 추가하지 않는다.
+- **다음:** `minimum Scene/generation input → Gemini direct generation → external Prompt Packet → Novel workspace → Chapter apply/import`.
 - **Migration 판단:** **B** — `Chapter.id/work_id/index`, `UNIQUE(work_id,index)`, Entry Chapter subject와 lifecycle 필드로 충분하나 application invariant/validation 보강이 필요하다. schema migration은 불필요하다.
 - **추천 모델/effort:** Claude Opus 5 / High (cross-cutting correctness contract).
 
@@ -376,10 +382,11 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 | 1 | ~~**P1-8 design**~~ | **완료:** PR #27에서 coverage/runtime 독립 계약을 승인했다. | GPT-5.6 Sol / High |
 | 2 | ~~**P1-8 implementation**~~ | **완료:** PR #28 merge commit `ac791ba`; diagnostics only, authority cutover 없음. | GPT-5.6 Sol / High |
 | 3 | ~~**Story-summary chronology Architecture Contract**~~ | **완료:** PR #29 merge commit `e5ffc730`; concurrent reorder와 legacy blank/provenance scope 포함. | Claude Opus 5 / High |
-| 4 | **Story-summary chronology implementation 독립 review** | 구현 Draft PR의 snapshot semantics, pre-rank exclusion, mixed legacy/Entry order, stale/reorder fail-closed를 깨보는 단계다. | GPT-5.6 Sol / High |
-| 5 | **AOS-1 Generation Preparation + dual-route architecture contract** | chronology 구현 위에서 Story/Character/Relationship/Chapter/Scene 경계, shared selection/budget/trace, direct Provider Adapter와 external Prompt Packet의 terminal seam, apply/import linkage를 고정한다. Taste/Voice는 optional이다. | Claude Opus 5 / High |
+| 4 | ~~**Story-summary chronology implementation**~~ | **완료:** PR #30 merge commit `b5b51a4`; reviewed final head `f21be77`과 동일 tree. | GPT-5.6 Sol / High |
+| 5 | **AOS-1 shared Generation Preparation 독립 review** | provider-neutrality, prompt-logic 중복, chronology/ownership/Memory/budget/OFF·ON/determinism 회귀를 검증한다. | GPT-5.6 Sol / High |
+| 6 | **minimum Scene/generation input** | AOS-1 merge 뒤 현재 instruction seam을 첫 usable scene 입력까지 최소 확장한다. | GPT-5.6 Terra / High |
 
-**현재 순서:** PR #28 merge 완료 → PR #29 chronology Contract merge 완료 → chronology implementation Draft PR 독립 review → AOS-1 shared Generation Preparation/dual-route contract. P1-8과 chronology implementation은 authority cutover나 legacy 제거가 아니다. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
+**현재 순서:** PR #28 P1-8 merge 완료 → PR #29 chronology Contract merge 완료 → PR #30 chronology implementation merge 완료 → AOS-1 shared Generation Preparation 독립 review → minimum Scene/generation input → Gemini direct generation → external Prompt Packet. P1-8과 chronology implementation은 authority cutover나 legacy 제거가 아니다. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
 
 ---
 

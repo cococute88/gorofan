@@ -2,9 +2,9 @@
 
 > **Canonical handoff document for a new AI session.**
 >
-> **Verified at:** 2026-09-06
-> **Verified `main`:** `e5ffc730174a0416ebdc7c8042bea0c1baed2152`
-> **Current implementation branch:** `feature/story-summary-chronology-implementation`
+> **Verified at:** 2026-09-10
+> **Verified `main`:** `b5b51a42db8c951529ee29944133fb98b7509b8d`
+> **Current implementation branch:** `feature/aos-generation-preparation`
 
 ## Contents
 
@@ -21,7 +21,8 @@
 11. [P1-8 and chronology implementation](#11-p1-8-and-chronology-implementation)
 12. [First-run checklist for a new AI](#12-first-run-checklist-for-a-new-ai)
 13. [Completion-report rules](#13-completion-report-rules)
-14. [Copyable next-task prompt](#14-copyable-next-task-prompt)
+14. [Preserved post-P1-8 Author OS / Style direction](#14-preserved-post-p1-8-author-os--style-direction)
+15. [Copyable next-task prompt](#15-copyable-next-task-prompt)
 
 ## 1. To the AI reading this
 
@@ -31,7 +32,7 @@ Before changing anything:
 
 - Read this file **and** the relevant ADR/RFC originals in `docs/architecture/`.
 - Confirm the verification timestamp and `main` SHA above.
-- If `origin/main` has advanced after `e5ffc730174a0416ebdc7c8042bea0c1baed2152`, re-verify the affected GitHub, code, task/status, and test facts before relying on this handoff.
+- If `origin/main` has advanced after `b5b51a42db8c951529ee29944133fb98b7509b8d`, re-verify the affected GitHub, code, task/status, and test facts before relying on this handoff.
 - Do not infer implementation completion from file presence. Follow executed production paths, API exposure, and passing tests.
 
 ## 2. Repository identity
@@ -41,8 +42,8 @@ Before changing anything:
 | GitHub repository | [`cococute88/gorofan`](https://github.com/cococute88/gorofan) |
 | Local repository | `C:\gv\rfrf` |
 | Default branch | `main` |
-| Verification time | `2026-09-06T14:14:08+09:00` |
-| Verified `origin/main` / local `main` | `ac791ba8369aa1a7f6856cd9f573e0650995ea74` |
+| Verification time | `2026-09-10` (Asia/Seoul) |
+| Verified `origin/main` / local `main` before AOS-1 branch | `b5b51a42db8c951529ee29944133fb98b7509b8d` |
 | PR #21 | [`feat(entry): wire retrieval context into generation paths`](https://github.com/cococute88/gorofan/pull/21), merged 2026-08-09 — **P1-6** |
 | PR #21 merge commit | `1b2a850b2732778fecb8944f03a8d12020aa588a` |
 | PR #23 | [`docs(architecture): design edit-diff capture`](https://github.com/cococute88/gorofan/pull/23), merged 2026-08-09 — **P1-7 design, approved. Documentation only.** |
@@ -57,7 +58,8 @@ Before changing anything:
 | PR #28 | [`feat(entry): implement P1-8 legacy equivalence diagnostics`](https://github.com/cococute88/gorofan/pull/28), merged — **P1-8 diagnostic implementation** |
 | PR #28 merged head / merge commit | `e1ae734959815ae02cb9e6fd105a40dd85a254b9` / `ac791ba8369aa1a7f6856cd9f573e0650995ea74` |
 | PR #29 | `story.summary` chronology Architecture Contract, merged head `a794f14`, merge commit `e5ffc730` |
-| Current work | Production chronology implementation complete on `feature/story-summary-chronology-implementation`; Draft PR independent review pending |
+| PR #30 | [`feat(entry): enforce story summary chronology`](https://github.com/cococute88/gorofan/pull/30), reviewed head `f21be771de6c92978469d2e9b672a12cbe6f8e24`, squash merge `b5b51a42db8c951529ee29944133fb98b7509b8d`; both trees are identical |
+| Current work | AOS-1 shared provider-neutral Generation Preparation implemented on `feature/aos-generation-preparation`; Draft PR independent review pending |
 | Backend | Python 3.11+; FastAPI; async SQLAlchemy 2; Alembic; SQLite-first with PostgreSQL seam; pytest, Hypothesis, Ruff, MyPy |
 | Frontend | TypeScript; Next.js 14 App Router; React 18; TanStack Query; TipTap; Tailwind; Vitest; PWA |
 | CI | GitHub Actions on Ubuntu, Python 3.12 and Node 20; backend + frontend jobs in `.github/workflows/ci.yml` |
@@ -186,15 +188,16 @@ Later phases inherit these decisions. Change them only through an explicit archi
 | Context Assembly | `backend/app/engines/prompt/entry_context.py` | Pure selected Entry result to prompt-block conversion, whole-block assembly budget, and the flattened `entry_context` prompt-trace section. |
 | Entry generation seam | `backend/app/services/entry_generation_context.py` | **The single production call site** for `retrieve()` + `assemble_entry_context()`. Owns the feature-flag check, the Chat/Novel retrieval situations, and the knowledge-slice budget. |
 | Equivalence diagnostic | `backend/app/services/legacy_entry_equivalence.py`, `backend/app/schemas/equivalence.py`, `backend/app/api/v1/entries.py` | P1-8 pure projection/coverage comparison and owner-safe, read-only Chat/Novel runtime shadow exposed as `POST /api/v1/entries/equivalence:compare`. |
-| Chronology contract | `docs/architecture/story-summary-chronology.md` | Proposed post-P1-8 Chapter-summary eligibility/order contract. Documentation only; no production implementation yet. |
+| Chronology contract | `docs/architecture/story-summary-chronology.md` | Merged Chapter-summary eligibility/order contract implemented by PR #30. |
+| Generation Preparation | `backend/app/engines/novel/generation_preparation.py` | Immutable target/context/constraint/semantic-section/budget/evidence contract and pure deterministic `continue` preparation; no DB or provider dependency. |
 | Prompt blocks | `backend/app/engines/prompt/blocks.py` | Block kinds (including `entry`), `LAYER_ORDER`, `DEFAULT_PRIORITY`, and `PromptBlock` structure. |
 | Prompt engine | `backend/app/engines/prompt/engine.py` | Deterministic collect → resolve → order → budget → final provider-neutral assembly. |
 | Prompt assets | `backend/app/engines/prompt/assets.py` | Allow-listed repository asset loader with asset identity/version/digest. |
 | Prompt asset bodies | `backend/prompts/chat/default.v1.md`, `backend/prompts/novel/continue.v1.md`, `backend/prompts/shared/rolling-summary.v1.md` | UTF-8 repository prompt bodies. |
 | Chat service | `backend/app/services/chat_service.py` | Chat SSE orchestration, idempotency/serialization, memory lifecycle, legacy lore loading, and the T1 Entry-context call. |
 | Chat engine | `backend/app/engines/chat/engine.py` | Chat prompt assembly and provider streaming; relays externally assembled Entry blocks. |
-| Novel service | `backend/app/services/novel_service.py` | Work/chapter service and SSE continuation; builds legacy story context, issues the T1 Entry-context call, **settles the previous capture at T1**, and **captures the streamed segment inside the locked append transaction**. |
-| Novel engine | `backend/app/engines/novel/engine.py` | `ChapterContext`, continuation prompt assembly, and provider stream. |
+| Novel service | `backend/app/services/novel_service.py` | Work/chapter service and SSE continuation; builds owner-scoped legacy/Entry snapshots, exposes provider-free `prepare_continue()`, issues the T1 Entry-context call, **settles the previous capture at T1**, and **captures the streamed segment inside the locked append transaction**. |
+| Novel engine | `backend/app/engines/novel/engine.py` | Renders immutable Generation Preparation through the existing PromptEngine and streams through the existing provider registry. |
 | Structured logging | `backend/app/core/logging.py` | JSON logger; `request_id` injected from a ContextVar. Secrets, plaintext keys, prompt bodies, **and captured author prose** are never logged. |
 | Review frontend | `frontend/src/lib/api/endpoints.ts`, `frontend/src/hooks/use-entry-review.ts`, `frontend/src/components/review/` | Typed endpoint wrappers, queue mutations/cache transitions, Review Queue and type-agnostic Review Card. **Untouched by P1-7.** |
 | Configuration | `backend/app/config.py` | Pydantic settings, UTF-8 `.env` reading, the `FEATURES` feature-flag map, and the typed `feature_enabled()` / `entry_store_context_enabled` read boundary. |
@@ -211,20 +214,21 @@ Run each command as a separate process with the stated working directory; do not
 
 | Check | Working directory | Command | Verified result at this handoff |
 |---|---|---|---|
-| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest` | **252 passed, 0 failed** after the regenerate tie fail-closed repair. |
+| AOS-1 focused | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_generation_preparation.py tests/integration/test_entry_context_generation.py::test_novel_preparation_is_provider_free_owner_scoped_and_memory_isolated -q` | **10 passed.** Provider-free deterministic contract, exact target, stable sections, 1,200-character tail, chronology reuse, authority/ownership/Memory isolation, budget/evidence, and prompt equivalence. |
+| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest` | **313 passed, 0 failed** on the AOS-1 implementation branch. |
 | P1-8 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **53 passed.** Covers the existing contract and previous blockers plus resolved-empty Character/World sources, multi-Character rendered-order match/mismatch, exact future-summary retrieval rejection chronology, and assistant/user regenerate timestamp-tie fail-closed spy checks (including Memory rows and evaluation-time variants). |
 | Related regression bundle | `backend` | Entry lifecycle/retrieval/context/review, Chat/Novel/Memory/streaming, prompt budget/assets, edit-diff, golden, migrations | **230 passed, 0 failed.** |
 | P1-7 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/integration/test_edit_diff_capture_schema.py tests/integration/test_edit_diff_capture_entry.py tests/integration/test_edit_diff_capture_novel.py` | **41 passed** (schema 12, Path A 11, Path B 18). `tests/integration/test_migrations.py` grew from 3 to 5 for the remaining 2. |
 | P1-6 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_prompt_integration.py tests/unit/test_entry_generation_context.py tests/integration/test_entry_context_generation.py` | **41 passed.** The integration file drives the real SSE endpoints with a recording provider. |
 | Entry/retrieval/assembly target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_retrieval.py tests/unit/test_entry_context_assembly.py tests/integration/test_entry_retrieval.py tests/golden/test_retrieval_context_golden.py` | Repository command paths verified; use for Store/context work. |
-| Ruff | `backend` | `.\.venv\Scripts\python.exe -m ruff check app tests` | `All checks passed!` on the blocker-repair branch. |
-| Frontend test | `frontend` | `npm run test` | Passed: 3 files / 13 tests on 2026-09-05; P1-8 did not touch the frontend. |
-| Frontend lint | `frontend` | `npm run lint` | Passed on 2026-09-05. |
-| Frontend production build | `frontend` | `npm run build` | Passed: 15 routes on 2026-09-05. |
+| Ruff | `backend` | `.\.venv\Scripts\python.exe -m ruff check app tests` | `All checks passed!` on the AOS-1 implementation branch. |
+| Frontend test | `frontend` | `npm run test` | Passed: 3 files / 13 tests on 2026-09-10; AOS-1 did not touch the frontend. |
+| Frontend lint | `frontend` | `npm run lint` | Passed on 2026-09-10. |
+| Frontend production build | `frontend` | `npm run build` | Passed: 15 routes on 2026-09-10. |
 | Alembic revisions | `backend` | `.\.venv\Scripts\python.exe -m alembic heads` | **`0003_edit_diff_capture (head)`** — single head, `down_revision = "0002_entry_store"`. |
-| Whitespace/patch integrity | repository root | `git diff --check` | Clean on the blocker-repair branch. |
+| Whitespace/patch integrity | repository root | `git diff --check` | Clean on the AOS-1 implementation branch. |
 
-The verified `main` baseline was **36 pre-existing errors in 11 files**. On this blocker-repair branch, `.\.venv\Scripts\python.exe -m mypy app tests` reports **31 errors in 10 files** because the five pre-existing nullable annotations on `PromptEngine.AssembleInput` were corrected; the changed P1-8 scope reports zero errors. No new full-MyPy error was introduced.
+On this AOS-1 branch, `.\.venv\Scripts\python.exe -m mypy app tests` reports the documented **30 pre-existing errors in 9 files**; the new preparation module and changed production scope add no error. The scoped AOS-1 production check reports zero errors.
 
 Full MyPy is not the clean merge gate. For a scoped change, record the current errors for precisely the changed scope and do not introduce or increase them; fix new errors in that scope before review.
 
@@ -278,7 +282,8 @@ The current `tasks.md`, `implementation-status.md`, and production code agree on
 | ~~**P1-7**~~ edit-diff capture | **Complete** (design PR #23 `39cf740`, implementation PR #25 `271e27c`). Both destroying paths capture the pair; `alembic heads` is `0003_edit_diff_capture`. The permanent-data-loss clock has stopped. | — | — | Done. The §13 read contract belongs to **P2-5**, not to a follow-up here. |
 | ~~**P1-8**~~ legacy Character/World/Lore ↔ Entry equivalence bridge | **Complete** (design PR #27, implementation PR #28, merge `ac791ba`). Pure projections, coverage precedence, typed owner-safe API, and Chat/Novel runtime shadows are covered by 53 focused tests. Legacy remains authoritative and `_make_lore_blocks()` still runs. | — | Backfill, legacy deletion, read cutover, migration, or flipping the flag as part of the bridge. | Done; chronology evidence feeds the next gate. |
 | ~~**Story-summary chronology contract**~~ | **Complete** (PR #29 merge `e5ffc730`). | P1-8 merged. | — | Done. |
-| **Story-summary chronology implementation** | Implementation and local validation complete; Draft PR independent review pending. Explicit target anchor, consistent snapshot, prior-only eligibility, Chapter-index order, overlap/duplicate fail-closed, and P1-8 alignment are present. | Accepted chronology contract. | AOS-1 or broader retrieval redesign. | Independent review, then separate Ready/merge decision. |
+| ~~**Story-summary chronology implementation**~~ | **Complete** (PR #30 merge `b5b51a4`, reviewed head `f21be77`, identical tree). Explicit target anchor, consistent snapshot, prior-only eligibility, Chapter-index order, overlap/duplicate fail-closed, and P1-8 alignment are present. | Accepted chronology contract. | — | Done. |
+| **AOS-1 shared Generation Preparation** | Implementation and focused validation complete; Draft PR independent review pending. Explicit owner/work/chapter/continue target, immutable typed context, stable semantic sections, constraints, frozen evidence, chronology-safe prior summaries, existing budget trace, and provider-free service seam are present. | PR #30 merged. | Provider endpoint/key/model UI, Prompt Packet, Scene table/UI, apply/import, Taste/Voice. | Independent review, then separate Ready/merge decision. |
 | **P1-9** review audit persistence decision | Not implemented. Current Entries have lifecycle/provenance but no approved actor/action history design. P1-7 deliberately defined no actor or action vocabulary. | P1-1 complete. | Unapproved JSON schema, implementation migration in the design PR, reusing `edit_diff_captures` as a review timeline. | Independent of the chronology/AOS path unless architecture review chooses earlier. |
 | **P1-10** local development environment cleanup | Optional and blocked by user-data safety. Local DB stamp is stale; protected stashes exist. | Explicit user approval for data/stash actions. | Automatic DB recreation, `alembic stamp`, stash application/deletion. | Last, and only with approval. |
 
@@ -366,19 +371,23 @@ PR #29 merged the contract at `e5ffc730174a0416ebdc7c8042bea0c1baed2152`. The cu
 
 The production implementation chooses a consistent snapshot: PostgreSQL starts transaction-local `REPEATABLE READ`, while SQLite explicitly begins a `SERIALIZABLE` read transaction so WAL readers retain the pre-reorder view. Target position, legacy prior scan, Entry source positions, and overlap evidence are resolved inside that boundary. Snapshot setup or evidence contradiction aborts before assembly, PromptEngine, or provider use; there is no retry. The session closes before provider network I/O, so a reorder after preparation does not invalidate the owned prompt context.
 
-Substantive legacy authority is non-empty after `strip()`. The subject Chapter remains the canonical summary locator, and no current production creation path declares a governed same-source invariant for `created_at_chapter_id`, so that field remains provenance/diagnostic evidence rather than an eligibility constraint. Required persisted provenance (`chapter`, `edit-diff`, and `chat-bookmark`) now reuses the acceptance-time owner/liveness policy during generation retrieval in the same story-order session and is excluded before ranking when its anchor has broken. Chapter indexes are loaded only for owner-owned Chapters in the target Work; foreign and same-owner cross-Work membership may retain a content-free exclusion reason, but their indexes are neither selected nor traced. Generic `user`, `import`, and `reference` provenance remains unaffected. No migration was added. The implementation Draft PR requires targeted independent re-review before Ready or merge.
+Substantive legacy authority is non-empty after `strip()`. The subject Chapter remains the canonical summary locator, and no current production creation path declares a governed same-source invariant for `created_at_chapter_id`, so that field remains provenance/diagnostic evidence rather than an eligibility constraint. Required persisted provenance (`chapter`, `edit-diff`, and `chat-bookmark`) now reuses the acceptance-time owner/liveness policy during generation retrieval in the same story-order session and is excluded before ranking when its anchor has broken. Chapter indexes are loaded only for owner-owned Chapters in the target Work; foreign and same-owner cross-Work membership may retain a content-free exclusion reason, but their indexes are neither selected nor traced. Generic `user`, `import`, and `reference` provenance remains unaffected. No migration was added. PR #30 completed targeted independent review and was squash-merged as `b5b51a4`; its reviewed final head `f21be77` has the same tree.
+
+AOS-1 starts from the real `continue Chapter` operation. `NovelService.prepare_continue()` loads the same owner-scoped, snapshot-consistent legacy and Entry context as production without resolving or invoking a provider. The pure `prepare_continue_generation()` accepts typed snapshots only and returns an immutable `GenerationPreparation`: explicit target, Work/Character/World/Lore/current-tail inputs, chronology-qualified prior summaries, instruction, constraints, stable semantic sections, frozen source/omission evidence, and existing retrieval/assembly budget facts. It performs no DB query and contains no provider SDK/DTO.
+
+Production uses strategy A: `_continue_impl()` creates that preparation, and `NovelEngine.assemble_continue()` renders the current prompt material through the existing `PromptEngine` before the existing provider registry. Work title/synopsis/genre/tags are explicit in the `story` section but deliberately remain outside the current compatibility prompt so AOS-1 does not silently change provider-visible behavior. PromptEngine still owns final block order, whole-prompt fit, prompt-asset trace, and neutral messages. `entry_store_context` remains default OFF; legacy authority, Entry additive semantics, and the PR #30 chronology path are unchanged.
 
 ## 12. First-run checklist for a new AI
 
-1. Read `AI-HANDOFF.md` and `docs/architecture/story-summary-chronology.md`. The next action is an independent code review of the chronology implementation Draft PR.
-2. Fetch and compare `origin/main`; if this handoff SHA (`e5ffc730`) is no longer current, re-validate GitHub state, code call sites, and status documents.
+1. Read `AI-HANDOFF.md`, `docs/architecture/personal-author-os-roadmap.md`, and `docs/architecture/story-summary-chronology.md`. The next action is an independent code review of the AOS-1 Draft PR.
+2. Fetch and compare `origin/main`; if this handoff SHA (`b5b51a4`) is no longer current, re-validate GitHub state, code call sites, and status documents.
 3. Check the working tree and list stashes without modifying either. Keep user work, the local DB, and stashes untouched.
 4. Confirm `FEATURES["entry_store_context"]` still defaults OFF and Alembic head remains `0003_edit_diff_capture` without running or changing the user's local DB.
-5. Trace the real production path: `NovelService._continue_impl()` / `_build_story_context()`, `build_novel_retrieve_request()`, `EntryService.retrieve()`, `entry_retrieval.rank_entries()/select_entries()`, Context Assembly, and PromptEngine.
-6. Reproduce the stale-anchor counterexample `T=10, S=2 → reorder → T=3, S=4`; verify target, legacy scan, Entry sources, and overlap cannot form a mixed view and that the boundary does not require holding a transaction across provider I/O.
-7. Verify `summary.strip()` legacy authority and the scoped `created_at_chapter_id`/provenance rule without reopening already-approved chronology decisions.
-8. Confirm Migration Decision B remains valid because this is read consistency/serialization/revalidation, not absent stored chronology.
-9. Review only; do not merge, enable the flag, remove legacy paths, create migrations, or begin AOS/Generation Preparation.
+5. Trace the real production path: `NovelService._continue_impl()` / `prepare_continue()` / `_prepare_continue_context()`, PR #30 retrieval/chronology, pure `prepare_continue_generation()`, `NovelEngine.assemble_continue()`, PromptEngine, and only then the provider registry.
+6. Verify provider-neutrality: no adapter/SDK type in Generation Preparation, no provider invocation from `prepare_continue()`, and no route-specific retrieval/budget logic.
+7. Break deterministic target/section order, chronology evidence, owner scoping, chat-private Memory isolation, OFF/ON behavior, and legacy prompt-equivalence tests.
+8. Confirm Work metadata is explicit preparation material without silently changing the current provider prompt and that PromptEngine still owns final budget/rendering.
+9. Review only; do not merge, enable the flag, remove legacy paths, create migrations, or begin Scene/Gemini/Prompt Packet work.
 10. Verify `git diff --check`, strict UTF-8/no BOM, no local DB/stash mutation, and the exact Draft PR base/head. Report findings to the author session; Ready/merge requires a separate decision.
 
 Use one PowerShell command per process and set the terminal working directory instead of shell-chaining commands. If the wrapper corrupts a command, use the `subprocess.run(argv, cwd=..., shell=False)` fallback described in [Environment cautions](#8-environment-cautions), not another identical wrapper retry.
@@ -421,33 +430,30 @@ cococute88/gorofan (note the spelling: gorofan, not gorafan).
 Start by reading C:\gv\rfrf\AI-HANDOFF.md, then the governing ADR/RFC originals it names.
 Do not trust this prompt over current GitHub, Git, architecture, code, or test state: fetch
 origin/main, inspect the working tree, and list stashes without touching them. The handoff
-snapshot is main e5ffc730174a0416ebdc7c8042bea0c1baed2152, where chronology contract
-PR #29 is merged (merged head a794f14ca44ff17bba1f2d47f584659bdac62425).
+snapshot is main b5b51a42db8c951529ee29944133fb98b7509b8d, where chronology implementation
+PR #30 is merged (reviewed head f21be771de6c92978469d2e9b672a12cbe6f8e24; identical tree).
 If main has advanced, re-verify before relying on any of it.
 
-Your task is an independent implementation review of the story-summary chronology Draft PR.
+Your task is an independent implementation review of the AOS-1 shared Generation Preparation Draft PR.
 Do not modify the branch unless the author asks for a focused fix. Start with findings, ordered
-by severity, and treat the merged contract as authority.
+by severity, and treat the merged ADR/RFC/chronology contracts as authority.
 
-Break the chosen snapshot implementation with the counterexample T=10/S=2 then T=3/S=4. Verify
-PostgreSQL transaction-local REPEATABLE READ and SQLite explicit snapshots cover target, legacy,
-Entry source, and overlap evidence together; fail-closed paths must invoke no provider. Verify a
-reorder after preparation is allowed and no provider-long transaction remains open.
+Trace domain state -> owner-scoped Novel/Entry context -> immutable GenerationPreparation -> existing
+PromptEngine -> provider registry. Verify the preparation contains no provider SDK/DTO, performs no
+database query or chronology decision, and invokes no provider. Ensure it accepts only the explicit
+target Chapter and the already-qualified PR #30 prior-summary result.
 
-For the minor points, verify substantive legacy authority means NOT NULL Chapter.summary with
-summary.strip() non-empty, and that the subject Chapter is the canonical summary locator.
-created_at_chapter_id absence/difference must not globally invalidate user/import/reference Entries;
-only a governed Chapter-derived path with an explicit same-source invariant may treat a contradiction
-as unknown. Confirm concurrent reorder remains a read-consistency problem, so Decision B requires no
-chronology version column/table or migration.
+Break deterministic equality, frozen nested evidence, stable semantic section order, Work metadata,
+Character/Relationship authority, chronology ordering/exclusions, 1200-character current tail,
+instruction/target_words, existing retrieval/assembly budget evidence, owner isolation, and the absence
+of chat-private Memory. Check flag OFF/ON behavior and exact legacy provider-visible prompt equivalence.
 
-Test high-recency future isolation, target-not-latest, duplicate canon exclusion, legacy whitespace
-fallback, generic provenance, mixed legacy/Entry story order, flag OFF prompt compatibility, and
-P1-8 diagnostic alignment. Do not create a migration, enable the Entry flag, remove legacy scanning,
-start AOS Generation Preparation, modify local DB/stashes, mark Ready, or merge.
+Reject duplicated provider/prompt assemblers, a new Gemini adapter, route-specific retrieval/budget,
+authority cutover, DB prompt storage, schema/migration/UI/Scene/Prompt Packet/Gemini work, or Taste/Voice
+scope expansion. Do not modify local DB/stashes, mark Ready, or merge.
 
 Verify git diff --check, strict UTF-8/no BOM, no migration or local DB/stash mutation, and the Draft
 PR base/head/CI. Report actionable findings to the author session and stop before Ready or merge.
 ```
 
-**Recommended execution model:** Claude Code — Opus High; Codex — high reasoning; Cursor — strongest available reasoning model. Chronology is a correctness boundary, so review must prefer fail-safe exclusion over timestamp or identifier guesses.
+**Recommended execution model:** Claude Code — Opus High; Codex — high reasoning; Cursor — strongest available reasoning model. Review should focus on provider-neutrality, prompt-logic duplication, chronology/owner/Memory leaks, budget drift, OFF/ON equivalence, and deterministic output.

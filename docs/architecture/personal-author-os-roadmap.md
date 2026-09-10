@@ -124,6 +124,10 @@ Chat-private `Memory` remains scoped to its `ChatSession`. It is never promoted 
 
 Generation Preparation is the provider-neutral, operation-local result of selecting and assembling the inputs for one novel-generation attempt. It is not a new knowledge Store. At minimum it must work with Story Canon, current Character/Relationship state, recent Chapter context, a Scene Brief or simple instruction, and generation constraints. Taste and Voice sections are optional: an absent profile is represented explicitly and is never a preparation error.
 
+The first production implementation starts from the existing `continue Chapter` operation. `ContinueGenerationInput` accepts an explicit owner/work/chapter target plus already owner-scoped domain snapshots and already chronology-qualified Entry/legacy summary context. `GenerationPreparation` is an immutable runtime value with the stable semantic order `story → characters → relationships → canon_context → prior_chapter_summaries → current_chapter → instruction → constraints`, frozen source evidence, and the existing retrieval/assembly budget evidence. It is not persisted and contains no provider SDK types.
+
+The current Novel path uses this preparation before the existing `PromptEngine`. The compatibility formatter deliberately preserves the pre-AOS provider-visible continuation prompt; in particular, Work title/synopsis/genre/tags are explicit preparation material but are not silently admitted into the current repository prompt asset. A later prompt change may consume that section only with its own regression evidence. Final whole-prompt ordering, fitting, and trace remain `PromptEngine` responsibilities.
+
 Both execution routes consume the same preparation and context-selection evidence. Provider adapters may translate the assembled messages into wire format, while external formatters may render a human-readable target layout. Neither may re-run retrieval, choose different canon, recalculate Taste/Voice, or apply an independent budget policy.
 
 A Generation Prompt Packet is one rendering of Generation Preparation: a complete, human-readable, editable artifact that can be copied once into ChatGPT, Claude, or a generic LLM chat UI. Creating it requires no provider credential, provider call, or network call.
@@ -170,11 +174,12 @@ Every row is one reviewable PR. A design PR and its implementation PR remain sep
 |---|---|---|---|
 | 1 | P1-8 design | P1-5, P1-6 | **Merged:** freeze read-only legacy/Entry comparison semantics |
 | 2 | P1-8 implementation | approved design | **Merged in PR #28:** produce real equivalence evidence without writes or cutover |
-| 3 | Story-summary chronology architecture contract | P1-8 evidence | define target-Chapter authority, strict-prior eligibility/order, fail-safe future/current/unknown handling, and responsibility/budget boundaries; docs only |
-| 4 | Story-summary chronology implementation | accepted chronology contract | prevent future/unknown leaks in real Entry generation context while the existing flag remains default OFF and legacy remains authoritative |
-| 5 | AOS-1 Generation Preparation + dual-route architecture contract | chronology implementation | freeze Story/Character/Relationship/Chapter/Scene boundaries, shared trace and budget, direct/external terminal seam, import linkage, and explicit canon-source precedence; Taste/Voice optional |
-| 6 | AOS-2 minimum Novel preparation + Scene input | AOS-1 | build owned provider-neutral preparation from current Story/Canon, cast/state, recent Chapter context, simple Scene Brief/instruction, and constraints without requiring Taste/Voice |
-| 7 | AOS-3 dual execution API | AOS-2 | feed the same preparation to the existing direct Provider Adapter path or thin Generic/ChatGPT/Claude Prompt Packet formatters; no duplicated selection policy |
+| 3 | Story-summary chronology architecture contract | P1-8 evidence | **Merged in PR #29:** target-Chapter authority, strict-prior eligibility/order, fail-safe future/current/unknown handling, and responsibility/budget boundaries |
+| 4 | Story-summary chronology implementation | accepted chronology contract | **Merged in PR #30:** prevent future/unknown leaks in real Entry generation context while the existing flag remains default OFF and legacy remains authoritative |
+| 5 | AOS-1 shared Generation Preparation | chronology implementation | **Implemented on `feature/aos-generation-preparation`, independent review pending:** immutable provider-neutral `continue` preparation, stable semantic sections, shared budget/evidence, no provider call, no schema/UI/API expansion |
+| 6 | AOS-2 minimum Scene/generation input | AOS-1 | extend the existing small instruction seam only as far as the first usable Scene input requires; no Scene table unless operation-local state proves insufficient |
+| 7 | AOS-3 direct Gemini generation | AOS-2 | feed the same preparation through the existing Provider Adapter path; no new Gemini adapter and no duplicated selection policy |
+| 7a | AOS-3 external Prompt Packet | AOS-2 | render the same preparation through thin Generic/ChatGPT/Claude human-readable formatters; no provider call or independent retrieval/budget logic |
 | 8 | AOS-4 Novel generation workspace UI | AOS-3 | choose direct generation or complete prompt copy, inspect the shared context trace, and receive streamed/generated prose on desktop/tablet/mobile |
 | 9 | AOS-5 Chapter apply/import loop | AOS-3 | apply direct output or paste external output into the existing Chapter draft flow with optimistic concurrency, preparation provenance, and P1-7 edit-diff continuity |
 | 10 | AOS-6 explicit Taste foundation | AOS-1, usable novel loop | add user-authored positive/anti preferences and cake-mode semantics as optional preparation sections; no inference yet |
@@ -193,14 +198,15 @@ P1-8 evidence is a decision gate, not an automatic cutover. Its future/unknown s
 
 ### Milestone A — first useful dual-generation novel loop
 
-Required after this design PR:
+Required for the first usable loop:
 
-1. story-summary chronology contract review/merge and implementation;
-2. AOS-1 Generation Preparation + dual-route contract;
-3. AOS-2 minimum Novel preparation + Scene input;
-4. AOS-3 dual execution API;
-5. AOS-4 Novel generation workspace UI;
-6. AOS-5 Chapter apply/import loop.
+1. ~~story-summary chronology contract and implementation~~ — PRs #29 and #30 merged;
+2. ~~AOS-1 shared Generation Preparation~~ — implementation complete, independent review pending;
+3. minimum Scene/generation input;
+4. Gemini direct generation;
+5. external Prompt Packet;
+6. Novel generation workspace UI;
+7. Chapter apply/import loop.
 
 At AOS-3 the backend can produce a complete Prompt Packet and execute direct generation; at AOS-4 both are usable from the product UI; AOS-5 closes the daily continuation loop. Taste/Voice profiles, automated scene suggestions, deep Analyst extraction, full Writer loops, and fine-tuning must not delay this milestone.
 
@@ -316,8 +322,8 @@ An automatic LLM judge is optional and out of band. It is never required for pre
 Only these points currently require architecture decisions before implementation:
 
 1. P1-8 exact equivalence semantics — fixed and implemented by the P1-8 design and merged PR #28.
-2. Chapter-level `story.summary` chronology eligibility/order — defined in the companion chronology contract; implementation begins only after independent review and merge.
-3. Generation Preparation identity/trace, editable/persisted boundary, shared direct/external seam, target rendering, and import linkage — AOS-1 after chronology implementation.
+2. Chapter-level `story.summary` chronology eligibility/order — defined in the companion chronology contract and implemented in merged PR #30.
+3. Generation Preparation identity/trace and shared direct/external seam — fixed by the AOS-1 immutable runtime contract; route-specific rendering and import persistence remain later steps.
 4. Taste candidate lifecycle and whether existing Review Card semantics can be reused without conflating Story Canon review — AOS-1/AOS-6.
 5. Voice preset identity and persistence — AOS-1/AOS-7.
 6. Scene Brief persistence only if operation-local state proves insufficient — AOS-2, based on actual use.

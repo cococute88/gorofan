@@ -9,7 +9,15 @@ import pytest
 
 from app.adapters.base import Completion, ModelCapability, ProviderRequest
 from app.engines.chat.engine import ChatEngine
-from app.engines.novel.engine import ChapterContext, NovelEngine
+from app.engines.novel.engine import NovelEngine
+from app.engines.novel.generation_preparation import (
+    ContinueGenerationInput,
+    GenerationTarget,
+    PreparedChapterContext,
+    PreparedWorkContext,
+    freeze_mapping,
+    prepare_continue_generation,
+)
 from app.engines.prompt.assets import (
     PROMPT_ASSET_ROOT,
     PromptAssetLoader,
@@ -65,6 +73,28 @@ def _request() -> ProviderRequest:
         temperature=0.8,
         max_tokens=256,
         context_window=8192,
+    )
+
+
+def _novel_preparation():  # noqa: ANN202
+    return prepare_continue_generation(
+        ContinueGenerationInput(
+            target=GenerationTarget("owner-1", "work-1", "chapter-1"),
+            work=PreparedWorkContext("work-1", "owner-1", "작품", "", "", ()),
+            characters=(),
+            world=None,
+            lore=(),
+            prior_summaries=(),
+            current_chapter=PreparedChapterContext(
+                "chapter-1", "work-1", "owner-1", 1, "", ""
+            ),
+            instruction="계속",
+            target_words=800,
+            context_window=8192,
+            entry_context_trace=freeze_mapping(
+                {"feature_enabled": False, "retrieval_invoked": False}
+            ),
+        )
     )
 
 
@@ -138,19 +168,9 @@ async def test_chat_default_uses_the_asset_and_preserves_custom_template_overrid
 
 def test_novel_continue_uses_the_asset_and_records_trace_identity() -> None:
     registry = _Registry()
-    ctx = ChapterContext(
-        work=object(),
-        current_chapter=SimpleNamespace(content_text=""),
-        prior_summaries=[],
-        prior_summary_chapter_indexes=(),
-        characters=[],
-        world=None,
-        lore_entries=[],
-    )
 
     assembled = NovelEngine(PromptEngine(), registry).assemble_continue(
-        ctx,
-        instruction="계속",
+        _novel_preparation(),
         req=_request(),
     )
 
