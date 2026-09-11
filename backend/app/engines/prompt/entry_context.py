@@ -43,6 +43,7 @@ class EntryContextAssemblyRequest:
 @dataclass(frozen=True)
 class EntryContextAssemblyExclusion:
     entry_id: str
+    entry_type: str
     reason: Literal["rendered_block_budget_exceeded"]
     rendered_tokens: int
     budget_remaining: int
@@ -169,6 +170,7 @@ def assemble_entry_context(
             exclusions.append(
                 EntryContextAssemblyExclusion(
                     entry_id=item.entry.id,
+                    entry_type=item.entry.type.value,
                     reason=ASSEMBLY_BUDGET_EXCLUSION,
                     rendered_tokens=block.token_count,
                     budget_remaining=remaining,
@@ -292,10 +294,12 @@ def build_entry_context_trace(
                 retrieval_trace.budget_rejected_entry_ids
             ),
             "limit_rejected_entry_ids": list(retrieval_trace.limit_rejected_entry_ids),
+            "excluded_entry_types": dict(retrieval_trace.excluded_entry_types),
         },
         "assembly_exclusions": [
             {
                 "entry_id": exclusion.entry_id,
+                "entry_type": exclusion.entry_type,
                 "reason": exclusion.reason,
                 "stage": exclusion.stage,
                 "rendered_tokens": exclusion.rendered_tokens,

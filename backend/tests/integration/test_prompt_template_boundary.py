@@ -6,7 +6,15 @@ from types import SimpleNamespace
 
 from app.adapters.base import Completion, ModelCapability, ProviderRequest
 from app.engines.chat.engine import ChatEngine
-from app.engines.novel.engine import ChapterContext, NovelEngine
+from app.engines.novel.engine import NovelEngine
+from app.engines.novel.generation_preparation import (
+    ContinueGenerationInput,
+    GenerationTarget,
+    PreparedChapterContext,
+    PreparedWorkContext,
+    freeze_mapping,
+    prepare_continue_generation,
+)
 from app.engines.prompt.assets import PromptAssetLoader
 from app.engines.prompt.engine import PromptEngine
 from app.engines.shared.summarizer import Summarizer
@@ -38,6 +46,28 @@ def _request() -> ProviderRequest:
         temperature=0.8,
         max_tokens=256,
         context_window=8192,
+    )
+
+
+def _novel_preparation():  # noqa: ANN202
+    return prepare_continue_generation(
+        ContinueGenerationInput(
+            target=GenerationTarget("owner-1", "work-1", "chapter-1"),
+            work=PreparedWorkContext("work-1", "owner-1", "작품", "", "", ()),
+            characters=(),
+            world=None,
+            lore=(),
+            prior_summaries=(),
+            current_chapter=PreparedChapterContext(
+                "chapter-1", "work-1", "owner-1", 1, "", ""
+            ),
+            instruction="계속",
+            target_words=800,
+            context_window=8192,
+            entry_context_trace=freeze_mapping(
+                {"feature_enabled": False, "retrieval_invoked": False}
+            ),
+        )
     )
 
 
@@ -88,17 +118,7 @@ def test_repository_defaults_ignore_persisted_legacy_prompt_templates(client) ->
         )
     )
     novel = NovelEngine(PromptEngine(), registry).assemble_continue(
-        ChapterContext(
-            work=object(),
-            current_chapter=SimpleNamespace(content_text=""),
-            prior_summaries=[],
-            prior_summary_chapter_indexes=(),
-            characters=[],
-            world=None,
-            lore_entries=[],
-        ),
-        instruction="계속",
-        req=_request(),
+        _novel_preparation(), req=_request()
     )
     asyncio.run(
         Summarizer(PromptEngine(), registry).summarize_text(

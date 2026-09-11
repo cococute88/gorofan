@@ -20,10 +20,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.adapters.base import AssembledPrompt, Completion, ModelCapability, ProviderRequest
 from app.config import FEATURE_ENTRY_STORE_CONTEXT, get_settings
 from app.core.errors import Conflict
+from app.engines.novel.generation_preparation import GenerationSectionKind
+from app.models.character import Character
+from app.models.chat import Memory
 from app.models.entry import Entry
-from app.models.novel import Chapter
+from app.models.novel import Chapter, WorkCharacter
 from app.models.user import User
+from app.models.world import LoreEntry
 from app.schemas.entry import EntryScope, EntryStatus, EntryType
+from app.schemas.novel import ContinueRequest
 from app.services import entry_generation_context as entry_generation_context_module
 from app.services import novel_service as novel_service_module
 from app.services.entry_generation_context import ENTRY_CONTEXT_LIMIT
@@ -128,6 +133,7 @@ def _entry(
     priority: int = 100,
     subject_type: str | None = None,
     subject_id: str | None = None,
+    subject_data: dict[str, object] | None = None,
     data: dict[str, object] | None = None,
     created_at_chapter_id: str | None = None,
     provenance: dict[str, object] | None = None,
@@ -138,7 +144,7 @@ def _entry(
         scope_id=scope_id,
         subject_type=subject_type,
         subject_id=subject_id,
-        subject_data={},
+        subject_data=subject_data or {},
         type=entry_type.value,
         status=status.value,
         title=None,
@@ -271,6 +277,249 @@ def _identity(prompt: AssembledPrompt) -> tuple:
         prompt.system,
         prompt.token_count,
     )
+
+
+def _preparation_section(preparation, kind):  # noqa: ANN001, ANN202
+    return next(section for section in preparation.sections if section.kind is kind)
+
+
+# --- AOS-1: provider-free Novel preparation ---------------------------------
+
+
+def test_novel_preparation_is_provider_free_owner_scoped_and_memory_isolated(
+    make_client, retrieve_calls
+) -> None:
+    client = make_client(entry_context=True)
+    world = client.post(
+        "/api/v1/worlds", json={"name": "설원", "description": "긴 겨울의 땅"}
+    ).json()
+    work = client.post(
+        "/api/v1/works",
+        json={
+            "title": "겨울 궁전",
+            "synopsis": "몰락한 공녀의 귀환",
+            "genre": "로맨스 판타지",
+            "tags": ["회귀", "궁정"],
+            "world_id": world["id"],
+        },
+    ).json()
+    first = client.post(
+        "/api/v1/characters",
+        json={"name": "하린", "personality": "침착함", "speech_style": "단정함"},
+    ).json()
+    second = client.post(
+        "/api/v1/characters", json={"name": "준", "personality": "냉정함"}
+    ).json()
+    for character in (first, second):
+        response = client.post(
+            f"/api/v1/works/{work['id']}/characters",
+            json={"character_id": character["id"], "role_in_work": "주연"},
+        )
+        assert response.status_code == 201, response.text
+    chapter_content = "프롤로그-" + ("눈" * 1300)
+    chapter = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "귀환", "content_text": chapter_content},
+    ).json()
+    chat = client.post("/api/v1/chats", json={"character_id": first["id"]}).json()
+    pair = sorted([first["id"], second["id"]])
+    foreign_owner_id = "foreign-preparation-owner"
+    foreign_character_id = "foreign-preparation-character"
+    _write(
+        Memory(
+            chat_session_id=chat["id"],
+            user_id=_owner_id(),
+            kind="fact",
+            content="PRIVATE CHAT MEMORY MUST NEVER LEAK",
+        ),
+        _entry(
+            content="하린과 준은 서로를 경계한다.",
+            scope_kind=EntryScope.WORK,
+            scope_id=work["id"],
+            entry_type=EntryType.RELATIONSHIP_STATE,
+            subject_type="character-pair",
+            subject_id="|".join(pair),
+            subject_data={"character_ids": pair},
+        ),
+        User(
+            id=foreign_owner_id,
+            email="foreign-preparation@example.com",
+            display_name="foreign",
+        ),
+        Character(
+            id=foreign_character_id,
+            user_id=foreign_owner_id,
+            name="외부 인물",
+            personality="FOREIGN CHARACTER MUST NEVER LEAK",
+        ),
+        WorkCharacter(
+            work_id=work["id"],
+            character_id=foreign_character_id,
+            role_in_work="침입",
+        ),
+    )
+    service = cast(Any, client.app).state.novel_service
+    request = ContinueRequest(instruction="하린이 들어서게 이어 써라.", target_words=777)
+
+    prepared = asyncio.run(
+        service.prepare_continue(
+            _owner_id(), chapter["id"], request, context_window=8192
+        )
+    )
+    repeated = asyncio.run(
+        service.prepare_continue(
+            _owner_id(), chapter["id"], request, context_window=8192
+        )
+    )
+
+    assert prepared == repeated
+    assert prepared.target.chapter_id == chapter["id"]
+    assert prepared.work.title == "겨울 궁전"
+    assert prepared.work.synopsis == "몰락한 공녀의 귀환"
+    assert prepared.work.genre == "로맨스 판타지"
+    assert prepared.work.tags == ("회귀", "궁정")
+    assert {character.id for character in prepared.characters} == {
+        first["id"],
+        second["id"],
+    }
+    relationships = _preparation_section(
+        prepared, GenerationSectionKind.RELATIONSHIPS
+    )
+    assert len(relationships.items) == 1, (
+        prepared.budget.selected_entry_ids,
+        tuple(item for item in prepared.evidence if not item.selected),
+    )
+    assert "서로를 경계" in relationships.items[0].content
+    assert "PRIVATE CHAT MEMORY MUST NEVER LEAK" not in repr(prepared)
+    assert "FOREIGN CHARACTER MUST NEVER LEAK" not in repr(prepared)
+    assert prepared.current_chapter.tail == chapter_content[-1200:]
+    current_section = _preparation_section(
+        prepared, GenerationSectionKind.CURRENT_CHAPTER
+    )
+    assert current_section.items[0].content == (
+        f"[현재 챕터 끝부분]\n{chapter_content[-1200:]}"
+    )
+    assert prepared.instruction == "하린이 들어서게 이어 써라."
+    assert prepared.constraints[0].value == 777
+    assert len(retrieve_calls) == 2
+    assert _CAPTURED == []
+
+
+@pytest.mark.parametrize("tied_timestamp", [False, True], ids=["distinct", "tied"])
+def test_novel_flag_off_preserves_base_character_association_order_exactly(
+    make_client, retrieve_calls, tied_timestamp: bool
+) -> None:
+    client = make_client(entry_context=False)
+    world = client.post(
+        "/api/v1/worlds",
+        json={"name": "ORDER_WORLD", "description": "WORLD_DESCRIPTION"},
+    ).json()
+    book = client.post(
+        f"/api/v1/worlds/{world['id']}/lorebooks",
+        json={"name": "순서 로어", "enabled": True},
+    ).json()
+    work = client.post(
+        "/api/v1/works", json={"title": "순서 작품", "world_id": world["id"]}
+    ).json()
+    first_time = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    second_time = (
+        first_time
+        if tied_timestamp
+        else datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)
+    )
+    fixture_id = "tied" if tied_timestamp else "distinct"
+    first_id = f"z-character-{fixture_id}"
+    second_id = f"a-character-{fixture_id}"
+    _write(
+        Character(
+            id=first_id,
+            user_id=_owner_id(),
+            name="Z_FIRST_INSERTED",
+            personality="침착",
+            speech_style="짧음",
+        ),
+        Character(
+            id=second_id,
+            user_id=_owner_id(),
+            name="A_SECOND_INSERTED",
+            personality="냉정",
+            speech_style="길음",
+        ),
+        WorkCharacter(
+            id=f"z-association-{fixture_id}",
+            work_id=work["id"],
+            character_id=first_id,
+            role_in_work="주연",
+            created_at=first_time,
+            updated_at=first_time,
+        ),
+        WorkCharacter(
+            id=f"a-association-{fixture_id}",
+            work_id=work["id"],
+            character_id=second_id,
+            role_in_work="조연",
+            created_at=second_time,
+            updated_at=second_time,
+        ),
+        LoreEntry(
+            id=f"z-lore-{fixture_id}",
+            lorebook_id=book["id"],
+            keywords=["ORDER_KEYWORD"],
+            content="Z_LORE_FIRST_INSERTED",
+            priority=50,
+            enabled=True,
+            scan_depth=4,
+            created_at=first_time,
+            updated_at=first_time,
+        ),
+        LoreEntry(
+            id=f"a-lore-{fixture_id}",
+            lorebook_id=book["id"],
+            keywords=["ORDER_KEYWORD"],
+            content="A_LORE_SECOND_INSERTED",
+            priority=50,
+            enabled=True,
+            scan_depth=4,
+            created_at=second_time,
+            updated_at=second_time,
+        ),
+    )
+    prior = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "이전", "content_text": "이전 본문"},
+    ).json()
+    _set_chapter_summary(prior["id"], "PRIOR_SUMMARY_SENTINEL")
+    target = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "현재", "content_text": "CURRENT_TAIL_SENTINEL"},
+    ).json()
+
+    response = client.post(
+        f"/api/v1/works/chapters/{target['id']}/continue",
+        json={"instruction": "ORDER_KEYWORD를 따라라", "target_words": 50},
+    )
+
+    assert response.status_code == 200, response.text
+    assert retrieve_calls == []
+    assert len(_CAPTURED) == 1
+    assert [(message.role, message.content) for message in _CAPTURED[0].messages] == [
+        (
+            "system",
+            "당신은 숙련된 소설가다. 주어진 세계관·등장인물·이전 줄거리에 "
+            "일관되게, 몰입감 있는 한국어 산문으로 다음 분량을 이어쓴다. "
+            "시점과 문체를 유지하고 갑작스러운 설정 변경을 피한다.\n\n"
+            "[등장인물]\n"
+            "- Z_FIRST_INSERTED: 침착 / 말투: 짧음\n"
+            "- A_SECOND_INSERTED: 냉정 / 말투: 길음",
+        ),
+        ("system", "세계관: ORDER_WORLD\nWORLD_DESCRIPTION"),
+        ("system", "Z_LORE_FIRST_INSERTED"),
+        ("system", "A_LORE_SECOND_INSERTED"),
+        ("system", "PRIOR_SUMMARY_SENTINEL"),
+        ("user", "[현재 챕터 끝부분]\nCURRENT_TAIL_SENTINEL"),
+        ("user", "[집필 지시] ORDER_KEYWORD를 따라라"),
+    ]
+    assert _CAPTURED[0].trace["max_tokens"] == 80
 
 
 # --- Chat: flag OFF ---------------------------------------------------------

@@ -11,6 +11,11 @@ from dataclasses import dataclass, field, replace
 
 from app.adapters.base import AssembledPrompt, ProviderRequest, StreamEvent
 from app.adapters.registry import ProviderRegistry
+from app.engines.novel.generation_preparation import (
+    GenerationPreparation,
+    GenerationSectionKind,
+    thaw_mapping,
+)
 from app.engines.prompt.assets import PromptAssetLoader
 from app.engines.prompt.blocks import PromptBlock
 from app.engines.prompt.engine import AssembleInput, PromptEngine
@@ -41,29 +46,35 @@ class NovelEngine:
 
     def assemble_continue(
         self,
-        ctx: ChapterContext,
+        preparation: GenerationPreparation,
         *,
-        instruction: str,
         req: ProviderRequest,
-        entry_blocks: list[PromptBlock] | None = None,
-        entry_context_trace: dict[str, object] | None = None,
     ) -> AssembledPrompt:
+        """Render an immutable preparation through the existing PromptEngine.
+
+        AOS-1 deliberately keeps the legacy provider-visible prompt contract.
+        Work metadata is now explicit in the preparation, but its admission to
+        the production template belongs to a later, separately reviewed prompt
+        change.  Everything the current continuation prompt already used is
+        rendered byte-for-byte through the same PromptEngine path here.
+        """
+
         asset = self.prompt_assets.load("novel.continue")
         cap = self.registry.capabilities(req.provider, req.model_name)
         # Preserve the legacy runtime character-context wrapper around the asset body.
         char_lines = [
-            f"- {getattr(c, 'name', '')}: {getattr(c, 'personality', '')} / 말투: {getattr(c, 'speech_style', '')}"
-            for c in ctx.characters
+            item.content
+            for item in preparation.section(GenerationSectionKind.CHARACTERS).items
+            if item.evidence.source_type == "character"
         ]
         body = asset.body
         if char_lines:
             body += "\n\n[등장인물]\n" + "\n".join(char_lines)
-        tail = getattr(ctx.current_chapter, "content_text", "") or ""
-        tail = tail[-1200:]
-        if len(ctx.prior_summaries) != len(ctx.prior_summary_chapter_indexes):
-            raise ValueError("Legacy chapter summary chronology evidence is incomplete")
+        current_items = preparation.section(GenerationSectionKind.CURRENT_CHAPTER).items
+        current_context = current_items[0].content if current_items else ""
         prepared_entry_blocks: list[PromptBlock] = []
-        for block in entry_blocks or []:
+        for prepared_block in preparation.entry_blocks:
+            block = prepared_block.to_prompt_block()
             metadata = dict(block.metadata)
             if metadata.get("entry_type") == "story.summary":
                 chronology = metadata.get("story_summary_chronology")
@@ -85,15 +96,19 @@ class NovelEngine:
                 prompt_asset_version=asset.version,
                 prompt_asset_sha256=asset.sha256,
                 character=None,
-                world=ctx.world,
-                lore_entries=ctx.lore_entries or [],
-                chapter_prior_summaries=ctx.prior_summaries,
-                chapter_prior_summary_indexes=list(ctx.prior_summary_chapter_indexes),
+                world=preparation.world,
+                lore_entries=list(preparation.lore),
+                chapter_prior_summaries=[
+                    summary.content for summary in preparation.prior_summaries
+                ],
+                chapter_prior_summary_indexes=[
+                    summary.chapter_index for summary in preparation.prior_summaries
+                ],
                 history=[],
                 entry_blocks=prepared_entry_blocks,
-                entry_context_trace=entry_context_trace,
-                user_message=(f"[현재 챕터 끝부분]\n{tail}" if tail else None),
-                instruction=instruction or "자연스럽게 다음 장면을 이어써라.",
+                entry_context_trace=thaw_mapping(preparation.entry_context_trace),
+                user_message=current_context or None,
+                instruction=preparation.instruction,
                 context_window=req.context_window,
                 max_tokens=req.max_tokens,
                 safety_ratio=cap.safety_ratio,

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.engines.novel.generation_preparation import CURRENT_CHAPTER_TAIL_CHARS
 from app.engines.prompt.blocks import PromptBlock
 from app.engines.prompt.entry_context import (
     EntryContextAssemblyRequest,
@@ -49,12 +50,6 @@ ENTRY_CONTEXT_MIN_BUDGET = 256
 
 # Safety cap subordinate to the token budget (RFC-003 §11.2).
 ENTRY_CONTEXT_LIMIT = 20
-
-# Characters of the current chapter tail folded into the Novel keyword beat.
-# Mirrors the tail NovelEngine already shows the model, so the retrieved canon
-# is relevant to the passage actually being continued.
-NOVEL_BEAT_TAIL_CHARS = 1200
-
 
 @dataclass(frozen=True)
 class EntryGenerationContext:
@@ -149,7 +144,7 @@ def build_novel_retrieve_request(
         for character_id in (getattr(c, "id", None) for c in characters)
         if character_id
     ]
-    tail = (getattr(chapter, "content_text", "") or "")[-NOVEL_BEAT_TAIL_CHARS:]
+    tail = (getattr(chapter, "content_text", "") or "")[-CURRENT_CHAPTER_TAIL_CHARS:]
     beat = " ".join(part for part in (instruction or "", tail) if part).strip()
     work_id = getattr(work, "id", None)
     chapter_id = getattr(chapter, "id", None)
