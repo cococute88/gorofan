@@ -159,6 +159,16 @@ class PreparedPriorSummary:
 
 
 @dataclass(frozen=True)
+class SceneGenerationInput:
+    """Immutable provider-neutral scene intent for one generation only."""
+
+    goal: str | None = None
+    beats: tuple[str, ...] = ()
+    must_include: tuple[str, ...] = ()
+    must_avoid: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class PreparedPromptBlock:
     """Whitelisted compatibility snapshot for the existing PromptEngine."""
 
@@ -265,6 +275,7 @@ class ContinueGenerationInput:
     instruction: str
     target_words: int
     context_window: int
+    scene: SceneGenerationInput | None = None
     entry_blocks: Sequence[PreparedPromptBlock | PromptBlock] = ()
     entry_context_trace: FrozenMap | Mapping[str, object] = FrozenMap()
 
@@ -283,6 +294,7 @@ class _NormalizedContinueGenerationInput:
     instruction: str
     target_words: int
     context_window: int
+    scene: SceneGenerationInput | None
     entry_blocks: tuple[PreparedPromptBlock, ...]
     entry_context_trace: FrozenMap
 
@@ -299,6 +311,7 @@ class GenerationPreparation:
     prior_summaries: tuple[PreparedPriorSummary, ...]
     current_chapter: PreparedChapterContext
     instruction: str
+    scene: SceneGenerationInput | None
     constraints: tuple[GenerationConstraint, ...]
     budget: GenerationPreparationBudget
     entry_blocks: tuple[PreparedPromptBlock, ...]
@@ -337,6 +350,7 @@ def prepare_continue_generation(value: ContinueGenerationInput) -> GenerationPre
         prior_summaries=normalized.prior_summaries,
         current_chapter=normalized.current_chapter,
         instruction=instruction,
+        scene=normalized.scene,
         constraints=constraints,
         budget=_build_budget(normalized.context_window, normalized.entry_context_trace),
         entry_blocks=normalized.entry_blocks,
@@ -459,6 +473,13 @@ def _build_semantic_sections(
         source_type="generation_request",
         source_id=value.target.chapter_id,
     )
+    if value.scene is not None:
+        add(
+            GenerationSectionKind.INSTRUCTION,
+            content=_render_scene_directive(value.scene),
+            source_type="scene_generation_input",
+            source_id=value.target.chapter_id,
+        )
     for constraint in value.constraints:
         add(
             GenerationSectionKind.CONSTRAINTS,
@@ -560,12 +581,31 @@ def _normalize_input(value: ContinueGenerationInput) -> _NormalizedContinueGener
         instruction=value.instruction,
         target_words=value.target_words,
         context_window=value.context_window,
+        scene=_normalize_scene(value.scene),
         entry_blocks=tuple(
             _snapshot_entry_block(block)
             for block in _sequence_items(value.entry_blocks, "Entry blocks")
         ),
         entry_context_trace=trace,
     )
+
+
+def _normalize_scene(
+    value: SceneGenerationInput | None,
+) -> SceneGenerationInput | None:
+    if value is None:
+        return None
+    scene = SceneGenerationInput(
+        goal=value.goal,
+        beats=tuple(_sequence_items(value.beats, "Scene beats")),
+        must_include=tuple(
+            _sequence_items(value.must_include, "Scene must-include items")
+        ),
+        must_avoid=tuple(_sequence_items(value.must_avoid, "Scene must-avoid items")),
+    )
+    if not (scene.goal or scene.beats or scene.must_include or scene.must_avoid):
+        return None
+    return scene
 
 
 def _sequence_items(value: object, label: str) -> Sequence:
@@ -665,6 +705,30 @@ def _render_work(work: PreparedWorkContext) -> str:
     if work.tags:
         lines.append(f"태그: {', '.join(work.tags)}")
     return "\n".join(lines)
+
+
+def _render_scene_directive(scene: SceneGenerationInput) -> str:
+    """Derive one stable provider-neutral directive from the canonical fields."""
+
+    sections: list[str] = []
+    if scene.goal:
+        sections.append(f"[장면 목표]\n{scene.goal}")
+    if scene.beats:
+        sections.append(
+            "[진행할 사건]\n"
+            + "\n".join(
+                f"{index}. {beat}" for index, beat in enumerate(scene.beats, start=1)
+            )
+        )
+    if scene.must_include:
+        sections.append(
+            "[반드시 포함]\n" + "\n".join(f"- {item}" for item in scene.must_include)
+        )
+    if scene.must_avoid:
+        sections.append(
+            "[피할 요소]\n" + "\n".join(f"- {item}" for item in scene.must_avoid)
+        )
+    return "\n\n".join(sections)
 
 
 def _build_budget(context_window: int, trace: FrozenMap) -> GenerationPreparationBudget:

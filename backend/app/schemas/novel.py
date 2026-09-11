@@ -1,7 +1,9 @@
 """Novel DTOs (design 6)."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import TimestampedOut
 
@@ -58,10 +60,73 @@ class ReorderRequest(BaseModel):
     ordered_chapter_ids: list[str]
 
 
+SCENE_GOAL_MAX_LENGTH = 1000
+SCENE_ITEM_MAX_LENGTH = 500
+SCENE_ITEMS_MAX_COUNT = 16
+SCENE_TOTAL_MAX_LENGTH = 12000
+
+SceneItem = Annotated[str, Field(max_length=SCENE_ITEM_MAX_LENGTH)]
+
+
+class SceneGenerationRequest(BaseModel):
+    """Ephemeral structured intent for one Chapter generation request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    goal: str | None = Field(default=None, max_length=SCENE_GOAL_MAX_LENGTH)
+    beats: list[SceneItem] = Field(
+        default_factory=list, max_length=SCENE_ITEMS_MAX_COUNT
+    )
+    must_include: list[SceneItem] = Field(
+        default_factory=list, max_length=SCENE_ITEMS_MAX_COUNT
+    )
+    must_avoid: list[SceneItem] = Field(
+        default_factory=list, max_length=SCENE_ITEMS_MAX_COUNT
+    )
+
+    @field_validator("goal", mode="before")
+    @classmethod
+    def _normalize_goal(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("beats", "must_include", "must_avoid", mode="before")
+    @classmethod
+    def _normalize_items(cls, value: object) -> object:
+        if value is None:
+            return []
+        if not isinstance(value, (list, tuple)):
+            return value
+        normalized: list[object] = []
+        for item in value:
+            if isinstance(item, str):
+                item = item.strip()
+                if not item:
+                    raise ValueError("scene items must not be blank")
+            normalized.append(item)
+        return normalized
+
+    @model_validator(mode="after")
+    def _bound_total_text(self) -> SceneGenerationRequest:
+        total = len(self.goal or "") + sum(
+            len(item)
+            for values in (self.beats, self.must_include, self.must_avoid)
+            for item in values
+        )
+        if total > SCENE_TOTAL_MAX_LENGTH:
+            raise ValueError(
+                f"scene text must not exceed {SCENE_TOTAL_MAX_LENGTH} characters"
+            )
+        return self
+
+
 class ContinueRequest(BaseModel):
     instruction: str = ""
     target_words: int = Field(default=800, ge=50, le=5000)
     client_request_id: str | None = None
+    scene: SceneGenerationRequest | None = None
 
 
 class WorkCharacterLink(BaseModel):

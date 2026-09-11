@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.adapters.base import AssembledPrompt, Completion, ModelCapability, ProviderRequest
@@ -214,6 +214,20 @@ def _hard_delete_chapter(chapter_id: str) -> None:
         await engine.dispose()
 
     asyncio.run(_run())
+
+
+def _entry_count() -> int:
+    async def _run() -> int:
+        engine = create_async_engine(os.environ["DATABASE_URL"])
+        sessionmaker = async_sessionmaker(
+            engine, expire_on_commit=False, class_=AsyncSession
+        )
+        async with sessionmaker() as session:
+            count = await session.scalar(select(func.count()).select_from(Entry))
+        await engine.dispose()
+        return int(count or 0)
+
+    return asyncio.run(_run())
 
 
 def _foreign_owner() -> str:
@@ -873,6 +887,145 @@ def test_chat_sse_contract_and_single_persist_survive_entry_injection(
 
 
 # --- Novel ------------------------------------------------------------------
+
+
+def test_novel_empty_scene_is_provider_visible_legacy_equivalent(make_client) -> None:
+    client = make_client(entry_context=False)
+    _, _, legacy_chapter = _novel_setup(
+        client, title="빈 장면 호환", world_name="동일 세계"
+    )
+    _, _, empty_scene_chapter = _novel_setup(
+        client, title="빈 장면 호환", world_name="동일 세계"
+    )
+    payload = {"instruction": "같은 지시", "target_words": 100}
+
+    legacy = client.post(
+        f"/api/v1/works/chapters/{legacy_chapter}/continue", json=payload
+    )
+    empty_scene = client.post(
+        f"/api/v1/works/chapters/{empty_scene_chapter}/continue",
+        json={**payload, "scene": {}},
+    )
+
+    assert legacy.status_code == empty_scene.status_code == 200
+    assert len(_CAPTURED) == 2
+    assert _identity(_CAPTURED[0]) == _identity(_CAPTURED[1])
+
+
+def test_novel_scene_validation_fails_before_provider_invocation(make_client) -> None:
+    client = make_client(entry_context=False)
+    _, _, chapter_id = _novel_setup(client, title="검증", world_name="경계")
+
+    response = client.post(
+        f"/api/v1/works/chapters/{chapter_id}/continue",
+        json={
+            "instruction": "계속",
+            "target_words": 100,
+            "scene": {"beats": ["정상 사건", "   "]},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "UNPROCESSABLE"
+    assert _CAPTURED == []
+
+
+def test_novel_prepare_continue_snapshots_scene_without_provider_or_write(
+    make_client, retrieve_calls
+) -> None:
+    client = make_client(entry_context=True)
+    _, work_id, chapter_id = _novel_setup(
+        client, title="준비 전용", world_name="설원"
+    )
+    before_chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+    before_entries = _entry_count()
+    service = cast(Any, client.app).state.novel_service
+    request = ContinueRequest(
+        instruction="감정선을 천천히 진행해줘.",
+        target_words=1200,
+        scene={
+            "goal": "라니가 결계 이상을 알아차린다.",
+            "beats": ["B 사건", "A 사건", "C 사건"],
+            "must_include": ["은빛 표식"],
+            "must_avoid": ["새로운 악역"],
+        },
+    )
+
+    prepared = asyncio.run(
+        service.prepare_continue(
+            _owner_id(), chapter_id, request, context_window=8192
+        )
+    )
+
+    assert prepared.scene is not None
+    assert prepared.scene.beats == ("B 사건", "A 사건", "C 사건")
+    assert prepared.scene.must_include == ("은빛 표식",)
+    assert prepared.scene.must_avoid == ("새로운 악역",)
+    instruction = _preparation_section(prepared, GenerationSectionKind.INSTRUCTION)
+    assert [item.evidence.source_type for item in instruction.items] == [
+        "generation_request",
+        "scene_generation_input",
+    ]
+    assert len(retrieve_calls) == 1
+    assert _CAPTURED == []
+    assert _entry_count() == before_entries
+    assert client.get(f"/api/v1/works/{work_id}/chapters").json()[0] == before_chapter
+
+
+@pytest.mark.parametrize("entry_context", [False, True], ids=["flag-off", "flag-on"])
+def test_novel_scene_reaches_one_provider_once_without_entry_or_canon_persistence(
+    make_client, retrieve_calls, entry_context: bool
+) -> None:
+    client = make_client(entry_context=entry_context)
+    _, work_id, chapter_id = _novel_setup(
+        client, title=f"장면 생성 {entry_context}", world_name="경계림"
+    )
+    before_entries = _entry_count()
+    before_chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+
+    response = client.post(
+        f"/api/v1/works/chapters/{chapter_id}/continue",
+        json={
+            "instruction": "FREEFORM_SENTINEL 감정선을 천천히 진행해줘.",
+            "target_words": 100,
+            "scene": {
+                "goal": "GOAL_SENTINEL 결계 이상을 알아차린다.",
+                "beats": ["BEAT_B", "BEAT_A", "BEAT_C"],
+                "must_include": ["INCLUDE_ONE", "INCLUDE_TWO"],
+                "must_avoid": ["AVOID_ONE", "AVOID_TWO"],
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert "event: done" in response.text
+    assert len(_CAPTURED) == 1
+    text = _prompt_text(_CAPTURED[0])
+    for sentinel in (
+        "FREEFORM_SENTINEL",
+        "GOAL_SENTINEL",
+        "BEAT_B",
+        "BEAT_A",
+        "BEAT_C",
+        "INCLUDE_ONE",
+        "INCLUDE_TWO",
+        "AVOID_ONE",
+        "AVOID_TWO",
+    ):
+        assert text.count(sentinel) == 1
+    assert text.index("1. BEAT_B") < text.index("2. BEAT_A") < text.index("3. BEAT_C")
+    assert text.index("- INCLUDE_ONE") < text.index("- INCLUDE_TWO")
+    assert text.index("- AVOID_ONE") < text.index("- AVOID_TWO")
+    trace = _CAPTURED[0].trace["entry_context"]
+    assert trace["feature_enabled"] is entry_context
+    assert len(retrieve_calls) == int(entry_context)
+    assert _entry_count() == before_entries
+
+    after_chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+    assert after_chapter["version"] == before_chapter["version"] + 1
+    assert after_chapter["content_text"] == (
+        before_chapter["content_text"] + "\n\n이어쓰기완료"
+    )
 
 
 def test_flag_off_makes_entry_data_irrelevant_to_the_novel_prompt(

@@ -25,6 +25,7 @@ from app.engines.novel.generation_preparation import (
     PreparedPriorSummary,
     PreparedWorkContext,
     PreparedWorldContext,
+    SceneGenerationInput,
     freeze_mapping,
     prepare_continue_generation,
     snapshot_prompt_blocks,
@@ -447,6 +448,16 @@ class NovelService:
             instruction=dto.instruction,
             target_words=dto.target_words,
             context_window=context_window,
+            scene=(
+                SceneGenerationInput(
+                    goal=dto.scene.goal,
+                    beats=tuple(dto.scene.beats),
+                    must_include=tuple(dto.scene.must_include),
+                    must_avoid=tuple(dto.scene.must_avoid),
+                )
+                if dto.scene is not None
+                else None
+            ),
             entry_blocks=snapshot_prompt_blocks(entry_context.blocks),
             entry_context_trace=freeze_mapping(entry_context.trace),
         )
