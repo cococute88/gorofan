@@ -2,7 +2,7 @@
 
 > **Canonical handoff document for a new AI session.**
 >
-> **Verified at:** 2026-09-10
+> **Verified at:** 2026-09-11
 > **Verified `main`:** `b5b51a42db8c951529ee29944133fb98b7509b8d`
 > **Current implementation branch:** `feature/aos-generation-preparation`
 
@@ -42,7 +42,7 @@ Before changing anything:
 | GitHub repository | [`cococute88/gorofan`](https://github.com/cococute88/gorofan) |
 | Local repository | `C:\gv\rfrf` |
 | Default branch | `main` |
-| Verification time | `2026-09-10` (Asia/Seoul) |
+| Verification time | `2026-09-11` (Asia/Seoul) |
 | Verified `origin/main` / local `main` before AOS-1 branch | `b5b51a42db8c951529ee29944133fb98b7509b8d` |
 | PR #21 | [`feat(entry): wire retrieval context into generation paths`](https://github.com/cococute88/gorofan/pull/21), merged 2026-08-09 — **P1-6** |
 | PR #21 merge commit | `1b2a850b2732778fecb8944f03a8d12020aa588a` |
@@ -59,7 +59,7 @@ Before changing anything:
 | PR #28 merged head / merge commit | `e1ae734959815ae02cb9e6fd105a40dd85a254b9` / `ac791ba8369aa1a7f6856cd9f573e0650995ea74` |
 | PR #29 | `story.summary` chronology Architecture Contract, merged head `a794f14`, merge commit `e5ffc730` |
 | PR #30 | [`feat(entry): enforce story summary chronology`](https://github.com/cococute88/gorofan/pull/30), reviewed head `f21be771de6c92978469d2e9b672a12cbe6f8e24`, squash merge `b5b51a42db8c951529ee29944133fb98b7509b8d`; both trees are identical |
-| Current work | AOS-1 shared provider-neutral Generation Preparation implemented on `feature/aos-generation-preparation`; Draft PR independent review pending |
+| Current work | PR #31 AOS-1 blocker fixes implemented on `feature/aos-generation-preparation`; Draft remains pending targeted independent re-review |
 | Backend | Python 3.11+; FastAPI; async SQLAlchemy 2; Alembic; SQLite-first with PostgreSQL seam; pytest, Hypothesis, Ruff, MyPy |
 | Frontend | TypeScript; Next.js 14 App Router; React 18; TanStack Query; TipTap; Tailwind; Vitest; PWA |
 | CI | GitHub Actions on Ubuntu, Python 3.12 and Node 20; backend + frontend jobs in `.github/workflows/ci.yml` |
@@ -214,17 +214,17 @@ Run each command as a separate process with the stated working directory; do not
 
 | Check | Working directory | Command | Verified result at this handoff |
 |---|---|---|---|
-| AOS-1 focused | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_generation_preparation.py tests/integration/test_entry_context_generation.py::test_novel_preparation_is_provider_free_owner_scoped_and_memory_isolated -q` | **10 passed.** Provider-free deterministic contract, exact target, stable sections, 1,200-character tail, chronology reuse, authority/ownership/Memory isolation, budget/evidence, and prompt equivalence. |
-| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest` | **313 passed, 0 failed** on the AOS-1 implementation branch. |
-| P1-8 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **53 passed.** Covers the existing contract and previous blockers plus resolved-empty Character/World sources, multi-Character rendered-order match/mismatch, exact future-summary retrieval rejection chronology, and assistant/user regenerate timestamp-tie fail-closed spy checks (including Memory rows and evaluation-time variants). |
+| AOS-1 focused | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_generation_preparation.py tests/integration/test_entry_context_generation.py -q` | **45 passed.** Includes fail-closed direct chronology counterexamples, deep defensive snapshots, metadata whitelists, omission mapping, provider-free/once-only integration, owner/Memory isolation, and frozen exact multi-Character provider prompt equivalence. |
+| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest` | **326 passed, 0 failed** on the AOS-1 blocker-fix branch. |
+| P1-8 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **54 passed.** Includes production/P1-8 shared Character/World ordering and deleted-source parity in addition to the merged diagnostic contract. |
 | Related regression bundle | `backend` | Entry lifecycle/retrieval/context/review, Chat/Novel/Memory/streaming, prompt budget/assets, edit-diff, golden, migrations | **230 passed, 0 failed.** |
 | P1-7 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/integration/test_edit_diff_capture_schema.py tests/integration/test_edit_diff_capture_entry.py tests/integration/test_edit_diff_capture_novel.py` | **41 passed** (schema 12, Path A 11, Path B 18). `tests/integration/test_migrations.py` grew from 3 to 5 for the remaining 2. |
-| P1-6 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_prompt_integration.py tests/unit/test_entry_generation_context.py tests/integration/test_entry_context_generation.py` | **41 passed.** The integration file drives the real SSE endpoints with a recording provider. |
+| P1-6 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_prompt_integration.py tests/unit/test_entry_generation_context.py tests/integration/test_entry_context_generation.py` | **53 passed.** The reviewed pre-fix collection was 52; the frozen Character association-order prompt regression adds one. The integration file drives the real SSE endpoints with a recording provider. |
 | Entry/retrieval/assembly target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_retrieval.py tests/unit/test_entry_context_assembly.py tests/integration/test_entry_retrieval.py tests/golden/test_retrieval_context_golden.py` | Repository command paths verified; use for Store/context work. |
 | Ruff | `backend` | `.\.venv\Scripts\python.exe -m ruff check app tests` | `All checks passed!` on the AOS-1 implementation branch. |
-| Frontend test | `frontend` | `npm run test` | Passed: 3 files / 13 tests on 2026-09-10; AOS-1 did not touch the frontend. |
-| Frontend lint | `frontend` | `npm run lint` | Passed on 2026-09-10. |
-| Frontend production build | `frontend` | `npm run build` | Passed: 15 routes on 2026-09-10. |
+| Frontend test | `frontend` | `npm run test` | Passed: 3 files / 13 tests on 2026-09-11; AOS-1 did not touch the frontend. |
+| Frontend lint | `frontend` | `npm run lint` | Passed on 2026-09-11. |
+| Frontend production build | `frontend` | `npm run build` | Passed: 15 routes on 2026-09-11. |
 | Alembic revisions | `backend` | `.\.venv\Scripts\python.exe -m alembic heads` | **`0003_edit_diff_capture (head)`** — single head, `down_revision = "0002_entry_store"`. |
 | Whitespace/patch integrity | repository root | `git diff --check` | Clean on the AOS-1 implementation branch. |
 
@@ -280,10 +280,10 @@ The current `tasks.md`, `implementation-status.md`, and production code agree on
 |---|---|---|---|---|
 | ~~**P1-6**~~ `retrieve()` → Context Assembly → real generation path | **Complete** (PR #21, `1b2a850`). Single production call site wired for Chat and Novel behind an OFF-by-default flag. | — | — | Done. |
 | ~~**P1-7**~~ edit-diff capture | **Complete** (design PR #23 `39cf740`, implementation PR #25 `271e27c`). Both destroying paths capture the pair; `alembic heads` is `0003_edit_diff_capture`. The permanent-data-loss clock has stopped. | — | — | Done. The §13 read contract belongs to **P2-5**, not to a follow-up here. |
-| ~~**P1-8**~~ legacy Character/World/Lore ↔ Entry equivalence bridge | **Complete** (design PR #27, implementation PR #28, merge `ac791ba`). Pure projections, coverage precedence, typed owner-safe API, and Chat/Novel runtime shadows are covered by 53 focused tests. Legacy remains authoritative and `_make_lore_blocks()` still runs. | — | Backfill, legacy deletion, read cutover, migration, or flipping the flag as part of the bridge. | Done; chronology evidence feeds the next gate. |
+| ~~**P1-8**~~ legacy Character/World/Lore ↔ Entry equivalence bridge | **Complete** (design PR #27, implementation PR #28, merge `ac791ba`). Pure projections, coverage precedence, typed owner-safe API, and Chat/Novel runtime shadows are covered by 54 focused tests. Legacy remains authoritative and `_make_lore_blocks()` still runs. | — | Backfill, legacy deletion, read cutover, migration, or flipping the flag as part of the bridge. | Done; chronology evidence feeds the next gate. |
 | ~~**Story-summary chronology contract**~~ | **Complete** (PR #29 merge `e5ffc730`). | P1-8 merged. | — | Done. |
 | ~~**Story-summary chronology implementation**~~ | **Complete** (PR #30 merge `b5b51a4`, reviewed head `f21be77`, identical tree). Explicit target anchor, consistent snapshot, prior-only eligibility, Chapter-index order, overlap/duplicate fail-closed, and P1-8 alignment are present. | Accepted chronology contract. | — | Done. |
-| **AOS-1 shared Generation Preparation** | Implementation and focused validation complete; Draft PR independent review pending. Explicit owner/work/chapter/continue target, immutable typed context, stable semantic sections, constraints, frozen evidence, chronology-safe prior summaries, existing budget trace, and provider-free service seam are present. | PR #30 merged. | Provider endpoint/key/model UI, Prompt Packet, Scene table/UI, apply/import, Taste/Voice. | Independent review, then separate Ready/merge decision. |
+| **AOS-1 shared Generation Preparation** | PR #31 blocker fixes complete; Draft pending targeted independent re-review. The provider-visible Character association order is preserved, direct chronology evidence fails closed, inputs become deep immutable snapshots, production/P1-8 share owner/deleted/order selection, and Entry metadata is explicitly whitelisted. | PR #30 merged. | Provider endpoint/key/model UI, Prompt Packet, Scene table/UI, apply/import, Taste/Voice. | Targeted re-review, then separate Ready/merge decision. |
 | **P1-9** review audit persistence decision | Not implemented. Current Entries have lifecycle/provenance but no approved actor/action history design. P1-7 deliberately defined no actor or action vocabulary. | P1-1 complete. | Unapproved JSON schema, implementation migration in the design PR, reusing `edit_diff_captures` as a review timeline. | Independent of the chronology/AOS path unless architecture review chooses earlier. |
 | **P1-10** local development environment cleanup | Optional and blocked by user-data safety. Local DB stamp is stale; protected stashes exist. | Explicit user approval for data/stash actions. | Automatic DB recreation, `alembic stamp`, stash application/deletion. | Last, and only with approval. |
 
@@ -377,9 +377,11 @@ AOS-1 starts from the real `continue Chapter` operation. `NovelService.prepare_c
 
 Production uses strategy A: `_continue_impl()` creates that preparation, and `NovelEngine.assemble_continue()` renders the current prompt material through the existing `PromptEngine` before the existing provider registry. Work title/synopsis/genre/tags are explicit in the `story` section but deliberately remain outside the current compatibility prompt so AOS-1 does not silently change provider-visible behavior. PromptEngine still owns final block order, whole-prompt fit, prompt-asset trace, and neutral messages. `entry_store_context` remains default OFF; legacy authority, Entry additive semantics, and the PR #30 chronology path are unchanged.
 
+PR #31's first independent review found five correctness issues, now fixed on the same Draft branch. Character order follows the legacy WorkCharacter association insertion semantics (`created_at`, then association id) instead of Character id, with a frozen multi-Character exact-prompt fixture. Production and the P1-8 Novel shadow share one owner/deleted/order-safe read helper. The pure boundary does not reclassify chronology, but rejects legacy or Entry summary evidence that cannot prove a same-Work, non-target, strictly prior Chapter. Every public sequence/mapping is defensively snapshotted; typed preparation fields are the single canonical authority, sections/evidence are deterministic derived views, and `PreparedPromptBlock` is only a whitelisted PromptEngine compatibility value. Entry metadata and nested chronology metadata no longer pass through arbitrary keys, and omission evidence uses the Entry type's actual semantic section.
+
 ## 12. First-run checklist for a new AI
 
-1. Read `AI-HANDOFF.md`, `docs/architecture/personal-author-os-roadmap.md`, and `docs/architecture/story-summary-chronology.md`. The next action is an independent code review of the AOS-1 Draft PR.
+1. Read `AI-HANDOFF.md`, `docs/architecture/personal-author-os-roadmap.md`, and `docs/architecture/story-summary-chronology.md`. The next action is targeted independent re-review of the PR #31 blocker fixes.
 2. Fetch and compare `origin/main`; if this handoff SHA (`b5b51a4`) is no longer current, re-validate GitHub state, code call sites, and status documents.
 3. Check the working tree and list stashes without modifying either. Keep user work, the local DB, and stashes untouched.
 4. Confirm `FEATURES["entry_store_context"]` still defaults OFF and Alembic head remains `0003_edit_diff_capture` without running or changing the user's local DB.

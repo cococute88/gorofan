@@ -404,6 +404,103 @@ def test_novel_preparation_is_provider_free_owner_scoped_and_memory_isolated(
     assert _CAPTURED == []
 
 
+def test_novel_flag_off_preserves_base_character_association_order_exactly(
+    make_client, retrieve_calls
+) -> None:
+    client = make_client(entry_context=False)
+    world = client.post(
+        "/api/v1/worlds",
+        json={"name": "ORDER_WORLD", "description": "WORLD_DESCRIPTION"},
+    ).json()
+    book = client.post(
+        f"/api/v1/worlds/{world['id']}/lorebooks",
+        json={"name": "순서 로어", "enabled": True},
+    ).json()
+    client.post(
+        f"/api/v1/worlds/lorebooks/{book['id']}/entries",
+        json={
+            "keywords": ["ORDER_KEYWORD"],
+            "content": "ORDER_LORE_SENTINEL",
+            "priority": 50,
+            "enabled": True,
+        },
+    )
+    work = client.post(
+        "/api/v1/works", json={"title": "순서 작품", "world_id": world["id"]}
+    ).json()
+    first_time = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    second_time = datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)
+    first_id = "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz"
+    second_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    _write(
+        Character(
+            id=first_id,
+            user_id=_owner_id(),
+            name="Z_FIRST_INSERTED",
+            personality="침착",
+            speech_style="짧음",
+        ),
+        Character(
+            id=second_id,
+            user_id=_owner_id(),
+            name="A_SECOND_INSERTED",
+            personality="냉정",
+            speech_style="길음",
+        ),
+        WorkCharacter(
+            id="first-association",
+            work_id=work["id"],
+            character_id=first_id,
+            role_in_work="주연",
+            created_at=first_time,
+            updated_at=first_time,
+        ),
+        WorkCharacter(
+            id="second-association",
+            work_id=work["id"],
+            character_id=second_id,
+            role_in_work="조연",
+            created_at=second_time,
+            updated_at=second_time,
+        ),
+    )
+    prior = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "이전", "content_text": "이전 본문"},
+    ).json()
+    _set_chapter_summary(prior["id"], "PRIOR_SUMMARY_SENTINEL")
+    target = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "현재", "content_text": "CURRENT_TAIL_SENTINEL"},
+    ).json()
+
+    response = client.post(
+        f"/api/v1/works/chapters/{target['id']}/continue",
+        json={"instruction": "ORDER_KEYWORD를 따라라", "target_words": 50},
+    )
+
+    assert response.status_code == 200, response.text
+    assert retrieve_calls == []
+    assert len(_CAPTURED) == 1
+    assert [(message.role, message.content) for message in _CAPTURED[0].messages] == [
+        (
+            "system",
+            "당신은 숙련된 소설가다. 주어진 세계관·등장인물·이전 줄거리에 "
+            "일관되게, 몰입감 있는 한국어 산문으로 다음 분량을 이어쓴다. "
+            "시점과 문체를 유지하고 갑작스러운 설정 변경을 피한다.\n\n"
+            "[등장인물]\n"
+            "- Z_FIRST_INSERTED: 침착 / 말투: 짧음\n"
+            "- A_SECOND_INSERTED: 냉정 / 말투: 길음",
+        ),
+        ("system", "세계관: ORDER_WORLD\nWORLD_DESCRIPTION"),
+        ("system", "ORDER_LORE_SENTINEL"),
+        ("system", "PRIOR_SUMMARY_SENTINEL"),
+        ("user", "[현재 챕터 끝부분]\nCURRENT_TAIL_SENTINEL"),
+        ("user", "[집필 지시] ORDER_KEYWORD를 따라라"),
+    ]
+    assert _CAPTURED[0].trace["max_tokens"] == 80
+
+
 # --- Chat: flag OFF ---------------------------------------------------------
 
 

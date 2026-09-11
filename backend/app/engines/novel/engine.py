@@ -11,7 +11,11 @@ from dataclasses import dataclass, field, replace
 
 from app.adapters.base import AssembledPrompt, ProviderRequest, StreamEvent
 from app.adapters.registry import ProviderRegistry
-from app.engines.novel.generation_preparation import GenerationPreparation, thaw_mapping
+from app.engines.novel.generation_preparation import (
+    GenerationPreparation,
+    GenerationSectionKind,
+    thaw_mapping,
+)
 from app.engines.prompt.assets import PromptAssetLoader
 from app.engines.prompt.blocks import PromptBlock
 from app.engines.prompt.engine import AssembleInput, PromptEngine
@@ -59,13 +63,15 @@ class NovelEngine:
         cap = self.registry.capabilities(req.provider, req.model_name)
         # Preserve the legacy runtime character-context wrapper around the asset body.
         char_lines = [
-            f"- {c.name}: {c.personality} / 말투: {c.speech_style}"
-            for c in preparation.characters
+            item.content
+            for item in preparation.section(GenerationSectionKind.CHARACTERS).items
+            if item.evidence.source_type == "character"
         ]
         body = asset.body
         if char_lines:
             body += "\n\n[등장인물]\n" + "\n".join(char_lines)
-        tail = preparation.current_chapter.tail
+        current_items = preparation.section(GenerationSectionKind.CURRENT_CHAPTER).items
+        current_context = current_items[0].content if current_items else ""
         prepared_entry_blocks: list[PromptBlock] = []
         for prepared_block in preparation.entry_blocks:
             block = prepared_block.to_prompt_block()
@@ -101,7 +107,7 @@ class NovelEngine:
                 history=[],
                 entry_blocks=prepared_entry_blocks,
                 entry_context_trace=thaw_mapping(preparation.entry_context_trace),
-                user_message=(f"[현재 챕터 끝부분]\n{tail}" if tail else None),
+                user_message=current_context or None,
                 instruction=preparation.instruction,
                 context_window=req.context_window,
                 max_tokens=req.max_tokens,

@@ -41,7 +41,7 @@ from app.models.ai_config import ModelConfig
 from app.models.character import Character, Persona
 from app.models.chat import ChatSession, Memory, Message
 from app.models.entry import ENTRY_STATUS_VALUES, Entry
-from app.models.novel import Chapter, Work, WorkCharacter
+from app.models.novel import Chapter, Work
 from app.models.world import GlossaryTerm, Lorebook, LoreEntry, World
 from app.schemas.entry import EntryRetrievalResult, EntryStatus
 from app.schemas.equivalence import (
@@ -70,6 +70,7 @@ from app.services.entry_generation_context import (
 )
 from app.services.entry_retrieval import RETRIEVAL_POLICY_VERSION
 from app.services.entry_service import EntryService
+from app.services.novel_generation_sources import load_novel_generation_sources
 from app.services.story_order_snapshot import begin_story_order_snapshot
 from app.services.story_summary_chronology import (
     classify_chapter_story_position,
@@ -818,26 +819,9 @@ class LegacyEntryEquivalenceService:
                 )
             ).scalars().all()
         )
-        links = list(
-            (
-                await session.execute(
-                    select(WorkCharacter).where(WorkCharacter.work_id == work.id)
-                )
-            ).scalars().all()
-        )
-        characters: list[Character] = []
-        for link in links:
-            character = (
-                await session.execute(
-                    select(Character).where(
-                        Character.id == link.character_id,
-                        Character.user_id == user_id,
-                    )
-                )
-            ).scalars().first()
-            if character is not None:
-                characters.append(character)
-        world = await self._owned_world(session, user_id, work.world_id)
+        sources = await load_novel_generation_sources(session, work)
+        characters = list(sources.characters)
+        world = sources.world
         glossary, lore_rows = await self._world_children(session, world)
 
         batches = [project_character(character) for character in characters]
@@ -963,6 +947,7 @@ class LegacyEntryEquivalenceService:
                     select(LoreEntry, Lorebook)
                     .join(Lorebook, Lorebook.id == LoreEntry.lorebook_id)
                     .where(Lorebook.world_id == world.id)
+                    .order_by(LoreEntry.created_at, LoreEntry.id)
                 )
             ).tuples().all()
         )

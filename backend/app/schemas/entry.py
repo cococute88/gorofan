@@ -499,6 +499,7 @@ class EntryRetrievalTrace(BaseModel):
     )
     budget_rejected_entry_ids: list[str] = Field(default_factory=list)
     limit_rejected_entry_ids: list[str] = Field(default_factory=list)
+    excluded_entry_types: dict[str, str] = Field(default_factory=dict)
 
 
 class EntryRetrievalResult(BaseModel):

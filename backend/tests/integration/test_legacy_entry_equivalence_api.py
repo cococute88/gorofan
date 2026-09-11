@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import event, func, select
 
 import app.engines.memory.engine as memory_engine_module
+import app.services.legacy_entry_equivalence as legacy_entry_equivalence_module
 from app.config import get_settings
 from app.engines.memory.engine import MemoryEngine, rank_memories
 from app.models.character import Character
@@ -19,6 +20,7 @@ from app.models.entry import Entry
 from app.models.novel import Chapter, Work
 from app.models.user import User
 from app.models.world import Lorebook, LoreEntry, World
+from app.schemas.novel import ContinueRequest
 from app.services.entry_service import EntryService
 
 _OVERRIDE = {
@@ -905,6 +907,131 @@ def test_novel_reports_prior_and_future_summary_without_mutation(client) -> None
     )
     assert unknown_runtime["runtime_selected"] is False
     assert "unknown_story_position" in unknown_runtime["diagnostic_codes"]
+
+
+def test_novel_production_and_p1_8_share_character_world_selection_order(
+    client, monkeypatch
+) -> None:  # noqa: ANN001
+    active_world = client.post(
+        "/api/v1/worlds",
+        json={"name": "ACTIVE_WORLD_SENTINEL", "description": "active"},
+    ).json()
+    work = client.post(
+        "/api/v1/works",
+        json={"title": "공유 source", "world_id": active_world["id"]},
+    ).json()
+    first = client.post(
+        "/api/v1/characters",
+        json={"name": "Z_FIRST_INSERTED", "personality": "first"},
+    ).json()
+    deleted = client.post(
+        "/api/v1/characters",
+        json={
+            "name": "DELETED_CHARACTER_SENTINEL",
+            "personality": "deleted",
+        },
+    ).json()
+    second = client.post(
+        "/api/v1/characters",
+        json={"name": "A_SECOND_INSERTED", "personality": "second"},
+    ).json()
+    for character in (first, deleted, second):
+        linked = client.post(
+            f"/api/v1/works/{work['id']}/characters",
+            json={"character_id": character["id"], "role_in_work": "주연"},
+        )
+        assert linked.status_code == 201, linked.text
+    assert client.delete(f"/api/v1/characters/{deleted['id']}").status_code == 204
+    chapter = client.post(
+        f"/api/v1/works/{work['id']}/chapters",
+        json={"title": "현재", "content_text": "본문"},
+    ).json()
+
+    novel_service = cast(Any, client.app).state.novel_service
+    preparation = _run(
+        novel_service.prepare_continue(
+            _owner_id(),
+            chapter["id"],
+            ContinueRequest(instruction="계속", target_words=50),
+            context_window=4096,
+        )
+    )
+    p1_8_source_calls: list[tuple[list[str], str | None]] = []
+    original_loader = legacy_entry_equivalence_module.load_novel_generation_sources
+
+    async def recording_loader(session, loaded_work):  # noqa: ANN001, ANN202
+        sources = await original_loader(session, loaded_work)
+        p1_8_source_calls.append(
+            ([character.id for character in sources.characters], getattr(sources.world, "id", None))
+        )
+        return sources
+
+    monkeypatch.setattr(
+        legacy_entry_equivalence_module,
+        "load_novel_generation_sources",
+        recording_loader,
+    )
+    response = client.post(
+        "/api/v1/entries/equivalence:compare",
+        json={
+            "novel": {
+                "chapter_id": chapter["id"],
+                "instruction": "계속",
+                "target_words": 50,
+            },
+            "budget_override": _OVERRIDE,
+        },
+    )
+    assert response.status_code == 200, response.text
+    report = response.json()
+    expected_ids = [first["id"], second["id"]]
+    assert [character.id for character in preparation.characters] == expected_ids
+    assert p1_8_source_calls == [(expected_ids, active_world["id"])]
+    assert preparation.world is not None
+    assert preparation.world.id == active_world["id"]
+    serialized = json.dumps(report, ensure_ascii=False)
+    assert "ACTIVE_WORLD_SENTINEL" in serialized
+    assert "DELETED_CHARACTER_SENTINEL" not in serialized
+
+    deleted_world = client.post(
+        "/api/v1/worlds",
+        json={"name": "DELETED_WORLD_SENTINEL", "description": "deleted"},
+    ).json()
+    deleted_world_work = client.post(
+        "/api/v1/works",
+        json={"title": "삭제 세계 작품", "world_id": deleted_world["id"]},
+    ).json()
+    deleted_world_chapter = client.post(
+        f"/api/v1/works/{deleted_world_work['id']}/chapters",
+        json={"title": "현재", "content_text": "본문"},
+    ).json()
+    assert client.delete(f"/api/v1/worlds/{deleted_world['id']}").status_code == 204
+
+    deleted_world_preparation = _run(
+        novel_service.prepare_continue(
+            _owner_id(),
+            deleted_world_chapter["id"],
+            ContinueRequest(instruction="계속", target_words=50),
+            context_window=4096,
+        )
+    )
+    deleted_world_response = client.post(
+        "/api/v1/entries/equivalence:compare",
+        json={
+            "novel": {
+                "chapter_id": deleted_world_chapter["id"],
+                "instruction": "계속",
+                "target_words": 50,
+            },
+            "budget_override": _OVERRIDE,
+        },
+    )
+    assert deleted_world_response.status_code == 200, deleted_world_response.text
+    assert deleted_world_preparation.world is None
+    assert p1_8_source_calls[-1] == ([], None)
+    assert "DELETED_WORLD_SENTINEL" not in json.dumps(
+        deleted_world_response.json(), ensure_ascii=False
+    )
 
 
 def test_novel_lore_shadow_uses_effective_default_instruction(client) -> None:  # noqa: ANN001

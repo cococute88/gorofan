@@ -10,6 +10,7 @@ from app.adapters.registry import ProviderRegistry
 from app.engines.novel.engine import NovelEngine
 from app.engines.novel.generation_preparation import (
     ContinueGenerationInput,
+    FrozenMap,
     GenerationSectionKind,
     GenerationTarget,
     PreparedChapterContext,
@@ -38,21 +39,26 @@ def _entry_block(
     content: str,
     *,
     source_index: int | None = None,
+    disposition: str = "prior",
+    source_chapter_id: str | None = None,
+    scope_id: str = "work-1",
+    extra_metadata: dict[str, object] | None = None,
 ) -> PreparedPromptBlock:
     metadata: dict[str, object] = {
         "source": "entry_store",
         "entry_id": entry_id,
         "entry_type": entry_type,
         "scope_kind": "work",
-        "scope_id": "work-1",
+        "scope_id": scope_id,
     }
     if source_index is not None:
         metadata["story_summary_chronology"] = {
-            "disposition": "prior",
+            "disposition": disposition,
             "reason": "eligible_prior_summary",
-            "source_chapter_id": f"chapter-{source_index}",
+            "source_chapter_id": source_chapter_id or f"chapter-{source_index}",
             "source_chapter_index": source_index,
         }
+    metadata.update(extra_metadata or {})
     return PreparedPromptBlock.from_prompt_block(
         PromptBlock(
             id=f"entry:{entry_id}",
@@ -92,7 +98,7 @@ def _input(**updates) -> ContinueGenerationInput:  # noqa: ANN003
             ),
         ),
         prior_summaries=(
-            PreparedPriorSummary("chapter-1", 1, "첫 장 요약"),
+            PreparedPriorSummary("chapter-1", "work-1", 1, "첫 장 요약"),
         ),
         current_chapter=PreparedChapterContext(
             "chapter-3", "work-1", "owner-1", 3, "귀환", "문이 천천히 열렸다."
@@ -119,6 +125,11 @@ def _input(**updates) -> ContinueGenerationInput:  # noqa: ANN003
                 "selected_entry_ids": ["summary-2", "relationship-1", "fact-1"],
                 "retrieval_exclusions": {
                     "orphaned_entry_ids": ["orphan-1"],
+                    "excluded_entry_types": {
+                        "orphan-1": "character.identity",
+                        "future-1": "story.summary",
+                        "budget-1": "relationship.state",
+                    },
                     "story_summary_chronology": [
                         {"entry_id": "future-1", "reason": "future_chapter_summary"}
                     ],
@@ -126,7 +137,11 @@ def _input(**updates) -> ContinueGenerationInput:  # noqa: ANN003
                     "limit_rejected_entry_ids": [],
                 },
                 "assembly_exclusions": [
-                    {"entry_id": "assembly-1", "reason": "rendered_block_budget_exceeded"}
+                    {
+                        "entry_id": "assembly-1",
+                        "entry_type": "story.fact",
+                        "reason": "rendered_block_budget_exceeded",
+                    }
                 ],
             }
         ),
@@ -259,15 +274,229 @@ def test_invalid_summary_order_or_missing_chronology_evidence_fails_closed() -> 
         prepare_continue_generation(
             _input(
                 prior_summaries=(
-                    PreparedPriorSummary("chapter-2", 2, "둘째"),
-                    PreparedPriorSummary("chapter-1", 1, "첫째"),
+                    PreparedPriorSummary("chapter-2", "work-1", 2, "둘째"),
+                    PreparedPriorSummary("chapter-1", "work-1", 1, "첫째"),
                 )
             )
         )
-    with pytest.raises(ValueError, match="chronology evidence"):
+    with pytest.raises(ValueError, match="valid prior source"):
         prepare_continue_generation(
             _input(entry_blocks=(_entry_block("summary", "story.summary", "요약"),))
         )
+
+
+@pytest.mark.parametrize(
+    ("chapter_id", "source_index"),
+    [
+        ("chapter-99", 99),
+        ("chapter-3", 3),
+    ],
+)
+def test_legacy_summary_anchor_invariant_rejects_current_or_future_source(
+    chapter_id: str, source_index: int
+) -> None:
+    sentinel = "FUTURE_LEGACY_SENTINEL"
+    with pytest.raises(ValueError, match="target anchor") as error:
+        prepare_continue_generation(
+            _input(
+                prior_summaries=(
+                    PreparedPriorSummary(
+                        chapter_id, "work-1", source_index, sentinel
+                    ),
+                )
+            )
+        )
+    assert sentinel not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("disposition", "source_index", "source_id"),
+    [
+        ("current", 3, "chapter-3"),
+        ("future", 4, "chapter-4"),
+        ("prior", 5, "chapter-5"),
+        ("unknown", 2, "chapter-2"),
+    ],
+)
+def test_entry_summary_anchor_invariant_rejects_non_prior_or_invalid_index(
+    disposition: str, source_index: int, source_id: str
+) -> None:
+    with pytest.raises(ValueError, match="valid prior source"):
+        prepare_continue_generation(
+            _input(
+                entry_blocks=(
+                    _entry_block(
+                        "malformed-summary",
+                        "story.summary",
+                        "MALFORMED_ENTRY_SUMMARY_SENTINEL",
+                        disposition=disposition,
+                        source_index=source_index,
+                        source_chapter_id=source_id,
+                    ),
+                )
+            )
+        )
+
+
+def test_valid_direct_prior_summary_evidence_is_accepted() -> None:
+    preparation = prepare_continue_generation(
+        _input(
+            entry_blocks=(
+                _entry_block(
+                    "valid-summary",
+                    "story.summary",
+                    "VALID_PRIOR_SENTINEL",
+                    disposition="prior",
+                    source_index=2,
+                    source_chapter_id="chapter-2",
+                ),
+            )
+        )
+    )
+    summaries = _section(preparation, GenerationSectionKind.PRIOR_CHAPTER_SUMMARIES)
+    assert any("VALID_PRIOR_SENTINEL" in item.content for item in summaries.items)
+
+
+def test_caller_owned_sequences_and_nested_mappings_are_defensively_snapshotted() -> None:
+    tags = ["회귀"]
+    characters = [
+        PreparedCharacterContext(
+            "mutable-character", "owner-1", "원본", "침착", "단정"
+        )
+    ]
+    lore_keywords = ["열쇠"]
+    lore = [
+        PreparedLoreContext(
+            "mutable-lore", "열쇠는 탁자 위에 있다.", lore_keywords, 50, 4  # type: ignore[arg-type]
+        )
+    ]
+    metadata: dict[str, object] = {
+        "source": "entry_store",
+        "entry_id": "mutable-entry",
+        "entry_type": "story.fact",
+        "scope_kind": "work",
+        "scope_id": "work-1",
+        "provenance": {"private": ["ORIGINAL_PRIVATE_METADATA"]},
+    }
+    raw_block = PromptBlock(
+        id="entry:mutable-entry",
+        role="system",
+        kind="entry",
+        content="공유 사실",
+        priority=DEFAULT_PRIORITY["entry"],
+        metadata=metadata,
+    )
+    blocks = [raw_block]
+    trace: dict[str, object] = {
+        "feature_enabled": True,
+        "retrieval_invoked": True,
+        "selected_entry_ids": ["mutable-entry"],
+        "retrieval_exclusions": {
+            "orphaned_entry_ids": [],
+            "story_summary_chronology": [],
+            "retrieval_budget_rejected_entry_ids": [],
+            "limit_rejected_entry_ids": [],
+            "excluded_entry_types": {},
+        },
+        "assembly_exclusions": [],
+    }
+    value = _input(
+        work=PreparedWorkContext(
+            "work-1", "owner-1", "가변 작품", "", "", tags  # type: ignore[arg-type]
+        ),
+        characters=characters,  # type: ignore[arg-type]
+        lore=lore,  # type: ignore[arg-type]
+        entry_blocks=blocks,  # type: ignore[arg-type]
+        entry_context_trace=trace,  # type: ignore[arg-type]
+    )
+    preparation = prepare_continue_generation(value)
+    before = (repr(preparation), preparation.sections, preparation.evidence)
+
+    tags.append("변조")
+    characters.clear()
+    lore_keywords.append("변조")
+    lore.clear()
+    blocks.clear()
+    cast_metadata = metadata["provenance"]
+    assert isinstance(cast_metadata, dict)
+    cast_metadata["private"] = ["MUTATED_PRIVATE_METADATA"]
+    cast_trace = trace["selected_entry_ids"]
+    assert isinstance(cast_trace, list)
+    cast_trace.append("mutated-entry")
+
+    assert (repr(preparation), preparation.sections, preparation.evidence) == before
+    assert preparation.work.tags == ("회귀",)
+    assert [character.id for character in preparation.characters] == [
+        "mutable-character"
+    ]
+    assert preparation.lore[0].keywords == ("열쇠",)
+    assert [block.id for block in preparation.entry_blocks] == [
+        "entry:mutable-entry"
+    ]
+    assert len(_section(preparation, GenerationSectionKind.CHARACTERS).items) == len(
+        preparation.characters
+    )
+
+
+def test_entry_compatibility_metadata_is_explicitly_whitelisted() -> None:
+    sentinel = "ARBITRARY_PRIVATE_METADATA_SENTINEL_73921"
+    raw = _entry_block("safe-entry", "story.fact", "안전한 사실").to_prompt_block()
+    raw.metadata.update(
+        {
+            "provenance": {"locator": sentinel},
+            "retrieval_score": 999,
+            "arbitrary_private": sentinel,
+        }
+    )
+
+    preparation = prepare_continue_generation(_input(entry_blocks=[raw]))
+    metadata = dict(preparation.entry_blocks[0].metadata.items)
+    assert set(metadata) == {
+        "entry_id",
+        "entry_type",
+        "scope_id",
+        "scope_kind",
+        "source",
+    }
+    assert sentinel not in repr(preparation)
+
+
+def test_story_summary_chronology_metadata_is_nested_whitelisted() -> None:
+    sentinel = "ARBITRARY_PRIVATE_METADATA_SENTINEL_73921"
+    raw = _entry_block(
+        "safe-summary",
+        "story.summary",
+        "안전한 이전 요약",
+        disposition="prior",
+        source_index=2,
+        source_chapter_id="chapter-2",
+    ).to_prompt_block()
+    chronology = raw.metadata["story_summary_chronology"]
+    assert isinstance(chronology, dict)
+    chronology["private_locator"] = {"secret": sentinel}
+
+    preparation = prepare_continue_generation(_input(entry_blocks=[raw]))
+    frozen = preparation.entry_blocks[0].metadata.get("story_summary_chronology")
+    assert isinstance(frozen, FrozenMap)
+    assert {key for key, _ in frozen.items} == {
+        "disposition",
+        "source_chapter_id",
+        "source_chapter_index",
+    }
+    assert sentinel not in repr(preparation)
+
+
+def test_omission_evidence_uses_each_entry_semantic_section() -> None:
+    preparation = prepare_continue_generation(_input())
+    omitted = {
+        item.source_id: item.section for item in preparation.evidence if not item.selected
+    }
+    assert omitted == {
+        "orphan-1": GenerationSectionKind.CHARACTERS,
+        "budget-1": GenerationSectionKind.RELATIONSHIPS,
+        "future-1": GenerationSectionKind.PRIOR_CHAPTER_SUMMARIES,
+        "assembly-1": GenerationSectionKind.CANON_CONTEXT,
+    }
 
 
 def test_legacy_provider_visible_prompt_is_equivalent_after_preparation_wiring() -> None:

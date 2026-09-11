@@ -48,6 +48,7 @@ from app.services.entry_generation_context import (
     build_novel_retrieve_request,
     load_entry_context,
 )
+from app.services.novel_generation_sources import load_novel_generation_sources
 from app.services.provider_resolve import resolve_provider_request
 from app.services.story_order_snapshot import begin_story_order_snapshot
 from app.services.story_summary_chronology import is_substantive_legacy_summary
@@ -422,7 +423,12 @@ class NovelService:
                 for entry in ctx.lore_entries
             ),
             prior_summaries=tuple(
-                PreparedPriorSummary(chapter_id=chapter_id, chapter_index=index, content=summary)
+                PreparedPriorSummary(
+                    chapter_id=chapter_id,
+                    work_id=work.id,
+                    chapter_index=index,
+                    content=summary,
+                )
                 for chapter_id, index, summary in zip(
                     ctx.substantive_legacy_summary_chapter_ids,
                     ctx.prior_summary_chapter_indexes,
@@ -548,32 +554,16 @@ class NovelService:
             c for c in prior if is_substantive_legacy_summary(c.summary)
         ]
         prior_summaries = [c.summary for c in substantive_prior]
-        character_stmt = (
-            select(Character)
-            .join(WorkCharacter, WorkCharacter.character_id == Character.id)
-            .where(
-                WorkCharacter.work_id == work.id,
-                Character.user_id == work.user_id,
-                Character.deleted_at.is_(None),
-            )
-            .order_by(WorkCharacter.character_id)
-        )
-        characters = list((await s.execute(character_stmt)).scalars().all())
-        world = None
-        if work.world_id:
-            world_stmt = select(World).where(
-                World.id == work.world_id,
-                World.user_id == work.user_id,
-                World.deleted_at.is_(None),
-            )
-            world = (await s.execute(world_stmt)).scalars().first()
+        sources = await load_novel_generation_sources(s, work)
+        characters = list(sources.characters)
+        world = sources.world
         lore = []
         if world is not None:
             lstmt = (
                 select(LoreEntry)
                 .join(Lorebook, Lorebook.id == LoreEntry.lorebook_id)
                 .where(Lorebook.world_id == world.id, LoreEntry.enabled.is_(True))
-                .order_by(LoreEntry.priority.desc(), LoreEntry.id)
+                .order_by(LoreEntry.created_at, LoreEntry.id)
             )
             lore = list((await s.execute(lstmt)).scalars().all())
         return ChapterContext(

@@ -35,6 +35,23 @@ class GenerationSectionKind(StrEnum):
 
 SECTION_ORDER = tuple(GenerationSectionKind)
 
+# Only metadata required to identify, classify, validate, and order a selected
+# Entry crosses the preparation boundary. Retrieval scores, provenance payloads,
+# locators, and any caller-added values remain upstream.
+ENTRY_BLOCK_METADATA_KEYS = frozenset(
+    {
+        "source",
+        "entry_id",
+        "entry_type",
+        "scope_kind",
+        "scope_id",
+        "story_summary_chronology",
+    }
+)
+STORY_SUMMARY_CHRONOLOGY_KEYS = frozenset(
+    {"disposition", "source_chapter_id", "source_chapter_index"}
+)
+
 
 @dataclass(frozen=True)
 class FrozenMap:
@@ -136,13 +153,14 @@ class PreparedChapterContext:
 @dataclass(frozen=True)
 class PreparedPriorSummary:
     chapter_id: str
+    work_id: str
     chapter_index: int
     content: str
 
 
 @dataclass(frozen=True)
 class PreparedPromptBlock:
-    """Immutable snapshot of an existing provider-neutral PromptBlock."""
+    """Whitelisted compatibility snapshot for the existing PromptEngine."""
 
     id: str
     role: BlockRole
@@ -155,6 +173,18 @@ class PreparedPromptBlock:
 
     @classmethod
     def from_prompt_block(cls, block: PromptBlock) -> PreparedPromptBlock:
+        metadata = {
+            key: value
+            for key, value in block.metadata.items()
+            if key in ENTRY_BLOCK_METADATA_KEYS
+        }
+        chronology = metadata.get("story_summary_chronology")
+        if isinstance(chronology, Mapping):
+            metadata["story_summary_chronology"] = {
+                key: value
+                for key, value in chronology.items()
+                if key in STORY_SUMMARY_CHRONOLOGY_KEYS
+            }
         return cls(
             id=block.id,
             role=block.role,
@@ -163,7 +193,7 @@ class PreparedPromptBlock:
             priority=block.priority,
             token_count=block.token_count,
             truncatable=block.truncatable,
-            metadata=freeze_mapping(block.metadata),
+            metadata=freeze_mapping(metadata),
         )
 
     def to_prompt_block(self) -> PromptBlock:
@@ -227,6 +257,24 @@ class ContinueGenerationInput:
 
     target: GenerationTarget
     work: PreparedWorkContext
+    characters: Sequence[PreparedCharacterContext]
+    world: PreparedWorldContext | None
+    lore: Sequence[PreparedLoreContext]
+    prior_summaries: Sequence[PreparedPriorSummary]
+    current_chapter: PreparedChapterContext
+    instruction: str
+    target_words: int
+    context_window: int
+    entry_blocks: Sequence[PreparedPromptBlock | PromptBlock] = ()
+    entry_context_trace: FrozenMap | Mapping[str, object] = FrozenMap()
+
+
+@dataclass(frozen=True)
+class _NormalizedContinueGenerationInput:
+    """Owned immutable values produced at the public preparation boundary."""
+
+    target: GenerationTarget
+    work: PreparedWorkContext
     characters: tuple[PreparedCharacterContext, ...]
     world: PreparedWorldContext | None
     lore: tuple[PreparedLoreContext, ...]
@@ -235,12 +283,14 @@ class ContinueGenerationInput:
     instruction: str
     target_words: int
     context_window: int
-    entry_blocks: tuple[PreparedPromptBlock, ...] = ()
-    entry_context_trace: FrozenMap = FrozenMap()
+    entry_blocks: tuple[PreparedPromptBlock, ...]
+    entry_context_trace: FrozenMap
 
 
 @dataclass(frozen=True)
 class GenerationPreparation:
+    """Canonical immutable context; sections/evidence are derived read-only views."""
+
     target: GenerationTarget
     work: PreparedWorkContext
     characters: tuple[PreparedCharacterContext, ...]
@@ -250,27 +300,55 @@ class GenerationPreparation:
     current_chapter: PreparedChapterContext
     instruction: str
     constraints: tuple[GenerationConstraint, ...]
-    sections: tuple[GenerationSemanticSection, ...]
-    evidence: tuple[GenerationSourceEvidence, ...]
     budget: GenerationPreparationBudget
     entry_blocks: tuple[PreparedPromptBlock, ...]
     entry_context_trace: FrozenMap
 
-    def __post_init__(self) -> None:
-        if tuple(section.kind for section in self.sections) != SECTION_ORDER:
-            raise ValueError("Generation semantic section order is not canonical")
+    @property
+    def sections(self) -> tuple[GenerationSemanticSection, ...]:
+        return _build_semantic_sections(self)
+
+    @property
+    def evidence(self) -> tuple[GenerationSourceEvidence, ...]:
+        selected = tuple(item.evidence for section in self.sections for item in section.items)
+        return selected + _omitted_entry_evidence(self.entry_context_trace)
+
+    def section(self, kind: GenerationSectionKind) -> GenerationSemanticSection:
+        return self.sections[SECTION_ORDER.index(kind)]
 
 
 def prepare_continue_generation(value: ContinueGenerationInput) -> GenerationPreparation:
     """Create one deterministic preparation without database/provider access."""
 
-    _validate_input(value)
-    instruction = value.instruction or DEFAULT_CONTINUATION_INSTRUCTION
+    normalized = _normalize_input(value)
+    _validate_input(normalized)
+    instruction = normalized.instruction or DEFAULT_CONTINUATION_INSTRUCTION
     constraints = (
-        GenerationConstraint("target_words", value.target_words),
+        GenerationConstraint("target_words", normalized.target_words),
         GenerationConstraint("response_language", "ko"),
-        GenerationConstraint("continuation_mode", value.target.operation.value),
+        GenerationConstraint("continuation_mode", normalized.target.operation.value),
     )
+    return GenerationPreparation(
+        target=normalized.target,
+        work=normalized.work,
+        characters=normalized.characters,
+        world=normalized.world,
+        lore=normalized.lore,
+        prior_summaries=normalized.prior_summaries,
+        current_chapter=normalized.current_chapter,
+        instruction=instruction,
+        constraints=constraints,
+        budget=_build_budget(normalized.context_window, normalized.entry_context_trace),
+        entry_blocks=normalized.entry_blocks,
+        entry_context_trace=normalized.entry_context_trace,
+    )
+
+
+def _build_semantic_sections(
+    value: GenerationPreparation,
+) -> tuple[GenerationSemanticSection, ...]:
+    """Derive the ordered semantic view from the canonical typed snapshot."""
+
     section_items: dict[GenerationSectionKind, list[GenerationSemanticItem]] = {
         kind: [] for kind in SECTION_ORDER
     }
@@ -347,21 +425,12 @@ def prepare_continue_generation(value: ContinueGenerationInput) -> GenerationPre
         source_id = str(block.metadata.get("entry_id", block.id.removeprefix("entry:")))
         if entry_type == "story.summary":
             chronology = block.metadata.get("story_summary_chronology")
-            if not isinstance(chronology, FrozenMap):
-                raise ValueError("Entry story summary chronology evidence is missing")
+            assert isinstance(chronology, FrozenMap)
             source_order = chronology.get("source_chapter_index")
-            if isinstance(source_order, bool) or not isinstance(source_order, int):
-                raise ValueError("Entry story summary source position is missing")
-            section = GenerationSectionKind.PRIOR_CHAPTER_SUMMARIES
-        elif entry_type == "relationship.state":
-            source_order = None
-            section = GenerationSectionKind.RELATIONSHIPS
-        elif entry_type.startswith("character."):
-            source_order = None
-            section = GenerationSectionKind.CHARACTERS
+            assert isinstance(source_order, int) and not isinstance(source_order, bool)
         else:
             source_order = None
-            section = GenerationSectionKind.CANON_CONTEXT
+        section = _section_for_entry_type(entry_type)
         add(
             section,
             content=block.content,
@@ -386,11 +455,11 @@ def prepare_continue_generation(value: ContinueGenerationInput) -> GenerationPre
     )
     add(
         GenerationSectionKind.INSTRUCTION,
-        content=instruction,
+        content=value.instruction,
         source_type="generation_request",
         source_id=value.target.chapter_id,
     )
-    for constraint in constraints:
+    for constraint in value.constraints:
         add(
             GenerationSectionKind.CONSTRAINTS,
             content=f"{constraint.name}: {constraint.value}",
@@ -403,31 +472,130 @@ def prepare_continue_generation(value: ContinueGenerationInput) -> GenerationPre
         GenerationSemanticSection(kind=kind, items=tuple(section_items[kind]))
         for kind in SECTION_ORDER
     )
-    selected_evidence = tuple(item.evidence for section in sections for item in section.items)
-    omitted_evidence = _omitted_entry_evidence(value.entry_context_trace)
-    budget = _build_budget(value.context_window, value.entry_context_trace)
-    return GenerationPreparation(
-        target=value.target,
-        work=value.work,
-        characters=value.characters,
-        world=value.world,
-        lore=value.lore,
-        prior_summaries=value.prior_summaries,
-        current_chapter=value.current_chapter,
-        instruction=instruction,
-        constraints=constraints,
-        sections=sections,
-        evidence=selected_evidence + omitted_evidence,
-        budget=budget,
-        entry_blocks=value.entry_blocks,
-        entry_context_trace=value.entry_context_trace,
+    return sections
+
+
+def _section_for_entry_type(entry_type: str) -> GenerationSectionKind:
+    if entry_type == "story.summary":
+        return GenerationSectionKind.PRIOR_CHAPTER_SUMMARIES
+    if entry_type == "relationship.state":
+        return GenerationSectionKind.RELATIONSHIPS
+    if entry_type.startswith("character."):
+        return GenerationSectionKind.CHARACTERS
+    return GenerationSectionKind.CANON_CONTEXT
+
+
+def _normalize_input(value: ContinueGenerationInput) -> _NormalizedContinueGenerationInput:
+    """Detach the preparation from every caller-owned mutable container."""
+
+    target = value.target
+    work = value.work
+    chapter = value.current_chapter
+    world = value.world
+    trace = _snapshot_frozen_map(value.entry_context_trace)
+    return _NormalizedContinueGenerationInput(
+        target=GenerationTarget(
+            owner_id=target.owner_id,
+            work_id=target.work_id,
+            chapter_id=target.chapter_id,
+            operation=target.operation,
+        ),
+        work=PreparedWorkContext(
+            id=work.id,
+            owner_id=work.owner_id,
+            title=work.title,
+            synopsis=work.synopsis,
+            genre=work.genre,
+            tags=tuple(_sequence_items(work.tags, "Work tags")),
+        ),
+        characters=tuple(
+            PreparedCharacterContext(
+                id=character.id,
+                owner_id=character.owner_id,
+                name=character.name,
+                personality=character.personality,
+                speech_style=character.speech_style,
+            )
+            for character in _sequence_items(value.characters, "Characters")
+        ),
+        world=(
+            PreparedWorldContext(
+                id=world.id,
+                owner_id=world.owner_id,
+                name=world.name,
+                description=world.description,
+                era=world.era,
+            )
+            if world is not None
+            else None
+        ),
+        lore=tuple(
+            PreparedLoreContext(
+                id=lore.id,
+                content=lore.content,
+                keywords=tuple(_sequence_items(lore.keywords, "Lore keywords")),
+                priority=lore.priority,
+                scan_depth=lore.scan_depth,
+                enabled=lore.enabled,
+            )
+            for lore in _sequence_items(value.lore, "Lore")
+        ),
+        prior_summaries=tuple(
+            PreparedPriorSummary(
+                chapter_id=summary.chapter_id,
+                work_id=summary.work_id,
+                chapter_index=summary.chapter_index,
+                content=summary.content,
+            )
+            for summary in _sequence_items(value.prior_summaries, "Prior summaries")
+        ),
+        current_chapter=PreparedChapterContext(
+            id=chapter.id,
+            work_id=chapter.work_id,
+            owner_id=chapter.owner_id,
+            index=chapter.index,
+            title=chapter.title,
+            tail=chapter.tail,
+        ),
+        instruction=value.instruction,
+        target_words=value.target_words,
+        context_window=value.context_window,
+        entry_blocks=tuple(
+            _snapshot_entry_block(block)
+            for block in _sequence_items(value.entry_blocks, "Entry blocks")
+        ),
+        entry_context_trace=trace,
     )
 
 
-def _validate_input(value: ContinueGenerationInput) -> None:
+def _sequence_items(value: object, label: str) -> Sequence:
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise TypeError(f"{label} must be a non-string sequence")
+    return value
+
+
+def _snapshot_frozen_map(value: FrozenMap | Mapping[str, object]) -> FrozenMap:
+    if isinstance(value, FrozenMap):
+        return freeze_mapping(thaw_mapping(value))
+    if isinstance(value, Mapping):
+        return freeze_mapping(value)
+    raise TypeError("Entry context trace must be a mapping")
+
+
+def _snapshot_entry_block(value: object) -> PreparedPromptBlock:
+    if isinstance(value, PromptBlock):
+        return PreparedPromptBlock.from_prompt_block(value)
+    if isinstance(value, PreparedPromptBlock):
+        return PreparedPromptBlock.from_prompt_block(value.to_prompt_block())
+    raise TypeError("Entry blocks must be PromptBlock-compatible values")
+
+
+def _validate_input(value: _NormalizedContinueGenerationInput) -> None:
     target = value.target
     if value.context_window < 1 or value.target_words < 1:
         raise ValueError("Generation budgets must be positive")
+    if target.operation is not GenerationOperation.CONTINUE:
+        raise ValueError("Only Chapter continuation preparation is supported")
     if value.work.id != target.work_id or value.work.owner_id != target.owner_id:
         raise ValueError("Generation target does not match Work authority")
     chapter = value.current_chapter
@@ -441,9 +609,51 @@ def _validate_input(value: ContinueGenerationInput) -> None:
         raise ValueError("Foreign Character reached generation preparation")
     if value.world is not None and value.world.owner_id != target.owner_id:
         raise ValueError("Foreign World reached generation preparation")
+    for summary in value.prior_summaries:
+        if (
+            not summary.chapter_id
+            or summary.work_id != target.work_id
+            or summary.chapter_id == target.chapter_id
+            or isinstance(summary.chapter_index, bool)
+            or not isinstance(summary.chapter_index, int)
+            or summary.chapter_index < 1
+            or summary.chapter_index >= chapter.index
+        ):
+            raise ValueError("Legacy prior summary evidence violates the target anchor")
     indexes = tuple(summary.chapter_index for summary in value.prior_summaries)
     if indexes != tuple(sorted(indexes)) or len(indexes) != len(set(indexes)):
         raise ValueError("Prior Chapter summaries are not in resolved story order")
+    for block in value.entry_blocks:
+        if block.metadata.get("entry_type") == "story.summary":
+            _validate_entry_story_summary(block, target=target, target_index=chapter.index)
+
+
+def _validate_entry_story_summary(
+    block: PreparedPromptBlock, *, target: GenerationTarget, target_index: int
+) -> None:
+    """Assert upstream prior evidence without classifying or repairing it."""
+
+    chronology = block.metadata.get("story_summary_chronology")
+    source_id = chronology.get("source_chapter_id") if isinstance(chronology, FrozenMap) else None
+    source_index = (
+        chronology.get("source_chapter_index")
+        if isinstance(chronology, FrozenMap)
+        else None
+    )
+    if (
+        block.metadata.get("scope_kind") != "work"
+        or block.metadata.get("scope_id") != target.work_id
+        or not isinstance(chronology, FrozenMap)
+        or chronology.get("disposition") != "prior"
+        or not isinstance(source_id, str)
+        or not source_id
+        or isinstance(source_index, bool)
+        or not isinstance(source_index, int)
+        or source_index < 1
+        or source_id == target.chapter_id
+        or source_index >= target_index
+    ):
+        raise ValueError("Entry story summary evidence is not a valid prior source")
 
 
 def _render_work(work: PreparedWorkContext) -> str:
@@ -478,8 +688,14 @@ def _build_budget(context_window: int, trace: FrozenMap) -> GenerationPreparatio
 def _omitted_entry_evidence(trace: FrozenMap) -> tuple[GenerationSourceEvidence, ...]:
     retrieval = trace.get("retrieval_exclusions")
     assembly = trace.get("assembly_exclusions")
-    omitted: list[tuple[str, str]] = []
+    omitted: list[tuple[str, str, str]] = []
     if isinstance(retrieval, FrozenMap):
+        type_map = retrieval.get("excluded_entry_types")
+
+        def entry_type(entry_id: object) -> str:
+            value = type_map.get(str(entry_id), "") if isinstance(type_map, FrozenMap) else ""
+            return str(value)
+
         for key, reason in (
             ("orphaned_entry_ids", "orphaned_anchor"),
             ("retrieval_budget_rejected_entry_ids", "retrieval_budget_exceeded"),
@@ -487,27 +703,41 @@ def _omitted_entry_evidence(trace: FrozenMap) -> tuple[GenerationSourceEvidence,
         ):
             values = retrieval.get(key, ())
             if isinstance(values, tuple):
-                omitted.extend((str(entry_id), reason) for entry_id in values)
+                omitted.extend(
+                    (str(entry_id), reason, entry_type(entry_id)) for entry_id in values
+                )
         chronology = retrieval.get("story_summary_chronology", ())
         if isinstance(chronology, tuple):
             for item in chronology:
                 if isinstance(item, FrozenMap):
-                    omitted.append((str(item.get("entry_id", "")), str(item.get("reason", "unknown"))))
+                    omitted.append(
+                        (
+                            str(item.get("entry_id", "")),
+                            str(item.get("reason", "unknown")),
+                            "story.summary",
+                        )
+                    )
     if isinstance(assembly, tuple):
         for item in assembly:
             if isinstance(item, FrozenMap):
-                omitted.append((str(item.get("entry_id", "")), str(item.get("reason", "unknown"))))
+                omitted.append(
+                    (
+                        str(item.get("entry_id", "")),
+                        str(item.get("reason", "unknown")),
+                        str(item.get("entry_type", "")),
+                    )
+                )
     return tuple(
         GenerationSourceEvidence(
-            section=GenerationSectionKind.CANON_CONTEXT,
-            source_type="entry",
+            section=_section_for_entry_type(entry_type),
+            source_type=f"entry:{entry_type}" if entry_type else "entry",
             source_id=entry_id,
             selection_order=index,
             selected=False,
             reason=reason,
             current_prompt_visible=False,
         )
-        for index, (entry_id, reason) in enumerate(omitted)
+        for index, (entry_id, reason, entry_type) in enumerate(omitted)
         if entry_id
     )
 

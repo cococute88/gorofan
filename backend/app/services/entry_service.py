@@ -398,6 +398,7 @@ class EntryService:
             ),
             subjects=subjects,
         )
+        candidate_types = {entry.id: entry.type for entry in candidates}
         live_required_provenance_entry_ids = (
             await self._entries_with_live_required_provenance(
                 session, request.user_id, candidates
@@ -431,6 +432,12 @@ class EntryService:
         )
         selected, budget_rejected, limit_rejected = select_entries(ranked, request)
         selected = order_selected_story_summaries(selected)
+        excluded_ids = sorted(
+            set(orphaned_ids)
+            | set(budget_rejected)
+            | set(limit_rejected)
+            | {item.entry_id for item in chronology_exclusions}
+        )
         return EntryRetrievalResult(
             items=selected,
             total_estimated_tokens=sum(item.estimated_tokens for item in selected),
@@ -441,6 +448,11 @@ class EntryService:
                 story_summary_chronology_exclusions=chronology_exclusions,
                 budget_rejected_entry_ids=budget_rejected,
                 limit_rejected_entry_ids=limit_rejected,
+                excluded_entry_types={
+                    entry_id: candidate_types[entry_id]
+                    for entry_id in excluded_ids
+                    if entry_id in candidate_types
+                },
             ),
             story_summary_chronology_anchor=(
                 request.story_summary_chronology.anchor
