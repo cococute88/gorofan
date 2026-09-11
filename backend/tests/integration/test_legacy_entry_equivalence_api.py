@@ -17,7 +17,7 @@ from app.models.character import Character
 from app.models.chat import ChatSession, Memory, Message
 from app.models.edit_diff import EditDiffCapture
 from app.models.entry import Entry
-from app.models.novel import Chapter, Work
+from app.models.novel import Chapter, Work, WorkCharacter
 from app.models.user import User
 from app.models.world import Lorebook, LoreEntry, World
 from app.schemas.novel import ContinueRequest
@@ -935,12 +935,42 @@ def test_novel_production_and_p1_8_share_character_world_selection_order(
         "/api/v1/characters",
         json={"name": "A_SECOND_INSERTED", "personality": "second"},
     ).json()
-    for character in (first, deleted, second):
-        linked = client.post(
-            f"/api/v1/works/{work['id']}/characters",
-            json={"character_id": character["id"], "role_in_work": "주연"},
-        )
-        assert linked.status_code == 201, linked.text
+    tied_time = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def seed_tied_links() -> None:
+        sessionmaker = cast(Any, client.app).state.sessionmaker
+        async with sessionmaker() as session:
+            session.add_all(
+                [
+                    WorkCharacter(
+                        id="z-active-association",
+                        work_id=work["id"],
+                        character_id=first["id"],
+                        role_in_work="주연",
+                        created_at=tied_time,
+                        updated_at=tied_time,
+                    ),
+                    WorkCharacter(
+                        id="middle-deleted-association",
+                        work_id=work["id"],
+                        character_id=deleted["id"],
+                        role_in_work="주연",
+                        created_at=tied_time,
+                        updated_at=tied_time,
+                    ),
+                    WorkCharacter(
+                        id="a-active-association",
+                        work_id=work["id"],
+                        character_id=second["id"],
+                        role_in_work="주연",
+                        created_at=tied_time,
+                        updated_at=tied_time,
+                    ),
+                ]
+            )
+            await session.commit()
+
+    _run(seed_tied_links())
     assert client.delete(f"/api/v1/characters/{deleted['id']}").status_code == 204
     chapter = client.post(
         f"/api/v1/works/{work['id']}/chapters",

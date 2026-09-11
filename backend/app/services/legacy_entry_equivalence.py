@@ -947,7 +947,6 @@ class LegacyEntryEquivalenceService:
                     select(LoreEntry, Lorebook)
                     .join(Lorebook, Lorebook.id == LoreEntry.lorebook_id)
                     .where(Lorebook.world_id == world.id)
-                    .order_by(LoreEntry.created_at, LoreEntry.id)
                 )
             ).tuples().all()
         )

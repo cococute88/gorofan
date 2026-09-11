@@ -176,7 +176,7 @@ Every row is one reviewable PR. A design PR and its implementation PR remain sep
 | 2 | P1-8 implementation | approved design | **Merged in PR #28:** produce real equivalence evidence without writes or cutover |
 | 3 | Story-summary chronology architecture contract | P1-8 evidence | **Merged in PR #29:** target-Chapter authority, strict-prior eligibility/order, fail-safe future/current/unknown handling, and responsibility/budget boundaries |
 | 4 | Story-summary chronology implementation | accepted chronology contract | **Merged in PR #30:** prevent future/unknown leaks in real Entry generation context while the existing flag remains default OFF and legacy remains authoritative |
-| 5 | AOS-1 shared Generation Preparation | chronology implementation | **PR #31 blocker fixes complete; targeted independent re-review pending:** deep immutable provider-neutral `continue` snapshot, chronology invariant guard, legacy prompt-order compatibility, shared production/P1-8 sources, derived sections/evidence, whitelisted metadata; no schema/UI/API expansion |
+| 5 | AOS-1 shared Generation Preparation | chronology implementation | **PR #31 tied-order compatibility fix complete; final targeted independent re-review pending:** equal-key Character/Lore preserves the legacy query-supplied sequence; deep immutable provider-neutral snapshot, chronology guard, shared production/P1-8 sources, derived sections/evidence, and metadata whitelist remain intact |
 | 6 | AOS-2 minimum Scene/generation input | AOS-1 | extend the existing small instruction seam only as far as the first usable Scene input requires; no Scene table unless operation-local state proves insufficient |
 | 7 | AOS-3 direct Gemini generation | AOS-2 | feed the same preparation through the existing Provider Adapter path; no new Gemini adapter and no duplicated selection policy |
 | 7a | AOS-3 external Prompt Packet | AOS-2 | render the same preparation through thin Generic/ChatGPT/Claude human-readable formatters; no provider call or independent retrieval/budget logic |
@@ -201,7 +201,7 @@ P1-8 evidence is a decision gate, not an automatic cutover. Its future/unknown s
 Required for the first usable loop:
 
 1. ~~story-summary chronology contract and implementation~~ — PRs #29 and #30 merged;
-2. ~~AOS-1 shared Generation Preparation~~ — blocker fixes complete, targeted independent re-review pending;
+2. ~~AOS-1 shared Generation Preparation~~ — tied-order compatibility fix complete, final targeted independent re-review pending;
 3. minimum Scene/generation input;
 4. Gemini direct generation;
 5. external Prompt Packet;

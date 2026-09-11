@@ -26,6 +26,7 @@ from app.models.chat import Memory
 from app.models.entry import Entry
 from app.models.novel import Chapter, WorkCharacter
 from app.models.user import User
+from app.models.world import LoreEntry
 from app.schemas.entry import EntryScope, EntryStatus, EntryType
 from app.schemas.novel import ContinueRequest
 from app.services import entry_generation_context as entry_generation_context_module
@@ -404,8 +405,9 @@ def test_novel_preparation_is_provider_free_owner_scoped_and_memory_isolated(
     assert _CAPTURED == []
 
 
+@pytest.mark.parametrize("tied_timestamp", [False, True], ids=["distinct", "tied"])
 def test_novel_flag_off_preserves_base_character_association_order_exactly(
-    make_client, retrieve_calls
+    make_client, retrieve_calls, tied_timestamp: bool
 ) -> None:
     client = make_client(entry_context=False)
     world = client.post(
@@ -416,22 +418,18 @@ def test_novel_flag_off_preserves_base_character_association_order_exactly(
         f"/api/v1/worlds/{world['id']}/lorebooks",
         json={"name": "순서 로어", "enabled": True},
     ).json()
-    client.post(
-        f"/api/v1/worlds/lorebooks/{book['id']}/entries",
-        json={
-            "keywords": ["ORDER_KEYWORD"],
-            "content": "ORDER_LORE_SENTINEL",
-            "priority": 50,
-            "enabled": True,
-        },
-    )
     work = client.post(
         "/api/v1/works", json={"title": "순서 작품", "world_id": world["id"]}
     ).json()
     first_time = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
-    second_time = datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)
-    first_id = "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz"
-    second_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    second_time = (
+        first_time
+        if tied_timestamp
+        else datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)
+    )
+    fixture_id = "tied" if tied_timestamp else "distinct"
+    first_id = f"z-character-{fixture_id}"
+    second_id = f"a-character-{fixture_id}"
     _write(
         Character(
             id=first_id,
@@ -448,7 +446,7 @@ def test_novel_flag_off_preserves_base_character_association_order_exactly(
             speech_style="길음",
         ),
         WorkCharacter(
-            id="first-association",
+            id=f"z-association-{fixture_id}",
             work_id=work["id"],
             character_id=first_id,
             role_in_work="주연",
@@ -456,10 +454,32 @@ def test_novel_flag_off_preserves_base_character_association_order_exactly(
             updated_at=first_time,
         ),
         WorkCharacter(
-            id="second-association",
+            id=f"a-association-{fixture_id}",
             work_id=work["id"],
             character_id=second_id,
             role_in_work="조연",
+            created_at=second_time,
+            updated_at=second_time,
+        ),
+        LoreEntry(
+            id=f"z-lore-{fixture_id}",
+            lorebook_id=book["id"],
+            keywords=["ORDER_KEYWORD"],
+            content="Z_LORE_FIRST_INSERTED",
+            priority=50,
+            enabled=True,
+            scan_depth=4,
+            created_at=first_time,
+            updated_at=first_time,
+        ),
+        LoreEntry(
+            id=f"a-lore-{fixture_id}",
+            lorebook_id=book["id"],
+            keywords=["ORDER_KEYWORD"],
+            content="A_LORE_SECOND_INSERTED",
+            priority=50,
+            enabled=True,
+            scan_depth=4,
             created_at=second_time,
             updated_at=second_time,
         ),
@@ -493,7 +513,8 @@ def test_novel_flag_off_preserves_base_character_association_order_exactly(
             "- A_SECOND_INSERTED: 냉정 / 말투: 길음",
         ),
         ("system", "세계관: ORDER_WORLD\nWORLD_DESCRIPTION"),
-        ("system", "ORDER_LORE_SENTINEL"),
+        ("system", "Z_LORE_FIRST_INSERTED"),
+        ("system", "A_LORE_SECOND_INSERTED"),
         ("system", "PRIOR_SUMMARY_SENTINEL"),
         ("user", "[현재 챕터 끝부분]\nCURRENT_TAIL_SENTINEL"),
         ("user", "[집필 지시] ORDER_KEYWORD를 따라라"),

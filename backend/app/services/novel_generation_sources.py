@@ -25,27 +25,41 @@ async def load_novel_generation_sources(
     """Load the Character/World sources shared by production and P1-8.
 
     Before AOS-1 the production query preserved the order returned by the
-    WorkCharacter association scan.  ``created_at, id`` makes that association
-    insertion order explicit and reproducible without inventing a Character
-    name/id product order.  The UUID is only a deterministic tie-break for an
-    association timestamp collision.
+    WorkCharacter association scan.  The domain has no canonical equal-key
+    ordering column, so compatibility requires snapshotting that supplied
+    sequence without introducing a Character id/name/UUID tie-break.
     """
 
-    characters = tuple(
+    links = tuple(
         (
             await session.execute(
-                select(Character)
-                .join(WorkCharacter, WorkCharacter.character_id == Character.id)
-                .where(
-                    WorkCharacter.work_id == work.id,
-                    Character.user_id == work.user_id,
-                    Character.deleted_at.is_(None),
-                )
-                .order_by(WorkCharacter.created_at, WorkCharacter.id)
+                select(WorkCharacter).where(WorkCharacter.work_id == work.id)
             )
-        )
-        .scalars()
-        .all()
+        ).scalars().all()
+    )
+    character_ids = tuple(link.character_id for link in links)
+    characters_by_id: dict[str, Character] = {}
+    if character_ids:
+        characters_by_id = {
+            character.id: character
+            for character in (
+                (
+                    await session.execute(
+                        select(Character).where(
+                            Character.id.in_(character_ids),
+                            Character.user_id == work.user_id,
+                            Character.deleted_at.is_(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        }
+    characters = tuple(
+        characters_by_id[link.character_id]
+        for link in links
+        if link.character_id in characters_by_id
     )
     world = None
     if work.world_id:

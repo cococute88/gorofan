@@ -563,7 +563,6 @@ class NovelService:
                 select(LoreEntry)
                 .join(Lorebook, Lorebook.id == LoreEntry.lorebook_id)
                 .where(Lorebook.world_id == world.id, LoreEntry.enabled.is_(True))
-                .order_by(LoreEntry.created_at, LoreEntry.id)
             )
             lore = list((await s.execute(lstmt)).scalars().all())
         return ChapterContext(
