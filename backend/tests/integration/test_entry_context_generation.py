@@ -14,15 +14,16 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.adapters.base import AssembledPrompt, Completion, ModelCapability, ProviderRequest
 from app.config import FEATURE_ENTRY_STORE_CONTEXT, get_settings
-from app.core.errors import Conflict
+from app.core.errors import Conflict, ValidationAppError
 from app.engines.novel.generation_preparation import GenerationSectionKind
 from app.models.character import Character
 from app.models.chat import Memory
+from app.models.edit_diff import EditDiffCapture
 from app.models.entry import Entry
 from app.models.novel import Chapter, WorkCharacter
 from app.models.user import User
@@ -75,11 +76,19 @@ def make_client():
 
     opened = []
 
-    def _make(*, entry_context: bool):
+    def _make(
+        *,
+        entry_context: bool,
+        context_window: int = 8192,
+        max_tokens: int = 256,
+        raise_server_exceptions: bool = True,
+    ):
         settings = get_settings().model_copy(
             update={"FEATURES": {FEATURE_ENTRY_STORE_CONTEXT: entry_context}}
         )
-        manager = TestClient(create_app(settings))
+        manager = TestClient(
+            create_app(settings), raise_server_exceptions=raise_server_exceptions
+        )
         client = manager.__enter__()
         opened.append(manager)
         cast(Any, client.app).state.registry.register("fake", _RecordingAdapter)
@@ -88,8 +97,8 @@ def make_client():
             json={
                 "provider": "fake",
                 "model_name": "fake-1",
-                "max_tokens": 256,
-                "context_window": 8192,
+                "max_tokens": max_tokens,
+                "context_window": context_window,
                 "is_default": True,
             },
         )
@@ -216,6 +225,36 @@ def _hard_delete_chapter(chapter_id: str) -> None:
     asyncio.run(_run())
 
 
+def _entry_count() -> int:
+    async def _run() -> int:
+        engine = create_async_engine(os.environ["DATABASE_URL"])
+        sessionmaker = async_sessionmaker(
+            engine, expire_on_commit=False, class_=AsyncSession
+        )
+        async with sessionmaker() as session:
+            count = await session.scalar(select(func.count()).select_from(Entry))
+        await engine.dispose()
+        return int(count or 0)
+
+    return asyncio.run(_run())
+
+
+def _edit_diff_count() -> int:
+    async def _run() -> int:
+        engine = create_async_engine(os.environ["DATABASE_URL"])
+        sessionmaker = async_sessionmaker(
+            engine, expire_on_commit=False, class_=AsyncSession
+        )
+        async with sessionmaker() as session:
+            count = await session.scalar(
+                select(func.count()).select_from(EditDiffCapture)
+            )
+        await engine.dispose()
+        return int(count or 0)
+
+    return asyncio.run(_run())
+
+
 def _foreign_owner() -> str:
     user = User(email=f"foreign-{datetime.now(UTC).timestamp()}@example.com", display_name="foreign")
 
@@ -259,6 +298,14 @@ def _novel_setup(client, *, title: str, world_name: str) -> tuple[str, str, str]
 
 def _prompt_text(prompt: AssembledPrompt) -> str:
     return "\n".join(message.content for message in prompt.messages)
+
+
+def _max_scene_payload(*, overflow: bool = False) -> dict[str, object]:
+    return {
+        "goal": "초" if overflow else None,
+        "beats": ["가" * 500] * 16,
+        "must_include": ["나" * 500] * 8,
+    }
 
 
 def _entry_kinds(prompt: AssembledPrompt) -> list[str]:
@@ -873,6 +920,348 @@ def test_chat_sse_contract_and_single_persist_survive_entry_injection(
 
 
 # --- Novel ------------------------------------------------------------------
+
+
+def test_novel_empty_scene_is_provider_visible_legacy_equivalent(make_client) -> None:
+    client = make_client(entry_context=False)
+    _, _, legacy_chapter = _novel_setup(
+        client, title="빈 장면 호환", world_name="동일 세계"
+    )
+    _, _, empty_scene_chapter = _novel_setup(
+        client, title="빈 장면 호환", world_name="동일 세계"
+    )
+    payload = {"instruction": "같은 지시", "target_words": 100}
+
+    legacy = client.post(
+        f"/api/v1/works/chapters/{legacy_chapter}/continue", json=payload
+    )
+    empty_scene = client.post(
+        f"/api/v1/works/chapters/{empty_scene_chapter}/continue",
+        json={**payload, "scene": {}},
+    )
+
+    assert legacy.status_code == empty_scene.status_code == 200
+    assert len(_CAPTURED) == 2
+    assert _identity(_CAPTURED[0]) == _identity(_CAPTURED[1])
+
+
+def test_novel_scene_validation_fails_before_provider_invocation(make_client) -> None:
+    client = make_client(entry_context=False)
+    _, _, chapter_id = _novel_setup(client, title="검증", world_name="경계")
+
+    response = client.post(
+        f"/api/v1/works/chapters/{chapter_id}/continue",
+        json={
+            "instruction": "계속",
+            "target_words": 100,
+            "scene": {"beats": ["정상 사건", "   "]},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "UNPROCESSABLE"
+    assert _CAPTURED == []
+
+
+@pytest.mark.parametrize(
+    ("name", "scene", "expected_status"),
+    [
+        ("goal-1000", {"goal": "가" * 1000}, 200),
+        ("goal-1001", {"goal": "가" * 1001}, 422),
+        ("item-500", {"beats": ["가" * 500]}, 200),
+        ("item-501", {"beats": ["가" * 501]}, 422),
+        ("count-16", {"beats": ["사건"] * 16}, 200),
+        ("count-17", {"beats": ["사건"] * 17}, 422),
+        ("total-12000", _max_scene_payload(), 200),
+        ("total-12001", _max_scene_payload(overflow=True), 422),
+    ],
+)
+def test_novel_scene_http_exact_boundaries_fail_before_provider_when_invalid(
+    make_client, name: str, scene: dict[str, object], expected_status: int
+) -> None:
+    client = make_client(entry_context=False)
+    _, _, chapter_id = _novel_setup(client, title=f"HTTP Scene boundary {name}", world_name="경계")
+
+    response = client.post(
+        f"/api/v1/works/chapters/{chapter_id}/continue",
+        json={"instruction": "계속", "target_words": 50, "scene": scene},
+    )
+
+    assert response.status_code == expected_status, response.text
+    assert len(_CAPTURED) == int(expected_status == 200)
+    if expected_status == 422:
+        assert response.json()["error"]["code"] == "UNPROCESSABLE"
+
+
+def test_novel_max_scene_and_small_context_fits_before_one_provider_call(
+    make_client,
+) -> None:
+    client = make_client(entry_context=False, context_window=1024, max_tokens=80)
+    _, work_id, chapter_id = _novel_setup(
+        client, title="최대 장면 작은 컨텍스트", world_name="경계"
+    )
+    chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+    updated = client.patch(
+        f"/api/v1/works/chapters/{chapter_id}",
+        json={"content_text": "현" * 1200, "version": chapter["version"]},
+    )
+    assert updated.status_code == 200, updated.text
+
+    response = client.post(
+        f"/api/v1/works/chapters/{chapter_id}/continue",
+        json={
+            "instruction": "계속",
+            "target_words": 50,
+            "scene": _max_scene_payload(),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert "event: done" in response.text
+    assert len(_CAPTURED) == 1
+    prompt = _CAPTURED[0]
+    assert prompt.trace["budget"] == 862
+    assert prompt.token_count == 109
+    assert prompt.token_count <= prompt.trace["budget"]
+    assert prompt.token_count + 80 + 82 <= 1024
+    assert "[장면 목표]" not in _prompt_text(prompt)
+    assert "[진행할 사건]" in _prompt_text(prompt)
+
+
+def test_novel_prepare_only_max_scene_small_context_assembles_without_provider_or_write(
+    make_client,
+) -> None:
+    client = make_client(entry_context=False, context_window=1024, max_tokens=80)
+    _, work_id, chapter_id = _novel_setup(client, title="준비 전용 최대 장면", world_name="경계")
+    chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+    updated = client.patch(
+        f"/api/v1/works/chapters/{chapter_id}",
+        json={"content_text": "현" * 1200, "version": chapter["version"]},
+    )
+    assert updated.status_code == 200, updated.text
+    before = updated.json()
+    service = cast(Any, client.app).state.novel_service
+    request = ContinueRequest(
+        instruction="계속",
+        target_words=50,
+        scene=_max_scene_payload(),
+    )
+
+    prepared = asyncio.run(
+        service.prepare_continue(_owner_id(), chapter_id, request, context_window=1024)
+    )
+    prompt = service.engine.assemble_continue(
+        prepared,
+        req=ProviderRequest(
+            provider="fake",
+            model_name="fake-1",
+            base_url=None,
+            api_key=None,
+            temperature=0.8,
+            max_tokens=80,
+            context_window=1024,
+        ),
+    )
+
+    assert prepared.scene is not None
+    assert prompt.token_count <= prompt.trace["budget"]
+    assert _CAPTURED == []
+    assert client.get(f"/api/v1/works/{work_id}/chapters").json()[0] == before
+
+
+@pytest.mark.parametrize(
+    "raise_server_exceptions",
+    [True, False],
+    ids=["server-exceptions-on", "server-exceptions-off"],
+)
+def test_novel_impossible_budget_returns_controlled_sse_error_without_provider_or_write(
+    make_client, raise_server_exceptions: bool
+) -> None:
+    client = make_client(
+        entry_context=False,
+        context_window=64,
+        max_tokens=64,
+        raise_server_exceptions=raise_server_exceptions,
+    )
+    _, work_id, chapter_id = _novel_setup(
+        client, title="불가능한 컨텍스트", world_name="경계"
+    )
+    chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+    updated = client.patch(
+        f"/api/v1/works/chapters/{chapter_id}",
+        json={"content_text": "현" * 1200, "version": chapter["version"]},
+    )
+    assert updated.status_code == 200, updated.text
+    before_chapter = updated.json()
+    before_entries = _entry_count()
+    before_edit_diffs = _edit_diff_count()
+
+    response = client.post(
+        f"/api/v1/works/chapters/{chapter_id}/continue",
+        json={
+            "instruction": "계속",
+            "target_words": 50,
+            "scene": _max_scene_payload(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text.count("event: error") == 1
+    assert '"code": "VALIDATION_ERROR"' in response.text
+    assert "Prompt cannot fit the available context budget" in response.text
+    assert "event: token" not in response.text
+    assert "event: done" not in response.text
+    assert _CAPTURED == []
+    assert _entry_count() == before_entries
+    assert _edit_diff_count() == before_edit_diffs
+    assert client.get(f"/api/v1/works/{work_id}/chapters").json()[0] == before_chapter
+
+
+def test_novel_prepare_only_impossible_budget_fails_at_assembly_without_write(
+    make_client,
+) -> None:
+    client = make_client(entry_context=False, context_window=64, max_tokens=64)
+    _, work_id, chapter_id = _novel_setup(
+        client, title="준비 전용 불가능 컨텍스트", world_name="경계"
+    )
+    chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+    updated = client.patch(
+        f"/api/v1/works/chapters/{chapter_id}",
+        json={"content_text": "현" * 1200, "version": chapter["version"]},
+    )
+    assert updated.status_code == 200, updated.text
+    before_chapter = updated.json()
+    before_entries = _entry_count()
+    before_edit_diffs = _edit_diff_count()
+    service = cast(Any, client.app).state.novel_service
+    request = ContinueRequest(
+        instruction="계속",
+        target_words=50,
+        scene=_max_scene_payload(),
+    )
+    prepared = asyncio.run(
+        service.prepare_continue(
+            _owner_id(), chapter_id, request, context_window=64
+        )
+    )
+
+    with pytest.raises(ValidationAppError, match="cannot fit") as exc_info:
+        service.engine.assemble_continue(
+            prepared,
+            req=ProviderRequest(
+                provider="fake",
+                model_name="fake-1",
+                base_url=None,
+                api_key=None,
+                temperature=0.8,
+                max_tokens=64,
+                context_window=64,
+            ),
+        )
+
+    assert exc_info.value.details == {"inv": "INV-7"}
+    assert _CAPTURED == []
+    assert _entry_count() == before_entries
+    assert _edit_diff_count() == before_edit_diffs
+    assert client.get(f"/api/v1/works/{work_id}/chapters").json()[0] == before_chapter
+
+
+def test_novel_prepare_continue_snapshots_scene_without_provider_or_write(
+    make_client, retrieve_calls
+) -> None:
+    client = make_client(entry_context=True)
+    _, work_id, chapter_id = _novel_setup(
+        client, title="준비 전용", world_name="설원"
+    )
+    before_chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+    before_entries = _entry_count()
+    service = cast(Any, client.app).state.novel_service
+    request = ContinueRequest(
+        instruction="감정선을 천천히 진행해줘.",
+        target_words=1200,
+        scene={
+            "goal": "라니가 결계 이상을 알아차린다.",
+            "beats": ["B 사건", "A 사건", "C 사건"],
+            "must_include": ["은빛 표식"],
+            "must_avoid": ["새로운 악역"],
+        },
+    )
+
+    prepared = asyncio.run(
+        service.prepare_continue(
+            _owner_id(), chapter_id, request, context_window=8192
+        )
+    )
+
+    assert prepared.scene is not None
+    assert prepared.scene.beats == ("B 사건", "A 사건", "C 사건")
+    assert prepared.scene.must_include == ("은빛 표식",)
+    assert prepared.scene.must_avoid == ("새로운 악역",)
+    instruction = _preparation_section(prepared, GenerationSectionKind.INSTRUCTION)
+    assert [item.evidence.source_type for item in instruction.items] == [
+        "generation_request",
+        "scene_generation_input",
+    ]
+    assert len(retrieve_calls) == 1
+    assert _CAPTURED == []
+    assert _entry_count() == before_entries
+    assert client.get(f"/api/v1/works/{work_id}/chapters").json()[0] == before_chapter
+
+
+@pytest.mark.parametrize("entry_context", [False, True], ids=["flag-off", "flag-on"])
+def test_novel_scene_reaches_one_provider_once_without_entry_or_canon_persistence(
+    make_client, retrieve_calls, entry_context: bool
+) -> None:
+    client = make_client(entry_context=entry_context)
+    _, work_id, chapter_id = _novel_setup(
+        client, title=f"장면 생성 {entry_context}", world_name="경계림"
+    )
+    before_entries = _entry_count()
+    before_chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+
+    response = client.post(
+        f"/api/v1/works/chapters/{chapter_id}/continue",
+        json={
+            "instruction": "FREEFORM_SENTINEL 감정선을 천천히 진행해줘.",
+            "target_words": 100,
+            "scene": {
+                "goal": "GOAL_SENTINEL 결계 이상을 알아차린다.",
+                "beats": ["BEAT_B", "BEAT_A", "BEAT_C"],
+                "must_include": ["INCLUDE_ONE", "INCLUDE_TWO"],
+                "must_avoid": ["AVOID_ONE", "AVOID_TWO"],
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert "event: done" in response.text
+    assert len(_CAPTURED) == 1
+    text = _prompt_text(_CAPTURED[0])
+    for sentinel in (
+        "FREEFORM_SENTINEL",
+        "GOAL_SENTINEL",
+        "BEAT_B",
+        "BEAT_A",
+        "BEAT_C",
+        "INCLUDE_ONE",
+        "INCLUDE_TWO",
+        "AVOID_ONE",
+        "AVOID_TWO",
+    ):
+        assert text.count(sentinel) == 1
+    assert text.index("1. BEAT_B") < text.index("2. BEAT_A") < text.index("3. BEAT_C")
+    assert text.index("- INCLUDE_ONE") < text.index("- INCLUDE_TWO")
+    assert text.index("- AVOID_ONE") < text.index("- AVOID_TWO")
+    trace = _CAPTURED[0].trace["entry_context"]
+    assert trace["feature_enabled"] is entry_context
+    assert len(retrieve_calls) == int(entry_context)
+    assert _entry_count() == before_entries
+
+    after_chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+    assert after_chapter["version"] == before_chapter["version"] + 1
+    assert after_chapter["content_text"] == (
+        before_chapter["content_text"] + "\n\n이어쓰기완료"
+    )
 
 
 def test_flag_off_makes_entry_data_irrelevant_to_the_novel_prompt(

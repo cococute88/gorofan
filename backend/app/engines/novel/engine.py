@@ -72,6 +72,10 @@ class NovelEngine:
             body += "\n\n[등장인물]\n" + "\n".join(char_lines)
         current_items = preparation.section(GenerationSectionKind.CURRENT_CHAPTER).items
         current_context = current_items[0].content if current_items else ""
+        instruction = "\n\n".join(
+            item.content
+            for item in preparation.section(GenerationSectionKind.INSTRUCTION).items
+        )
         prepared_entry_blocks: list[PromptBlock] = []
         for prepared_block in preparation.entry_blocks:
             block = prepared_block.to_prompt_block()
@@ -108,7 +112,7 @@ class NovelEngine:
                 entry_blocks=prepared_entry_blocks,
                 entry_context_trace=thaw_mapping(preparation.entry_context_trace),
                 user_message=current_context or None,
-                instruction=preparation.instruction,
+                instruction=instruction,
                 context_window=req.context_window,
                 max_tokens=req.max_tokens,
                 safety_ratio=cap.safety_ratio,

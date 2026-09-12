@@ -1,6 +1,8 @@
 """Property-based tests for PromptEngine (Property 6/7, design 9.18)."""
 from __future__ import annotations
 
+import math
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -17,9 +19,12 @@ engine = PromptEngine()
     max_tokens=st.integers(min_value=64, max_value=4000),
 )
 def test_property7_token_budget(user_msg, history_texts, context_window, max_tokens):
-    # Property 6 precondition
-    if context_window < max_tokens:
-        context_window, max_tokens = max_tokens + 256, max_tokens
+    # Property 6/7 precondition: reserve a genuinely available prompt budget.
+    # Impossible provider configurations are covered by controlled-error tests.
+    minimum_window = math.ceil((max_tokens + 256) / (1 - 0.08))
+    context_window = max(context_window, minimum_window)
+    while context_window - max_tokens - math.ceil(context_window * 0.08) < 256:
+        context_window += 1
 
     class _Msg:
         def __init__(self, c):
@@ -53,3 +58,28 @@ def test_user_message_preserved_when_fits(user_msg):
     # The user message content should appear among the assembled messages.
     joined = " ".join(m.content for m in assembled.messages)
     assert user_msg.strip()[:10] in joined or user_msg in joined
+
+
+@settings(max_examples=60, deadline=None)
+@given(
+    current_chapter=st.text(min_size=1, max_size=3000),
+    instruction=st.text(min_size=1, max_size=3000),
+    context_window=st.integers(min_value=1024, max_value=4096),
+    max_tokens=st.integers(min_value=64, max_value=256),
+)
+def test_property7_holds_with_multiple_protected_truncatable_blocks(
+    current_chapter, instruction, context_window, max_tokens
+):
+    assembled = engine.assemble(
+        AssembleInput(
+            template_body="system instructions",
+            user_message=current_chapter,
+            instruction=instruction,
+            context_window=context_window,
+            max_tokens=max_tokens,
+            safety_ratio=0.08,
+        )
+    )
+
+    assert assembled.token_count <= assembled.trace["budget"]
+    assert assembled.token_count <= context_window

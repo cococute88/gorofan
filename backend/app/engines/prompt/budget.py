@@ -9,6 +9,11 @@ from app.engines.prompt.blocks import BudgetResult, PromptBlock
 from app.engines.prompt.tokenizer import Tokenizer
 
 MIN_PROMPT_BUDGET = 256
+MIN_PROTECTED_RETAINED_TOKENS = MIN_PROMPT_BUDGET // 2
+
+
+class PromptBudgetError(ValueError):
+    """The mandatory prompt blocks cannot fit the available context budget."""
 
 
 class BudgetManager:
@@ -19,7 +24,14 @@ class BudgetManager:
         # Property 6 precondition is validated by the engine before calling.
         safety = int(context_window * safety_ratio + 0.999)
         budget = context_window - max_tokens - safety
-        return max(budget, MIN_PROMPT_BUDGET)
+        if budget <= 0:
+            raise PromptBudgetError(
+                "Completion and safety reservations leave no prompt capacity"
+            )
+        # The provider's physical capacity is authoritative.  The historical
+        # minimum still defines protected-block retention below, but may never
+        # inflate the effective prompt budget beyond this actual capacity.
+        return budget
 
     def fit(self, blocks: list[PromptBlock], budget: int) -> BudgetResult:
         result = BudgetResult(budget=budget)
@@ -30,7 +42,10 @@ class BudgetManager:
         used = 0
         for b in protected:
             used += b.token_count
-        # Protected may itself exceed budget; trim the largest protected user block if so.
+        # Protected may itself exceed budget. Reduce the largest eligible block
+        # first, then continue across other protected/truncatable blocks until
+        # the aggregate fits. A single pass is insufficient when both the
+        # current Chapter and the generation instruction are large.
         if used > budget:
             self._trim_protected(protected, budget, result)
             used = sum(b.token_count for b in protected)
@@ -42,15 +57,20 @@ class BudgetManager:
                 result.included.append(b)
                 available -= b.token_count
             elif b.truncatable and available > 0:
+                before = b.token_count
                 kept = self._trim_to(b, available)
                 result.included.append(kept)
-                result.trimmed.append((kept, b.token_count - kept.token_count))
+                result.trimmed.append((kept, before - kept.token_count))
                 available = 0
             else:
                 result.dropped.append(b)
 
         result.included.extend(protected)
         result.final_tokens = sum(b.token_count for b in result.included)
+        if result.final_tokens > budget:
+            raise PromptBudgetError(
+                "Prompt blocks cannot fit the available context budget"
+            )
         return result
 
     def _trim_to(self, block: PromptBlock, max_tokens: int) -> PromptBlock:
@@ -64,14 +84,32 @@ class BudgetManager:
         block.token_count = self.tok.count(text)
         return block
 
-    def _trim_protected(self, protected: list[PromptBlock], budget: int, result: BudgetResult) -> None:
-        # Trim the largest truncatable protected block (typically the user message) last resort.
-        candidates = [b for b in protected if b.truncatable]
-        if not candidates:
-            return
-        target = max(candidates, key=lambda b: b.token_count)
-        others = sum(b.token_count for b in protected if b is not target)
-        allowed = max(MIN_PROMPT_BUDGET // 2, budget - others)
-        before = target.token_count
-        self._trim_to(target, allowed)
-        result.trimmed.append((target, before - target.token_count))
+    def _trim_protected(
+        self, protected: list[PromptBlock], budget: int, result: BudgetResult
+    ) -> None:
+        # Keep the existing largest-first/minimum-retention policy, but repeat it
+        # when more than one protected block must yield space.
+        used = sum(block.token_count for block in protected)
+        while used > budget:
+            candidates = [
+                block
+                for block in protected
+                if block.truncatable
+                and block.token_count > MIN_PROTECTED_RETAINED_TOKENS
+            ]
+            if not candidates:
+                raise PromptBudgetError(
+                    "Mandatory prompt blocks cannot fit the available context budget"
+                )
+            target = max(candidates, key=lambda block: block.token_count)
+            others = used - target.token_count
+            allowed = max(MIN_PROTECTED_RETAINED_TOKENS, budget - others)
+            before = target.token_count
+            self._trim_to(target, allowed)
+            trimmed_tokens = before - target.token_count
+            if trimmed_tokens <= 0:
+                raise PromptBudgetError(
+                    "Protected prompt block could not be reduced to the context budget"
+                )
+            result.trimmed.append((target, trimmed_tokens))
+            used -= trimmed_tokens

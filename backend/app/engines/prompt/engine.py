@@ -19,7 +19,7 @@ from app.engines.prompt.blocks import (
     PromptBlock,
     TraceEntry,
 )
-from app.engines.prompt.budget import BudgetManager
+from app.engines.prompt.budget import BudgetManager, PromptBudgetError
 from app.engines.prompt.tokenizer import Tokenizer, default_tokenizer
 
 _VAR_RE = re.compile(r"\{\{([\w\.]+)\}\}")
@@ -273,8 +273,20 @@ class PromptEngine:
                 b.content = self._resolve(b.content, ctx)
             b.token_count = self.tok.count(b.content)
         ordered = self._order(blocks)
-        budget = self.budget.compute_budget(inp.context_window, inp.max_tokens, inp.safety_ratio)
-        result = self.budget.fit(ordered, budget)
+        budget: int | None = None
+        try:
+            budget = self.budget.compute_budget(
+                inp.context_window, inp.max_tokens, inp.safety_ratio
+            )
+            result = self.budget.fit(ordered, budget)
+        except PromptBudgetError as exc:
+            details: dict[str, object] = {"inv": "INV-7"}
+            if budget is not None:
+                details["budget"] = budget
+            raise ValidationAppError(
+                "Prompt cannot fit the available context budget",
+                details,
+            ) from exc
 
         # finalize to neutral messages, preserving order
         final_order = {id(b): i for i, b in enumerate(ordered)}
