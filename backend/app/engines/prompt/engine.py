@@ -273,13 +273,19 @@ class PromptEngine:
                 b.content = self._resolve(b.content, ctx)
             b.token_count = self.tok.count(b.content)
         ordered = self._order(blocks)
-        budget = self.budget.compute_budget(inp.context_window, inp.max_tokens, inp.safety_ratio)
+        budget: int | None = None
         try:
+            budget = self.budget.compute_budget(
+                inp.context_window, inp.max_tokens, inp.safety_ratio
+            )
             result = self.budget.fit(ordered, budget)
         except PromptBudgetError as exc:
+            details: dict[str, object] = {"inv": "INV-7"}
+            if budget is not None:
+                details["budget"] = budget
             raise ValidationAppError(
                 "Prompt cannot fit the available context budget",
-                {"inv": "INV-7", "budget": budget},
+                details,
             ) from exc
 
         # finalize to neutral messages, preserving order

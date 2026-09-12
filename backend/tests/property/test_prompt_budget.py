@@ -1,6 +1,8 @@
 """Property-based tests for PromptEngine (Property 6/7, design 9.18)."""
 from __future__ import annotations
 
+import math
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -17,9 +19,12 @@ engine = PromptEngine()
     max_tokens=st.integers(min_value=64, max_value=4000),
 )
 def test_property7_token_budget(user_msg, history_texts, context_window, max_tokens):
-    # Property 6 precondition
-    if context_window < max_tokens:
-        context_window, max_tokens = max_tokens + 256, max_tokens
+    # Property 6/7 precondition: reserve a genuinely available prompt budget.
+    # Impossible provider configurations are covered by controlled-error tests.
+    minimum_window = math.ceil((max_tokens + 256) / (1 - 0.08))
+    context_window = max(context_window, minimum_window)
+    while context_window - max_tokens - math.ceil(context_window * 0.08) < 256:
+        context_window += 1
 
     class _Msg:
         def __init__(self, c):

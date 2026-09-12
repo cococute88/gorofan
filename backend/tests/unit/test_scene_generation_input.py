@@ -23,7 +23,7 @@ from app.engines.novel.generation_preparation import (
     prepare_continue_generation,
 )
 from app.engines.prompt.blocks import PromptBlock
-from app.engines.prompt.budget import BudgetManager
+from app.engines.prompt.budget import BudgetManager, PromptBudgetError
 from app.engines.prompt.engine import AssembleInput, PromptEngine
 from app.engines.prompt.tokenizer import Tokenizer
 from app.schemas.novel import (
@@ -375,6 +375,106 @@ def test_budget_manager_fits_multiple_protected_truncatable_blocks() -> None:
         "generation-instruction",
     }
     assert [block.id for block in result.dropped] == ["optional-context"]
+
+
+def test_budget_manager_fits_three_protected_truncatable_blocks() -> None:
+    tokenizer = Tokenizer()
+    blocks = [
+        PromptBlock(
+            id="system",
+            role="system",
+            kind="system",
+            content="system",
+            priority=100,
+            truncatable=False,
+        ),
+        *[
+            PromptBlock(
+                id=f"protected-{index}",
+                role="user",
+                kind="instruction",
+                content=character * 2000,
+                priority=1000,
+            )
+            for index, character in enumerate(("가", "나", "다"), start=1)
+        ],
+        PromptBlock(
+            id="optional-context",
+            role="system",
+            kind="chapter",
+            content="라" * 1000,
+            priority=75,
+        ),
+    ]
+    for block in blocks:
+        block.token_count = tokenizer.count(block.content)
+
+    result = BudgetManager(tokenizer).fit(blocks, budget=800)
+
+    assert result.final_tokens <= result.budget == 800
+    assert {block.id for block, _ in result.trimmed} >= {
+        "protected-1",
+        "protected-2",
+        "protected-3",
+    }
+    assert [block.id for block in result.dropped] == ["optional-context"]
+
+
+def test_effective_budget_never_exceeds_actual_prompt_capacity() -> None:
+    manager = BudgetManager(Tokenizer())
+
+    assert manager.compute_budget(1024, 80, 0.08) == 862
+    assert manager.compute_budget(4096, 256, 0.08) == 3512
+    assert manager.compute_budget(8192, 256, 0.08) == 7280
+    assert manager.compute_budget(320, 64, 0) == 256
+    assert manager.compute_budget(200, 64, 0) == 136
+    with pytest.raises(PromptBudgetError, match="no prompt capacity"):
+        manager.compute_budget(64, 64, 0.08)
+
+
+def test_small_positive_prompt_capacity_can_still_fit() -> None:
+    prompt = PromptEngine().assemble(
+        AssembleInput(
+            template_body="system",
+            user_message="가" * 300,
+            context_window=200,
+            max_tokens=64,
+            safety_ratio=0,
+        )
+    )
+
+    assert prompt.trace["budget"] == 136
+    assert prompt.token_count <= 136
+
+
+def test_small_positive_capacity_rejects_oversized_non_truncatable_minimum() -> None:
+    with pytest.raises(ValidationAppError, match="cannot fit") as exc_info:
+        PromptEngine().assemble(
+            AssembleInput(
+                template_body="필수" * 200,
+                context_window=200,
+                max_tokens=64,
+                safety_ratio=0,
+            )
+        )
+
+    assert exc_info.value.details == {"inv": "INV-7", "budget": 136}
+
+
+def test_zero_prompt_capacity_fails_before_property7_assertion() -> None:
+    with pytest.raises(ValidationAppError, match="cannot fit") as exc_info:
+        PromptEngine().assemble(
+            AssembleInput(
+                template_body="system",
+                user_message="가" * 40,
+                instruction="나" * 40,
+                context_window=64,
+                max_tokens=64,
+                safety_ratio=0.08,
+            )
+        )
+
+    assert exc_info.value.details == {"inv": "INV-7"}
 
 
 def test_prompt_engine_reports_controlled_error_when_mandatory_minimum_is_impossible() -> None:

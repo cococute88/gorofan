@@ -24,7 +24,14 @@ class BudgetManager:
         # Property 6 precondition is validated by the engine before calling.
         safety = int(context_window * safety_ratio + 0.999)
         budget = context_window - max_tokens - safety
-        return max(budget, MIN_PROMPT_BUDGET)
+        if budget <= 0:
+            raise PromptBudgetError(
+                "Completion and safety reservations leave no prompt capacity"
+            )
+        # The provider's physical capacity is authoritative.  The historical
+        # minimum still defines protected-block retention below, but may never
+        # inflate the effective prompt budget beyond this actual capacity.
+        return budget
 
     def fit(self, blocks: list[PromptBlock], budget: int) -> BudgetResult:
         result = BudgetResult(budget=budget)

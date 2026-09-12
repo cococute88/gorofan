@@ -19,10 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.adapters.base import AssembledPrompt, Completion, ModelCapability, ProviderRequest
 from app.config import FEATURE_ENTRY_STORE_CONTEXT, get_settings
-from app.core.errors import Conflict
+from app.core.errors import Conflict, ValidationAppError
 from app.engines.novel.generation_preparation import GenerationSectionKind
 from app.models.character import Character
 from app.models.chat import Memory
+from app.models.edit_diff import EditDiffCapture
 from app.models.entry import Entry
 from app.models.novel import Chapter, WorkCharacter
 from app.models.user import User
@@ -80,11 +81,14 @@ def make_client():
         entry_context: bool,
         context_window: int = 8192,
         max_tokens: int = 256,
+        raise_server_exceptions: bool = True,
     ):
         settings = get_settings().model_copy(
             update={"FEATURES": {FEATURE_ENTRY_STORE_CONTEXT: entry_context}}
         )
-        manager = TestClient(create_app(settings))
+        manager = TestClient(
+            create_app(settings), raise_server_exceptions=raise_server_exceptions
+        )
         client = manager.__enter__()
         opened.append(manager)
         cast(Any, client.app).state.registry.register("fake", _RecordingAdapter)
@@ -229,6 +233,22 @@ def _entry_count() -> int:
         )
         async with sessionmaker() as session:
             count = await session.scalar(select(func.count()).select_from(Entry))
+        await engine.dispose()
+        return int(count or 0)
+
+    return asyncio.run(_run())
+
+
+def _edit_diff_count() -> int:
+    async def _run() -> int:
+        engine = create_async_engine(os.environ["DATABASE_URL"])
+        sessionmaker = async_sessionmaker(
+            engine, expire_on_commit=False, class_=AsyncSession
+        )
+        async with sessionmaker() as session:
+            count = await session.scalar(
+                select(func.count()).select_from(EditDiffCapture)
+            )
         await engine.dispose()
         return int(count or 0)
 
@@ -1000,6 +1020,8 @@ def test_novel_max_scene_and_small_context_fits_before_one_provider_call(
     assert "event: done" in response.text
     assert len(_CAPTURED) == 1
     prompt = _CAPTURED[0]
+    assert prompt.trace["budget"] == 862
+    assert prompt.token_count == 109
     assert prompt.token_count <= prompt.trace["budget"]
     assert prompt.token_count + 80 + 82 <= 1024
     assert "[장면 목표]" not in _prompt_text(prompt)
@@ -1045,6 +1067,103 @@ def test_novel_prepare_only_max_scene_small_context_assembles_without_provider_o
     assert prompt.token_count <= prompt.trace["budget"]
     assert _CAPTURED == []
     assert client.get(f"/api/v1/works/{work_id}/chapters").json()[0] == before
+
+
+@pytest.mark.parametrize(
+    "raise_server_exceptions",
+    [True, False],
+    ids=["server-exceptions-on", "server-exceptions-off"],
+)
+def test_novel_impossible_budget_returns_controlled_sse_error_without_provider_or_write(
+    make_client, raise_server_exceptions: bool
+) -> None:
+    client = make_client(
+        entry_context=False,
+        context_window=64,
+        max_tokens=64,
+        raise_server_exceptions=raise_server_exceptions,
+    )
+    _, work_id, chapter_id = _novel_setup(
+        client, title="불가능한 컨텍스트", world_name="경계"
+    )
+    chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+    updated = client.patch(
+        f"/api/v1/works/chapters/{chapter_id}",
+        json={"content_text": "현" * 1200, "version": chapter["version"]},
+    )
+    assert updated.status_code == 200, updated.text
+    before_chapter = updated.json()
+    before_entries = _entry_count()
+    before_edit_diffs = _edit_diff_count()
+
+    response = client.post(
+        f"/api/v1/works/chapters/{chapter_id}/continue",
+        json={
+            "instruction": "계속",
+            "target_words": 50,
+            "scene": _max_scene_payload(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text.count("event: error") == 1
+    assert '"code": "VALIDATION_ERROR"' in response.text
+    assert "Prompt cannot fit the available context budget" in response.text
+    assert "event: token" not in response.text
+    assert "event: done" not in response.text
+    assert _CAPTURED == []
+    assert _entry_count() == before_entries
+    assert _edit_diff_count() == before_edit_diffs
+    assert client.get(f"/api/v1/works/{work_id}/chapters").json()[0] == before_chapter
+
+
+def test_novel_prepare_only_impossible_budget_fails_at_assembly_without_write(
+    make_client,
+) -> None:
+    client = make_client(entry_context=False, context_window=64, max_tokens=64)
+    _, work_id, chapter_id = _novel_setup(
+        client, title="준비 전용 불가능 컨텍스트", world_name="경계"
+    )
+    chapter = client.get(f"/api/v1/works/{work_id}/chapters").json()[0]
+    updated = client.patch(
+        f"/api/v1/works/chapters/{chapter_id}",
+        json={"content_text": "현" * 1200, "version": chapter["version"]},
+    )
+    assert updated.status_code == 200, updated.text
+    before_chapter = updated.json()
+    before_entries = _entry_count()
+    before_edit_diffs = _edit_diff_count()
+    service = cast(Any, client.app).state.novel_service
+    request = ContinueRequest(
+        instruction="계속",
+        target_words=50,
+        scene=_max_scene_payload(),
+    )
+    prepared = asyncio.run(
+        service.prepare_continue(
+            _owner_id(), chapter_id, request, context_window=64
+        )
+    )
+
+    with pytest.raises(ValidationAppError, match="cannot fit") as exc_info:
+        service.engine.assemble_continue(
+            prepared,
+            req=ProviderRequest(
+                provider="fake",
+                model_name="fake-1",
+                base_url=None,
+                api_key=None,
+                temperature=0.8,
+                max_tokens=64,
+                context_window=64,
+            ),
+        )
+
+    assert exc_info.value.details == {"inv": "INV-7"}
+    assert _CAPTURED == []
+    assert _entry_count() == before_entries
+    assert _edit_diff_count() == before_edit_diffs
+    assert client.get(f"/api/v1/works/{work_id}/chapters").json()[0] == before_chapter
 
 
 def test_novel_prepare_continue_snapshots_scene_without_provider_or_write(

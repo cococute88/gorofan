@@ -260,27 +260,34 @@ class NovelService:
     async def _continue_impl(
         self, user_id: str, chapter_id: str, dto: ContinueRequest
     ) -> AsyncIterator[StreamEvent]:
-        async with self.sm() as s:
-            await begin_story_order_snapshot(s)
-            chapter = await self._owned_chapter(s, user_id, chapter_id)
-            work = await self._owned_work(s, user_id, chapter.work_id)
-            ctx = await self._build_story_context(s, work, chapter)
-            req = await resolve_provider_request(
-                s, self.settings, self.registry,
-                user_id=user_id, model_config_id=None, purpose="novel",
-            )
-            req.max_tokens = min(req.max_tokens, words_to_tokens(dto.target_words))
-            base_version = chapter.version
-            preparation = await self._prepare_continue_context(
-                s,
-                user_id=user_id,
-                work=work,
-                chapter=chapter,
-                ctx=ctx,
-                dto=dto,
-                context_window=req.context_window,
-            )
-            prompt = self.engine.assemble_continue(preparation, req=req)
+        try:
+            async with self.sm() as s:
+                await begin_story_order_snapshot(s)
+                chapter = await self._owned_chapter(s, user_id, chapter_id)
+                work = await self._owned_work(s, user_id, chapter.work_id)
+                ctx = await self._build_story_context(s, work, chapter)
+                req = await resolve_provider_request(
+                    s, self.settings, self.registry,
+                    user_id=user_id, model_config_id=None, purpose="novel",
+                )
+                req.max_tokens = min(req.max_tokens, words_to_tokens(dto.target_words))
+                base_version = chapter.version
+                preparation = await self._prepare_continue_context(
+                    s,
+                    user_id=user_id,
+                    work=work,
+                    chapter=chapter,
+                    ctx=ctx,
+                    dto=dto,
+                    context_window=req.context_window,
+                )
+                prompt = self.engine.assemble_continue(preparation, req=req)
+        except ValidationAppError as exc:
+            # Assembly happens inside the async generator, after the SSE response
+            # has started. Surface its controlled domain error as the existing
+            # terminal SSE error event, before provider invocation or writes.
+            yield StreamEvent(event="error", code=exc.code, message=exc.message)
+            return
 
         # Settle the previous continuation before this one destroys the
         # boundary, and before any token is streamed (design §6.3).
