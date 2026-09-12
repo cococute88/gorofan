@@ -1,7 +1,7 @@
 # Implementation Status (검증 기준 스냅샷)
 
-- **확정 시각:** 2026-09-11 — PR #31 AOS-1 tied-order compatibility 수정 및 로컬 검증 시점. **Draft 상태로 final targeted independent re-review 대기다.**
-- **기준 main:** `b5b51a42db8c951529ee29944133fb98b7509b8d` — PR #30 squash merge commit. PR #30 reviewed final head `f21be771de6c92978469d2e9b672a12cbe6f8e24`와 tree가 동일하다.
+- **확정 시각:** 2026-09-12 — AOS-3 Gemini Direct 구현 및 로컬 검증 시점. **Draft PR과 독립 review가 필요하다.**
+- **기준 main:** `b39e6fff48b82d8c356f241aaa1357a56c7a535b` — PR #32 merge commit. PR #32 reviewed head는 `07e788aebe744a451da13a765a8c15d9ec27ed94`다.
 - **판정 기준:** 파일 존재만으로 완료 처리하지 않는다. **실행되는 코드 경로 + API 노출 + 통과하는 테스트**를 근거로 `완료 / 부분 완료 / 미구현`을 판정한다.
 - **문서 우선순위:** ADR → RFC-001 → RFC-002…RFC-012 → `docs/architecture/README.md` → 본 문서 → (참고용) 구 `.kiro/specs` M0~M7 계획.
 
@@ -14,7 +14,8 @@
 | 검증 항목 | 명령 | 결과 |
 |---|---|---|
 | AOS-1 Generation Preparation | pure contract + provider-free service integration + frozen legacy prompt equivalence | **46 passed** — distinct/tied Character+Lore source order, malformed chronology fail-closed, deep immutable snapshot, metadata whitelist/omission mapping, OFF/ON, foreign/Memory isolation, preparation provider 0회와 production provider 1회를 포함한다. |
-| 백엔드 전체 테스트 | `backend/.venv/Scripts/python -m pytest` | **327 passed, 0 failed**. |
+| AOS-3 Gemini Direct | existing GeminiAdapter + provider registry + 실제 Novel continue E2E | **36 passed** — header-only auth, payload/stream/Unicode/cancel, error/capability/fallback, registry retry, AOS-1/2·Scene·chronology·Memory·owner 경계, token→done, append/version/edit-diff exactly-once를 포함한다. |
+| 백엔드 전체 테스트 | `backend/.venv/Scripts/python -m pytest -q` | **422 passed, 0 failed**. |
 | Chronology focused | classifier/snapshot/retrieval/Novel generation integration 묶음 | **58 passed** — future/current/unknown pre-rank exclusion, legacy overlap/blank, duplicate, timestamp inversion, stale/reorder, post-preparation reorder와 provider spy 포함. |
 | P1-8 대상 테스트 | `backend/.venv/Scripts/python -m pytest tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **54 passed** — production과 runtime shadow가 동일한 Character/World owner/deleted/order loader를 사용하는 parity 회귀를 포함한다. |
 | 관련 회귀 묶음 | Entry lifecycle/retrieval/context/review, Chat/Novel/Memory/streaming, prompt budget/assets, edit-diff, golden, migrations | **230 passed, 0 failed**. |
@@ -66,6 +67,7 @@
 | Legacy ↔ Entry equivalence diagnostics (P1-8, PR #28 merge 완료) | `services/legacy_entry_equivalence.py`, `schemas/equivalence.py`, `POST /api/v1/entries/equivalence:compare` — Character/World/Glossary/Lore/Chapter-summary pure projection, deterministic coverage precedence, 독립 Chat/Novel runtime shadow, owner-scoped read-only report. Novel runtime shadow는 production과 shared read-only Character/World loader를 사용한다. feature flag는 변경하지 않고 상태를 evidence로 노출한다. | focused **54 passed**; deleted source와 association-order parity 회귀 포함. |
 | Story-summary chronology correctness (PR #30 merge 완료) | `services/story_order_snapshot.py`, `story_summary_chronology.py`, Novel anchor와 `EntryService.retrieve()` pre-rank filter — target/legacy/Entry-source/overlap을 한 consistent snapshot에서 확정하고 prior만 허용한다. default OFF와 legacy authority는 유지한다. | focused **58 passed**; stale target `T=10, S=2 → T=3, S=4`, provider-visible leak 금지, snapshot 완료 후 reorder, whitespace fallback, duplicate/foreign/orphan/budget isolation 포함. |
 | AOS-1 shared Generation Preparation (Draft PR final targeted re-review 대기) | `engines/novel/generation_preparation.py`, `services/novel_generation_sources.py`, `NovelService.prepare_continue()`와 production `_continue_impl()` — typed snapshot이 canonical authority이며 sections/evidence는 derived view, PreparedPromptBlock은 whitelisted compatibility adapter다. Equal-key Character/Lore는 legacy source sequence를 그대로 snapshot한다. | focused **46 passed**; tied-order exact prompt, fail-closed chronology, deep immutability, Production/P1-8 parity 포함. |
+| AOS-3 Gemini Direct (author branch 구현 완료, Draft review 필요) | 기존 `/works/chapters/{chapter_id}/continue` → immutable GenerationPreparation → PromptEngine → ProviderRequest → ProviderRegistry → 기존 GeminiAdapter → neutral delta → Novel SSE → Chapter/edit-diff 경로를 그대로 사용한다. Gemini 전용 endpoint/service/prompt assembler/credential store는 추가하지 않았다. | focused **36 passed**; Google 공식 문서 2026-09-12 검증 기록은 `docs/architecture/aos-3-gemini-direct-generation.md`. |
 
 **보존된 불변식(코드로 확인됨):** `status=canon`을 직접 받는 API 없음 · AI 생산자의 canon 직접 기록 경로 없음 · chat-private `Memory`는 Entry로 저장되지 않음 · per-library 테이블 없음 · `misc` 타입 없음 · `0001` 미수정.
 
@@ -156,11 +158,11 @@
 |---|---|
 | Substrate (M0~M7 기반) | 약 90% — 잔여는 Prompt Cache, 메타 요약 상한, refresh 회전/denylist, JSON Export |
 | Architecture Phase 1 (Store/Retrieval/Review gate) | **필수 8/9 완료** — P1-9 미착수. P1-8과 PR #30 chronology implementation은 authority cutover나 legacy 제거가 아니다. |
-| Personal Author OS | AOS-1 blocker 수정 완료, Draft PR targeted independent re-review 대기. provider execution, Prompt Packet, Scene schema/UI, apply/import는 미구현. |
+| Personal Author OS | AOS-1/2 merge 완료. AOS-3 Gemini direct generation은 author branch 구현·검증 완료, Draft 독립 review 대기. Prompt Packet, Novel Workspace, apply/import, Voice는 후속이다. |
 | Phase 2 Analyst | 0% |
 | Phase 3 Writer | 0% (기존 single-pass 이어쓰기는 substrate로 보존) |
 | Phase 4 Story Bible | 0% (별도 스토어 없음 = 의도된 상태) |
 | Phase 5 Character Chat 공유 지식 통합 | 약 25% — P1-6이 character/world/user canon 주입 경로를 열었다. 명시적 work 선택·relationship.state·북마크 승격은 미구현 |
 | Phase 6 Bench | 약 15% — retrieval/context 골든 픽스처만 |
 
-전체적으로 **"기본 OFF 플래그와 legacy authority를 유지하면서 chronology-safe domain context를 한 번 준비해 기존 PromptEngine으로 넘기는 provider-neutral AOS-1 기반"** 이 서 있다. 다음 작업은 PR #31 blocker에 대한 targeted independent re-review이며, merge 뒤 `minimum Scene/generation input → Gemini direct generation → external Prompt Packet → Novel workspace → Chapter apply/import` 순으로 진행한다. P1-9 review audit은 여전히 미착수 독립 작업이다.
+전체적으로 **"chronology-safe provider-neutral GenerationPreparation을 기존 PromptEngine과 provider registry에 한 번 연결하는 AOS-1/2/3 경로"** 가 서 있다. 다음 작업은 AOS-3 Gemini Direct Draft PR의 독립 review다. merge 뒤 `external Prompt Packet → Novel Workspace → Chapter apply/import → Voice minimal` 순으로 진행한다. P1-9 review audit은 여전히 미착수 독립 작업이다.

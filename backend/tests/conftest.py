@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import tempfile
 
+import httpx
 import pytest
 
 _DB_PATH = os.path.join(tempfile.gettempdir(), "acw_test.db")
@@ -34,6 +35,29 @@ def _create_schema():
     Base.metadata.create_all(sync_engine)
     sync_engine.dispose()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _block_external_http(monkeypatch):
+    """Fail closed if a test reaches httpx's real network transports.
+
+    Provider tests must inject ``MockTransport`` (or an in-process fake). The
+    Starlette ``TestClient`` uses its own transport and is intentionally not
+    affected by this guard.
+    """
+
+    def block_sync(_transport, request):  # noqa: ANN001, ANN202
+        raise AssertionError(f"external HTTP blocked in tests: {request.url.host}")
+
+    async def block_async(_transport, request):  # noqa: ANN001, ANN202
+        raise AssertionError(f"external HTTP blocked in tests: {request.url.host}")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", block_sync)
+    monkeypatch.setattr(
+        httpx.AsyncHTTPTransport,
+        "handle_async_request",
+        block_async,
+    )
 
 
 @pytest.fixture()

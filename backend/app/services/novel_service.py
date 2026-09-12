@@ -314,25 +314,26 @@ class NovelService:
                 yield evt
         except Exception as exc:  # noqa: BLE001
             code = getattr(exc, "code", "PROVIDER_ERROR")
-            try:
-                await self._append_chapter(
-                    user_id, chapter_id, buffer, base_version, partial=True,
-                    capture_context=capture_context, producer=producer,
-                )
-            except Exception as append_exc:  # noqa: BLE001
-                # The provider error is the one the author needs to see; a
-                # failure here must not replace it (design §9.2). The append
-                # itself still rolled back, so no untraceable segment merged.
-                _logger.warning(
-                    "edit_diff.partial_append_failed",
-                    extra={
-                        "user_id": user_id,
-                        "meta": {
-                            "chapter_id": chapter_id,
-                            "failure_class": type(append_exc).__name__,
+            if buffer:
+                try:
+                    await self._append_chapter(
+                        user_id, chapter_id, buffer, base_version, partial=True,
+                        capture_context=capture_context, producer=producer,
+                    )
+                except Exception as append_exc:  # noqa: BLE001
+                    # The provider error is the one the author needs to see; a
+                    # failure here must not replace it (design §9.2). The append
+                    # itself still rolled back, so no untraceable segment merged.
+                    _logger.warning(
+                        "edit_diff.partial_append_failed",
+                        extra={
+                            "user_id": user_id,
+                            "meta": {
+                                "chapter_id": chapter_id,
+                                "failure_class": type(append_exc).__name__,
+                            },
                         },
-                    },
-                )
+                    )
             yield StreamEvent(event="error", code=code, message=str(exc))
             return
 
