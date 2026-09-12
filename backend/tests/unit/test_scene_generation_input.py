@@ -9,6 +9,8 @@ from pydantic import ValidationError
 
 from app.adapters.base import ModelCapability, ProviderRequest
 from app.adapters.registry import ProviderRegistry
+from app.core.errors import ValidationAppError
+from app.core.scene_generation import SceneGenerationValidationError
 from app.engines.novel.engine import NovelEngine
 from app.engines.novel.generation_preparation import (
     ContinueGenerationInput,
@@ -20,7 +22,10 @@ from app.engines.novel.generation_preparation import (
     freeze_mapping,
     prepare_continue_generation,
 )
-from app.engines.prompt.engine import PromptEngine
+from app.engines.prompt.blocks import PromptBlock
+from app.engines.prompt.budget import BudgetManager
+from app.engines.prompt.engine import AssembleInput, PromptEngine
+from app.engines.prompt.tokenizer import Tokenizer
 from app.schemas.novel import (
     SCENE_GOAL_MAX_LENGTH,
     SCENE_ITEM_MAX_LENGTH,
@@ -213,6 +218,179 @@ def test_scene_request_rejects_oversize_fields_counts_and_total(scene: object) -
         ContinueRequest(scene=scene)  # type: ignore[arg-type]
 
     assert SCENE_TOTAL_MAX_LENGTH < 3 * SCENE_ITEMS_MAX_COUNT * SCENE_ITEM_MAX_LENGTH
+
+
+@pytest.mark.parametrize(
+    "scene",
+    [
+        SceneGenerationInput(beats=("   ",)),
+        SceneGenerationInput(beats=("\n\t",)),
+        SceneGenerationInput(beats=("가" * (SCENE_ITEM_MAX_LENGTH + 1),)),
+        SceneGenerationInput(goal="가" * (SCENE_GOAL_MAX_LENGTH + 1)),
+        SceneGenerationInput(beats=("사건",) * (SCENE_ITEMS_MAX_COUNT + 1)),
+        SceneGenerationInput(must_include=("요소",) * (SCENE_ITEMS_MAX_COUNT + 1)),
+        SceneGenerationInput(must_avoid=("금지",) * (SCENE_ITEMS_MAX_COUNT + 1)),
+        SceneGenerationInput(
+            goal="초과",
+            beats=("가" * SCENE_ITEM_MAX_LENGTH,) * SCENE_ITEMS_MAX_COUNT,
+            must_include=("나" * SCENE_ITEM_MAX_LENGTH,) * 8,
+        ),
+        SceneGenerationInput(beats=cast(tuple[str, ...], [123])),
+        SceneGenerationInput(beats=cast(tuple[str, ...], [["중첩"]])),
+        SceneGenerationInput(beats=cast(tuple[str, ...], [{"mutable": "dict"}])),
+        SceneGenerationInput(beats=cast(tuple[str, ...], [b"bytes"])),
+        SceneGenerationInput(beats=cast(tuple[str, ...], b"bytes")),
+    ],
+)
+def test_pure_preparation_rejects_invalid_scene_at_canonical_boundary(
+    scene: SceneGenerationInput,
+) -> None:
+    with pytest.raises(SceneGenerationValidationError):
+        prepare_continue_generation(_input(scene=scene))
+
+
+def test_pure_preparation_accepts_exact_scene_boundaries() -> None:
+    cases = (
+        SceneGenerationInput(goal="목" * SCENE_GOAL_MAX_LENGTH),
+        SceneGenerationInput(beats=("항" * SCENE_ITEM_MAX_LENGTH,)),
+        SceneGenerationInput(beats=tuple(f"사건 {index}" for index in range(16))),
+        SceneGenerationInput(
+            beats=("가" * SCENE_ITEM_MAX_LENGTH,) * SCENE_ITEMS_MAX_COUNT,
+            must_include=("나" * SCENE_ITEM_MAX_LENGTH,) * 8,
+        ),
+        SceneGenerationInput(
+            goal="  한글 목표\n둘째 줄  ",
+            beats=("  중복 사건  ", "중복 사건"),
+        ),
+    )
+
+    prepared = [prepare_continue_generation(_input(scene=scene)) for scene in cases]
+
+    assert prepared[0].scene is not None
+    assert len(prepared[0].scene.goal or "") == SCENE_GOAL_MAX_LENGTH
+    assert prepared[1].scene is not None
+    assert len(prepared[1].scene.beats[0]) == SCENE_ITEM_MAX_LENGTH
+    assert prepared[2].scene is not None
+    assert len(prepared[2].scene.beats) == SCENE_ITEMS_MAX_COUNT
+    assert prepared[3].scene is not None
+    assert (
+        sum(
+            len(item)
+            for values in (
+                prepared[3].scene.beats,
+                prepared[3].scene.must_include,
+                prepared[3].scene.must_avoid,
+            )
+            for item in values
+        )
+        == SCENE_TOTAL_MAX_LENGTH
+    )
+    assert prepared[4].scene == SceneGenerationInput(
+        goal="한글 목표\n둘째 줄",
+        beats=("중복 사건", "중복 사건"),
+    )
+    assert prepare_continue_generation(
+        _input(scene=SceneGenerationInput(goal=" \n\t "))
+    ).scene is None
+
+
+def test_http_and_pure_boundaries_produce_the_same_canonical_scene() -> None:
+    raw: dict[str, object] = {
+        "goal": "  한글 목표\n둘째 줄  ",
+        "beats": ["  B 사건  ", "A\n사건", "B 사건"],
+        "must_include": ["  은빛 표식  "],
+        "must_avoid": ["  코믹한 분위기  "],
+    }
+    dto = SceneGenerationRequest(**raw)
+    prepared = prepare_continue_generation(
+        _input(
+            scene=SceneGenerationInput(
+                goal=cast(str, raw["goal"]),
+                beats=cast(tuple[str, ...], raw["beats"]),
+                must_include=cast(tuple[str, ...], raw["must_include"]),
+                must_avoid=cast(tuple[str, ...], raw["must_avoid"]),
+            )
+        )
+    )
+
+    assert prepared.scene == SceneGenerationInput(
+        goal=dto.goal,
+        beats=tuple(dto.beats),
+        must_include=tuple(dto.must_include),
+        must_avoid=tuple(dto.must_avoid),
+    )
+
+
+def test_pure_preparation_rejects_mutable_element_before_it_can_escape() -> None:
+    mutable_element = ["원본"]
+    scene = SceneGenerationInput(beats=cast(tuple[str, ...], [mutable_element]))
+
+    with pytest.raises(SceneGenerationValidationError):
+        prepare_continue_generation(_input(scene=scene))
+
+    mutable_element.append("변조")
+
+
+def test_budget_manager_fits_multiple_protected_truncatable_blocks() -> None:
+    tokenizer = Tokenizer()
+    blocks = [
+        PromptBlock(
+            id="system",
+            role="system",
+            kind="system",
+            content="system",
+            priority=100,
+            truncatable=False,
+        ),
+        PromptBlock(
+            id="current-chapter",
+            role="user",
+            kind="user",
+            content="가" * 2000,
+            priority=1000,
+        ),
+        PromptBlock(
+            id="generation-instruction",
+            role="user",
+            kind="instruction",
+            content="나" * 2000,
+            priority=1000,
+        ),
+        PromptBlock(
+            id="optional-context",
+            role="system",
+            kind="chapter",
+            content="다" * 1000,
+            priority=75,
+        ),
+    ]
+    for block in blocks:
+        block.token_count = tokenizer.count(block.content)
+
+    result = BudgetManager(tokenizer).fit(blocks, budget=600)
+
+    assert result.final_tokens <= result.budget == 600
+    assert {block.id for block, _ in result.trimmed} >= {
+        "current-chapter",
+        "generation-instruction",
+    }
+    assert [block.id for block in result.dropped] == ["optional-context"]
+
+
+def test_prompt_engine_reports_controlled_error_when_mandatory_minimum_is_impossible() -> None:
+    with pytest.raises(ValidationAppError, match="cannot fit") as exc_info:
+        PromptEngine().assemble(
+            AssembleInput(
+                template_body="필수 시스템" * 300,
+                user_message="가" * 300,
+                instruction="나" * 300,
+                context_window=256,
+                max_tokens=64,
+                safety_ratio=0,
+            )
+        )
+
+    assert exc_info.value.details["inv"] == "INV-7"
 
 
 def test_scene_uses_existing_protected_instruction_budget_without_bypass() -> None:

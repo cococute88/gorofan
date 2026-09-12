@@ -1,10 +1,21 @@
 """Novel DTOs (design 6)."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.scene_generation import (
+    SCENE_GOAL_MAX_LENGTH,
+    SCENE_ITEM_MAX_LENGTH,
+    SCENE_ITEMS_MAX_COUNT,
+    SceneGenerationInput,
+    normalize_scene_generation_input,
+)
+from app.core.scene_generation import (
+    SCENE_TOTAL_MAX_LENGTH as SCENE_TOTAL_MAX_LENGTH,
+)
 from app.schemas.common import TimestampedOut
 
 
@@ -60,11 +71,6 @@ class ReorderRequest(BaseModel):
     ordered_chapter_ids: list[str]
 
 
-SCENE_GOAL_MAX_LENGTH = 1000
-SCENE_ITEM_MAX_LENGTH = 500
-SCENE_ITEMS_MAX_COUNT = 16
-SCENE_TOTAL_MAX_LENGTH = 12000
-
 SceneItem = Annotated[str, Field(max_length=SCENE_ITEM_MAX_LENGTH)]
 
 
@@ -84,42 +90,26 @@ class SceneGenerationRequest(BaseModel):
         default_factory=list, max_length=SCENE_ITEMS_MAX_COUNT
     )
 
-    @field_validator("goal", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _normalize_goal(cls, value: object) -> object:
-        if isinstance(value, str):
-            stripped = value.strip()
-            return stripped or None
-        return value
-
-    @field_validator("beats", "must_include", "must_avoid", mode="before")
-    @classmethod
-    def _normalize_items(cls, value: object) -> object:
-        if value is None:
-            return []
-        if not isinstance(value, (list, tuple)):
+    def _normalize_scene(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
             return value
-        normalized: list[object] = []
-        for item in value:
-            if isinstance(item, str):
-                item = item.strip()
-                if not item:
-                    raise ValueError("scene items must not be blank")
-            normalized.append(item)
-        return normalized
-
-    @model_validator(mode="after")
-    def _bound_total_text(self) -> SceneGenerationRequest:
-        total = len(self.goal or "") + sum(
-            len(item)
-            for values in (self.beats, self.must_include, self.must_avoid)
-            for item in values
+        raw = dict(value)
+        normalized = normalize_scene_generation_input(
+            goal=raw.get("goal"),
+            beats=raw.get("beats", ()),
+            must_include=raw.get("must_include", ()),
+            must_avoid=raw.get("must_avoid", ()),
         )
-        if total > SCENE_TOTAL_MAX_LENGTH:
-            raise ValueError(
-                f"scene text must not exceed {SCENE_TOTAL_MAX_LENGTH} characters"
-            )
-        return self
+        scene = normalized or SceneGenerationInput()
+        raw.update(
+            goal=scene.goal,
+            beats=list(scene.beats),
+            must_include=list(scene.must_include),
+            must_avoid=list(scene.must_avoid),
+        )
+        return raw
 
 
 class ContinueRequest(BaseModel):

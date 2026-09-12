@@ -12,6 +12,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
+from app.core.scene_generation import (
+    SceneGenerationInput,
+    normalize_scene_generation_input,
+)
 from app.engines.prompt.blocks import BlockKind, BlockRole, PromptBlock
 
 CURRENT_CHAPTER_TAIL_CHARS = 1200
@@ -157,15 +161,6 @@ class PreparedPriorSummary:
     chapter_index: int
     content: str
 
-
-@dataclass(frozen=True)
-class SceneGenerationInput:
-    """Immutable provider-neutral scene intent for one generation only."""
-
-    goal: str | None = None
-    beats: tuple[str, ...] = ()
-    must_include: tuple[str, ...] = ()
-    must_avoid: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -595,17 +590,14 @@ def _normalize_scene(
 ) -> SceneGenerationInput | None:
     if value is None:
         return None
-    scene = SceneGenerationInput(
+    if not isinstance(value, SceneGenerationInput):
+        raise TypeError("Scene input must be a SceneGenerationInput")
+    return normalize_scene_generation_input(
         goal=value.goal,
-        beats=tuple(_sequence_items(value.beats, "Scene beats")),
-        must_include=tuple(
-            _sequence_items(value.must_include, "Scene must-include items")
-        ),
-        must_avoid=tuple(_sequence_items(value.must_avoid, "Scene must-avoid items")),
+        beats=value.beats,
+        must_include=value.must_include,
+        must_avoid=value.must_avoid,
     )
-    if not (scene.goal or scene.beats or scene.must_include or scene.must_avoid):
-        return None
-    return scene
 
 
 def _sequence_items(value: object, label: str) -> Sequence:
