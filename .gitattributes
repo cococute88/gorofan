@@ -1,0 +1,4 @@
+deploy/a1/*.sh text eol=lf
+deploy/a1/*.yml text eol=lf
+deploy/a1/*.example text eol=lf
+deploy/a1/*.ps1 text eol=crlf
