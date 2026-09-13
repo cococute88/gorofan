@@ -29,7 +29,11 @@ async def resolve_provider_request(
     api_key: str | None = None
     if cfg.credential_id:
         cred = await session.get(ProviderCredential, cfg.credential_id)
-        if cred is not None and cred.user_id == user_id:
+        if (
+            cred is not None
+            and cred.user_id == user_id
+            and cred.provider == cfg.provider
+        ):
             api_key = decrypt_secret(settings, cred.api_key_enc)
 
     cap = registry.capabilities(cfg.provider, cfg.model_name)
@@ -37,7 +41,12 @@ async def resolve_provider_request(
     if context_window > cap.context_window and cap.context_window > 0:
         # trust capability as the authority for known providers
         context_window = cap.context_window
-    if context_window < cfg.max_tokens:
+    max_tokens = cfg.max_tokens
+    if max_tokens > cap.max_output_tokens and cap.max_output_tokens > 0:
+        # Existing rows may predate corrected capability data. Clamp at the
+        # provider-neutral resolution seam, never inside one provider adapter.
+        max_tokens = cap.max_output_tokens
+    if context_window < max_tokens:
         raise ValidationAppError("context_window < max_tokens", {"inv": "INV-6"})
 
     return ProviderRequest(
@@ -46,7 +55,7 @@ async def resolve_provider_request(
         base_url=cfg.base_url,
         api_key=api_key,
         temperature=cfg.temperature,
-        max_tokens=cfg.max_tokens,
+        max_tokens=max_tokens,
         context_window=context_window,
     )
 

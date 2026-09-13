@@ -31,6 +31,11 @@ class AIConfigService:
                 "context_window exceeds model capability",
                 {"capability": cap.context_window},
             )
+        if dto.max_tokens > cap.max_output_tokens and cap.max_output_tokens > 0:
+            raise ValidationAppError(
+                "max_tokens exceeds model capability",
+                {"capability": cap.max_output_tokens},
+            )
         if dto.context_window < dto.max_tokens:
             raise ValidationAppError("context_window < max_tokens", {"inv": "INV-6"})
         cfg = ModelConfig(user_id=user_id, **dto.model_dump())

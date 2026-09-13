@@ -2,9 +2,10 @@
 
 > **Canonical handoff document for a new AI session.**
 >
-> **Verified at:** 2026-09-11
-> **Verified `main`:** `b5b51a42db8c951529ee29944133fb98b7509b8d`
-> **Current implementation branch:** `feature/aos-generation-preparation`
+> **Verified at:** 2026-09-13 stream/SSE follow-up; the 2026-09-12 tables below are the original implementation baseline.
+> **Follow-up:** backend 461 passed; frontend 49 passed; independent counterexamples 49 passed. Gemini requires explicit primary-candidate completion; EventSourceResponse frames structured events once. See [AOS-3 record](docs/architecture/aos-3-gemini-direct-generation.md). PR #33 stays Draft for targeted independent re-review.
+> **Verified `main`:** `b39e6fff48b82d8c356f241aaa1357a56c7a535b`
+> **Current implementation branch:** `feature/aos-gemini-direct-generation`
 
 ## Contents
 
@@ -32,7 +33,7 @@ Before changing anything:
 
 - Read this file **and** the relevant ADR/RFC originals in `docs/architecture/`.
 - Confirm the verification timestamp and `main` SHA above.
-- If `origin/main` has advanced after `b5b51a42db8c951529ee29944133fb98b7509b8d`, re-verify the affected GitHub, code, task/status, and test facts before relying on this handoff.
+- If `origin/main` has advanced after `b39e6fff48b82d8c356f241aaa1357a56c7a535b`, re-verify the affected GitHub, code, task/status, and test facts before relying on this handoff.
 - Do not infer implementation completion from file presence. Follow executed production paths, API exposure, and passing tests.
 
 ## 2. Repository identity
@@ -42,8 +43,8 @@ Before changing anything:
 | GitHub repository | [`cococute88/gorofan`](https://github.com/cococute88/gorofan) |
 | Local repository | `C:\gv\rfrf` |
 | Default branch | `main` |
-| Verification time | `2026-09-11` (Asia/Seoul) |
-| Verified `origin/main` / local `main` before AOS-1 branch | `b5b51a42db8c951529ee29944133fb98b7509b8d` |
+| Verification time | `2026-09-12` (Asia/Seoul) |
+| Verified `origin/main` / local `main` before AOS-3 branch | `b39e6fff48b82d8c356f241aaa1357a56c7a535b` |
 | PR #21 | [`feat(entry): wire retrieval context into generation paths`](https://github.com/cococute88/gorofan/pull/21), merged 2026-08-09 — **P1-6** |
 | PR #21 merge commit | `1b2a850b2732778fecb8944f03a8d12020aa588a` |
 | PR #23 | [`docs(architecture): design edit-diff capture`](https://github.com/cococute88/gorofan/pull/23), merged 2026-08-09 — **P1-7 design, approved. Documentation only.** |
@@ -59,7 +60,8 @@ Before changing anything:
 | PR #28 merged head / merge commit | `e1ae734959815ae02cb9e6fd105a40dd85a254b9` / `ac791ba8369aa1a7f6856cd9f573e0650995ea74` |
 | PR #29 | `story.summary` chronology Architecture Contract, merged head `a794f14`, merge commit `e5ffc730` |
 | PR #30 | [`feat(entry): enforce story summary chronology`](https://github.com/cococute88/gorofan/pull/30), reviewed head `f21be771de6c92978469d2e9b672a12cbe6f8e24`, squash merge `b5b51a42db8c951529ee29944133fb98b7509b8d`; both trees are identical |
-| Current work | PR #31 AOS-1 tied-order compatibility fix implemented on `feature/aos-generation-preparation`; Draft remains pending final targeted independent re-review |
+| PR #32 | AOS-2 minimum Scene / generation input, reviewed head `07e788aebe744a451da13a765a8c15d9ec27ed94`, merge commit `b39e6fff48b82d8c356f241aaa1357a56c7a535b` |
+| Current work | AOS-3 Gemini direct generation implemented on `feature/aos-gemini-direct-generation`; Draft PR and independent review required |
 | Backend | Python 3.11+; FastAPI; async SQLAlchemy 2; Alembic; SQLite-first with PostgreSQL seam; pytest, Hypothesis, Ruff, MyPy |
 | Frontend | TypeScript; Next.js 14 App Router; React 18; TanStack Query; TipTap; Tailwind; Vitest; PWA |
 | CI | GitHub Actions on Ubuntu, Python 3.12 and Node 20; backend + frontend jobs in `.github/workflows/ci.yml` |
@@ -190,6 +192,8 @@ Later phases inherit these decisions. Change them only through an explicit archi
 | Equivalence diagnostic | `backend/app/services/legacy_entry_equivalence.py`, `backend/app/schemas/equivalence.py`, `backend/app/api/v1/entries.py` | P1-8 pure projection/coverage comparison and owner-safe, read-only Chat/Novel runtime shadow exposed as `POST /api/v1/entries/equivalence:compare`. |
 | Chronology contract | `docs/architecture/story-summary-chronology.md` | Merged Chapter-summary eligibility/order contract implemented by PR #30. |
 | Generation Preparation | `backend/app/engines/novel/generation_preparation.py` | Immutable target/context/constraint/semantic-section/budget/evidence contract and pure deterministic `continue` preparation; no DB or provider dependency. |
+| Gemini adapter | `backend/app/adapters/gemini.py` | Existing REST adapter; header-only API-key auth, provider-neutral request mapping, robust SSE-to-text normalization, controlled blocked/empty/error handling, and one official-model capability authority with a conservative unknown fallback. |
+| Provider resolution | `backend/app/services/provider_resolve.py` | Owner/provider-matched call-time credential decryption and provider-neutral capability clamp before prompt budgeting. |
 | Prompt blocks | `backend/app/engines/prompt/blocks.py` | Block kinds (including `entry`), `LAYER_ORDER`, `DEFAULT_PRIORITY`, and `PromptBlock` structure. |
 | Prompt engine | `backend/app/engines/prompt/engine.py` | Deterministic collect → resolve → order → budget → final provider-neutral assembly. |
 | Prompt assets | `backend/app/engines/prompt/assets.py` | Allow-listed repository asset loader with asset identity/version/digest. |
@@ -214,21 +218,22 @@ Run each command as a separate process with the stated working directory; do not
 
 | Check | Working directory | Command | Verified result at this handoff |
 |---|---|---|---|
-| AOS-1 focused | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_generation_preparation.py tests/integration/test_entry_context_generation.py -q` | **46 passed.** Includes fail-closed direct chronology counterexamples, deep defensive snapshots, metadata whitelists, omission mapping, provider-free/once-only integration, owner/Memory isolation, and frozen exact distinct/tied-order provider prompt equivalence. |
-| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest` | **327 passed, 0 failed** on the AOS-1 tied-order compatibility branch. |
+| AOS-1/current integration regression | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_generation_preparation.py tests/integration/test_entry_context_generation.py -q` | **64 passed.** Includes fail-closed direct chronology counterexamples, deep defensive snapshots, metadata whitelists, omission mapping, provider-free/once-only integration, owner/Memory isolation, and frozen exact distinct/tied-order provider prompt equivalence. |
+| AOS-3 Gemini direct focused | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_gemini_adapter.py tests/unit/test_provider_registry.py tests/integration/test_aos_gemini_direct.py -q` | **36 passed.** Covers header-only auth, request mapping, stream parsing/Unicode/cancellation, capability/fallback, controlled errors, registry retry semantics, owner/Memory isolation, AOS-1/2 prompt invariants, SSE, and exactly-once Chapter/edit-diff writes. |
+| Backend full pytest | `backend` | `.\.venv\Scripts\python.exe -m pytest -q` | **422 passed, 0 failed** on the AOS-3 implementation branch. |
 | P1-8 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_legacy_entry_equivalence.py tests/integration/test_legacy_entry_equivalence_api.py tests/golden/test_legacy_entry_equivalence_golden.py` | **54 passed.** Includes production/P1-8 shared Character/World ordering and deleted-source parity in addition to the merged diagnostic contract. |
 | Related regression bundle | `backend` | Entry lifecycle/retrieval/context/review, Chat/Novel/Memory/streaming, prompt budget/assets, edit-diff, golden, migrations | **230 passed, 0 failed.** |
 | P1-7 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/integration/test_edit_diff_capture_schema.py tests/integration/test_edit_diff_capture_entry.py tests/integration/test_edit_diff_capture_novel.py` | **41 passed** (schema 12, Path A 11, Path B 18). `tests/integration/test_migrations.py` grew from 3 to 5 for the remaining 2. |
-| P1-6 target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_prompt_integration.py tests/unit/test_entry_generation_context.py tests/integration/test_entry_context_generation.py` | **54 passed.** The reviewed pre-fix collection was 52; the frozen distinct/tied Character+Lore association-order prompt fixture adds two cases. The integration file drives the real SSE endpoints with a recording provider. |
+| P1-6/current integration regression | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_prompt_integration.py tests/unit/test_entry_generation_context.py tests/integration/test_entry_context_generation.py` | **72 passed.** The integration file drives the real SSE endpoints with recording/mock providers. |
 | Entry/retrieval/assembly target tests | `backend` | `.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_entry_retrieval.py tests/unit/test_entry_context_assembly.py tests/integration/test_entry_retrieval.py tests/golden/test_retrieval_context_golden.py` | Repository command paths verified; use for Store/context work. |
-| Ruff | `backend` | `.\.venv\Scripts\python.exe -m ruff check app tests` | `All checks passed!` on the AOS-1 implementation branch. |
-| Frontend test | `frontend` | `npm run test` | Passed: 3 files / 13 tests on 2026-09-11; AOS-1 did not touch the frontend. |
-| Frontend lint | `frontend` | `npm run lint` | Passed on 2026-09-11. |
-| Frontend production build | `frontend` | `npm run build` | Passed: 15 routes on 2026-09-11. |
+| Ruff | `backend` | `.\.venv\Scripts\python.exe -m ruff check app tests` | `All checks passed!` on the AOS-3 implementation branch. |
+| Frontend test | `frontend` | `npm run test` | Passed: 3 files / 13 tests on 2026-09-12; AOS-3 did not touch the frontend. |
+| Frontend lint | `frontend` | `npm run lint` | Passed on 2026-09-12. |
+| Frontend production build | `frontend` | `npm run build` | Passed: 15 routes on 2026-09-12. |
 | Alembic revisions | `backend` | `.\.venv\Scripts\python.exe -m alembic heads` | **`0003_edit_diff_capture (head)`** — single head, `down_revision = "0002_entry_store"`. |
-| Whitespace/patch integrity | repository root | `git diff --check` | Clean on the AOS-1 implementation branch. |
+| Whitespace/patch integrity | repository root | `git diff --check` | Clean on the AOS-3 implementation branch. |
 
-On this AOS-1 branch, `.\.venv\Scripts\python.exe -m mypy app tests` reports the documented **30 pre-existing errors in 9 files**; the new preparation module and changed production scope add no error. The scoped AOS-1 production check reports zero errors.
+On this AOS-3 branch, `.\.venv\Scripts\python.exe -m mypy app tests` reports the documented **30 pre-existing errors in 9 files**; the changed AOS-3 production/test scope adds no error. The scoped AOS-3 check reports zero errors in seven source files.
 
 Full MyPy is not the clean merge gate. For a scoped change, record the current errors for precisely the changed scope and do not introduce or increase them; fix new errors in that scope before review.
 
@@ -283,7 +288,7 @@ The current `tasks.md`, `implementation-status.md`, and production code agree on
 | ~~**P1-8**~~ legacy Character/World/Lore ↔ Entry equivalence bridge | **Complete** (design PR #27, implementation PR #28, merge `ac791ba`). Pure projections, coverage precedence, typed owner-safe API, and Chat/Novel runtime shadows are covered by 54 focused tests. Legacy remains authoritative and `_make_lore_blocks()` still runs. | — | Backfill, legacy deletion, read cutover, migration, or flipping the flag as part of the bridge. | Done; chronology evidence feeds the next gate. |
 | ~~**Story-summary chronology contract**~~ | **Complete** (PR #29 merge `e5ffc730`). | P1-8 merged. | — | Done. |
 | ~~**Story-summary chronology implementation**~~ | **Complete** (PR #30 merge `b5b51a4`, reviewed head `f21be77`, identical tree). Explicit target anchor, consistent snapshot, prior-only eligibility, Chapter-index order, overlap/duplicate fail-closed, and P1-8 alignment are present. | Accepted chronology contract. | — | Done. |
-| **AOS-1 shared Generation Preparation** | PR #31 tied-order compatibility fix complete; Draft pending final targeted independent re-review. Character/Lore equal-key cases now preserve the legacy query-supplied sequence without a new UUID tie-break; previous blocker fixes remain intact. | PR #30 merged. | Provider endpoint/key/model UI, Prompt Packet, Scene table/UI, apply/import, Taste/Voice. | Final tied-order re-review, then separate Ready/merge decision. |
+| ~~**AOS-1 shared Generation Preparation**~~ | **Merged in PR #31.** Character/Lore equal-key cases preserve the legacy query-supplied sequence without a new UUID tie-break; previous blocker fixes remain intact. | PR #30 merged. | Provider endpoint/key/model UI, Prompt Packet, Scene table/UI, apply/import, Taste/Voice. | Done; AOS-2 minimum Scene input also merged in PR #32. |
 | **P1-9** review audit persistence decision | Not implemented. Current Entries have lifecycle/provenance but no approved actor/action history design. P1-7 deliberately defined no actor or action vocabulary. | P1-1 complete. | Unapproved JSON schema, implementation migration in the design PR, reusing `edit_diff_captures` as a review timeline. | Independent of the chronology/AOS path unless architecture review chooses earlier. |
 | **P1-10** local development environment cleanup | Optional and blocked by user-data safety. Local DB stamp is stale; protected stashes exist. | Explicit user approval for data/stash actions. | Automatic DB recreation, `alembic stamp`, stash application/deletion. | Last, and only with approval. |
 
@@ -381,7 +386,7 @@ PR #31's independent reviews found five preparation correctness issues plus one 
 
 ## 12. First-run checklist for a new AI
 
-1. Read `AI-HANDOFF.md`, `docs/architecture/personal-author-os-roadmap.md`, and `docs/architecture/story-summary-chronology.md`. The next action is final targeted re-review of PR #31's identical-timestamp Character/Lore provider-visible order.
+1. Read `AI-HANDOFF.md`, `docs/architecture/personal-author-os-roadmap.md`, and `docs/architecture/story-summary-chronology.md`. PRs #31/#32 are merged. The next action is PR #33 targeted independent re-review of Gemini terminal completion/errors and backend→frontend SSE wire compatibility.
 2. Fetch and compare `origin/main`; if this handoff SHA (`b5b51a4`) is no longer current, re-validate GitHub state, code call sites, and status documents.
 3. Check the working tree and list stashes without modifying either. Keep user work, the local DB, and stashes untouched.
 4. Confirm `FEATURES["entry_store_context"]` still defaults OFF and Alembic head remains `0003_edit_diff_capture` without running or changing the user's local DB.

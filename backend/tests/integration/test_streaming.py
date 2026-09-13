@@ -6,6 +6,7 @@ endpoint, verifying event order (token* -> done), single assistant persistence
 """
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 
 from app.adapters.base import AssembledPrompt, Completion, ModelCapability, ProviderRequest
@@ -61,6 +62,12 @@ def test_chat_sse_stream_and_single_persist(client):
     resp = client.post(f"/api/v1/chats/{chat_id}/messages", json={"content": "안녕?"})
     assert resp.status_code == 200, resp.text
     body = resp.text
+    frames = body.replace("\r\n", "\n").strip().split("\n\n")
+    assert [frame.splitlines()[0] for frame in frames] == [
+        "event: token", "event: token", "event: token", "event: done",
+    ]
+    assert "".join(json.loads(frame.splitlines()[1][6:])["delta"] for frame in frames[:-1]) == "안녕하세요!"
+    assert resp.headers["content-type"].startswith("text/event-stream")
     assert "event: token" in body
     assert "event: done" in body
     # tokens arrive before done

@@ -176,9 +176,9 @@ Every row is one reviewable PR. A design PR and its implementation PR remain sep
 | 2 | P1-8 implementation | approved design | **Merged in PR #28:** produce real equivalence evidence without writes or cutover |
 | 3 | Story-summary chronology architecture contract | P1-8 evidence | **Merged in PR #29:** target-Chapter authority, strict-prior eligibility/order, fail-safe future/current/unknown handling, and responsibility/budget boundaries |
 | 4 | Story-summary chronology implementation | accepted chronology contract | **Merged in PR #30:** prevent future/unknown leaks in real Entry generation context while the existing flag remains default OFF and legacy remains authoritative |
-| 5 | AOS-1 shared Generation Preparation | chronology implementation | **PR #31 tied-order compatibility fix complete; final targeted independent re-review pending:** equal-key Character/Lore preserves the legacy query-supplied sequence; deep immutable provider-neutral snapshot, chronology guard, shared production/P1-8 sources, derived sections/evidence, and metadata whitelist remain intact |
-| 6 | AOS-2 minimum Scene/generation input | AOS-1 | extend the existing small instruction seam only as far as the first usable Scene input requires; no Scene table unless operation-local state proves insufficient |
-| 7 | AOS-3 direct Gemini generation | AOS-2 | feed the same preparation through the existing Provider Adapter path; no new Gemini adapter and no duplicated selection policy |
+| 5 | AOS-1 shared Generation Preparation | chronology implementation | **Merged in PR #31:** equal-key Character/Lore preserves the legacy query-supplied sequence; deep immutable provider-neutral snapshot, chronology guard, shared production/P1-8 sources, derived sections/evidence, and metadata whitelist remain intact |
+| 6 | AOS-2 minimum Scene/generation input | AOS-1 | **Merged in PR #32:** operation-local Scene goal, ordered beats, include/avoid directives through shared Preparation; no Scene table |
+| 7 | AOS-3 direct Gemini generation | AOS-2 | **Implemented on `feature/aos-gemini-direct-generation`; Draft/independent review pending:** the same preparation reaches the existing registry and Gemini adapter with current header auth, stable-model capability, robust SSE/error handling, and existing Chapter/edit-diff writes. See [implementation record](aos-3-gemini-direct-generation.md). |
 | 7a | AOS-3 external Prompt Packet | AOS-2 | render the same preparation through thin Generic/ChatGPT/Claude human-readable formatters; no provider call or independent retrieval/budget logic |
 | 8 | AOS-4 Novel generation workspace UI | AOS-3 | choose direct generation or complete prompt copy, inspect the shared context trace, and receive streamed/generated prose on desktop/tablet/mobile |
 | 9 | AOS-5 Chapter apply/import loop | AOS-3 | apply direct output or paste external output into the existing Chapter draft flow with optimistic concurrency, preparation provenance, and P1-7 edit-diff continuity |
@@ -201,8 +201,8 @@ P1-8 evidence is a decision gate, not an automatic cutover. Its future/unknown s
 Required for the first usable loop:
 
 1. ~~story-summary chronology contract and implementation~~ — PRs #29 and #30 merged;
-2. ~~AOS-1 shared Generation Preparation~~ — tied-order compatibility fix complete, final targeted independent re-review pending;
-3. minimum Scene/generation input;
+2. ~~AOS-1 shared Generation Preparation~~ — PR #31 merged;
+3. ~~minimum Scene/generation input~~ — PR #32 merged;
 4. Gemini direct generation;
 5. external Prompt Packet;
 6. Novel generation workspace UI;
@@ -221,6 +221,8 @@ Add AOS-8, AOS-9, and AOS-10. Learning begins only when repeated evidence can pr
 ## 7. Provider execution priority
 
 The repository already has a `GeminiAdapter` registered beside Anthropic, OpenAI-compatible providers, and Ollama. AOS-3 should therefore reuse, not recreate, that adapter and use Gemini as a practical first validation path for low-cost direct novel generation.
+
+The 2026-09-12 AOS-3 implementation verification is recorded in [AOS-3 Gemini Direct Generation](aos-3-gemini-direct-generation.md). The verified practical target is the stable `gemini-3.8-flash`, while runtime model selection remains exclusively `ModelConfig.model_name`.
 
 This is a delivery priority, not architectural authority. At AOS-3 implementation time, the current Gemini API, supported models, streaming behavior, context/output capabilities, quota, and free/paid availability must be revalidated. No model name, context limit, quota, or price policy is frozen in this roadmap. Provider selection continues through the existing registry/configuration seam, and Anthropic, OpenAI-compatible, and Ollama routes remain supported fallbacks.
 

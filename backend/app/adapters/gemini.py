@@ -1,12 +1,15 @@
 """Gemini adapter (design 13.4, 9.13).
 
-Maps the system block to ``systemInstruction`` and turns to ``contents``.
-Streams ``streamGenerateContent`` chunks normalized to neutral deltas.
+Maps the provider-neutral system block to ``systemInstruction`` and conversation
+turns to ``contents``. ``generateContent`` and ``streamGenerateContent`` remain
+the existing wire contract; provider responses are normalized to plain text.
 """
 from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -18,30 +21,67 @@ from app.adapters.base import (
 )
 from app.core.errors import ProviderError, ProviderRateLimited
 
+# Verified against Google AI for Developers on 2026-09-12. Keep exact model
+# authorities here; future/unknown names deliberately receive the conservative
+# fallback rather than inheriting a guessed family capacity.
+_MODEL_CAPABILITIES: dict[str, tuple[int, int]] = {
+    "gemini-3.8-flash": (1_048_576, 65_536),
+    "gemini-3.7-flash": (1_048_576, 65_536),
+    "gemini-3.6-flash": (1_048_576, 65_536),
+    "gemini-3.5-flash": (1_048_576, 65_536),
+    "gemini-3.5-flash-lite": (1_048_576, 65_536),
+    "gemini-3.1-flash-lite": (1_048_576, 65_536),
+    "gemini-2.5-flash": (1_048_576, 65_536),
+    "gemini-2.5-flash-lite": (1_048_576, 65_536),
+    "gemini-2.5-pro": (1_048_576, 65_536),
+}
+_UNKNOWN_CONTEXT_WINDOW = 32_768
+_UNKNOWN_MAX_OUTPUT_TOKENS = 8_192
+
+_BLOCKED_FINISH_REASONS = {
+    "SAFETY",
+    "RECITATION",
+    "LANGUAGE",
+    "BLOCKLIST",
+    "PROHIBITED_CONTENT",
+    "SPII",
+    "IMAGE_SAFETY",
+}
+_SUCCESS_FINISH_REASONS = {"STOP", "MAX_TOKENS"}
+
 
 class GeminiAdapter:
     provider_name = "gemini"
     default_base_url = "https://generativelanguage.googleapis.com/v1beta"
 
-    def _contents(self, prompt: AssembledPrompt) -> dict:
+    def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        """Accept an optional transport so tests never need external network access."""
+
+        self._transport = transport
+
+    def _contents(self, prompt: AssembledPrompt) -> dict[str, Any]:
         system = prompt.system or "\n".join(
-            m.content for m in prompt.messages if m.role == "system"
+            message.content for message in prompt.messages if message.role == "system"
         )
         contents = []
-        for m in prompt.messages:
-            if m.role == "system":
+        for message in prompt.messages:
+            if message.role == "system":
                 continue
-            role = "user" if m.role == "user" else "model"
-            contents.append({"role": role, "parts": [{"text": m.content}]})
-        body: dict = {"contents": contents}
+            role = "user" if message.role == "user" else "model"
+            contents.append({"role": role, "parts": [{"text": message.content}]})
+        body: dict[str, Any] = {"contents": contents}
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}
         return body
 
     def capabilities(self, model: str) -> ModelCapability:
+        context_window, max_output_tokens = _MODEL_CAPABILITIES.get(
+            model,
+            (_UNKNOWN_CONTEXT_WINDOW, _UNKNOWN_MAX_OUTPUT_TOKENS),
+        )
         return ModelCapability(
-            context_window=1000000 if "1.5" in model else 32000,
-            max_output_tokens=8192,
+            context_window=context_window,
+            max_output_tokens=max_output_tokens,
             supports_streaming=True,
             system_role="instruction",
             tokenizer_hint="approx",
@@ -50,53 +90,260 @@ class GeminiAdapter:
 
     def _url(self, req: ProviderRequest, method: str) -> str:
         base = (req.base_url or self.default_base_url).rstrip("/")
-        return f"{base}/models/{req.model_name}:{method}?key={req.api_key or ''}"
+        model = quote(req.model_name, safe="-._")
+        return f"{base}/models/{model}:{method}"
 
-    async def chat(self, prompt: AssembledPrompt, req: ProviderRequest) -> Completion:
-        body = self._contents(prompt)
-        body["generationConfig"] = {
+    @staticmethod
+    def _headers(req: ProviderRequest) -> dict[str, str]:
+        if not req.api_key:
+            raise ProviderError("Gemini credential is not configured")
+        return {
+            "Content-Type": "application/json",
+            "x-goog-api-key": req.api_key,
+        }
+
+    @staticmethod
+    def _generation_config(req: ProviderRequest) -> dict[str, float | int]:
+        return {
             "temperature": req.temperature,
             "maxOutputTokens": req.max_tokens,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
+
+    async def chat(self, prompt: AssembledPrompt, req: ProviderRequest) -> Completion:
+        body = self._contents(prompt)
+        body["generationConfig"] = self._generation_config(req)
+        headers = self._headers(req)
+        async with httpx.AsyncClient(timeout=60, transport=self._transport) as client:
             try:
-                resp = await client.post(self._url(req, "generateContent"), json=body)
-            except httpx.HTTPError as exc:
-                raise ProviderError(f"gemini request failed: {type(exc).__name__}") from exc
-            self._raise_for_status(resp.status_code)
-            data = resp.json()
-        cand = (data.get("candidates") or [{}])[0]
-        text = "".join(p.get("text", "") for p in cand.get("content", {}).get("parts", []))
-        return Completion(content=text, token_count=0, finish_reason=cand.get("finishReason", "stop"))
+                response = await client.post(
+                    self._url(req, "generateContent"),
+                    headers=headers,
+                    json=body,
+                )
+            except httpx.HTTPError:
+                # Do not chain a transport exception: its text may contain request
+                # metadata. The controlled error is safe for SSE/log formatting.
+                raise ProviderError("Gemini request failed") from None
+            self._raise_for_status(response)
+            data = self._response_json(response)
+
+        candidate = self._candidate(data)
+        assert candidate is not None
+        text = self._candidate_text(candidate)
+        if not text:
+            raise ProviderError("Gemini returned no usable text")
+        usage = data.get("usageMetadata")
+        usage = usage if isinstance(usage, dict) else {}
+        token_count = usage.get("candidatesTokenCount", candidate.get("tokenCount", 0))
+        if not isinstance(token_count, int) or isinstance(token_count, bool):
+            token_count = 0
+        finish_reason = candidate.get("finishReason")
+        normalized_finish = (
+            finish_reason.lower() if isinstance(finish_reason, str) else "stop"
+        )
+        return Completion(
+            content=text,
+            token_count=token_count,
+            finish_reason=normalized_finish,
+        )
 
     async def stream_chat(
         self, prompt: AssembledPrompt, req: ProviderRequest
     ) -> AsyncIterator[str]:
         body = self._contents(prompt)
-        body["generationConfig"] = {
-            "temperature": req.temperature,
-            "maxOutputTokens": req.max_tokens,
-        }
-        url = self._url(req, "streamGenerateContent") + "&alt=sse"
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream("POST", url, json=body) as resp:
-                self._raise_for_status(resp.status_code)
-                async for line in resp.aiter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    raw = line[len("data:") :].strip()
-                    try:
-                        evt = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    for cand in evt.get("candidates", []):
-                        for part in cand.get("content", {}).get("parts", []):
-                            if part.get("text"):
-                                yield part["text"]
+        body["generationConfig"] = self._generation_config(req)
+        headers = self._headers(req)
+        yielded_text = False
+        primary_index: int | None = None
+        terminal_reason: str | None = None
+
+        try:
+            async with httpx.AsyncClient(timeout=None, transport=self._transport) as client:
+                async with client.stream(
+                    "POST",
+                    self._url(req, "streamGenerateContent"),
+                    params={"alt": "sse"},
+                    headers=headers,
+                    json=body,
+                ) as response:
+                    self._raise_for_status(response)
+                    async for event in self._iter_sse_events(response):
+                        # Errors are irreversible, including errors delivered inside
+                        # an HTTP-200 stream. Never expose Google's raw error body.
+                        if "error" in event:
+                            error = event["error"]
+                            if isinstance(error, dict) and error.get("code") == 429:
+                                raise ProviderRateLimited("Gemini rate limited")
+                            raise ProviderError("Gemini stream failed")
+                        candidate = self._candidate(
+                            event, allow_missing=True, primary_index=primary_index,
+                        )
+                        if candidate is None:
+                            continue
+                        primary_index = candidate.get("index", 0)
+                        if terminal_reason is not None:
+                            raise ProviderError("Gemini returned a candidate after completion")
+                        finish_reason = candidate.get("finishReason", "")
+                        if finish_reason in _SUCCESS_FINISH_REASONS:
+                            terminal_reason = finish_reason
+                        # A finish-only candidate is valid; an intermediate
+                        # candidate must carry usable text for this prose adapter.
+                        if "content" not in candidate and terminal_reason is not None:
+                            continue
+                        content = candidate.get("content")
+                        if not isinstance(content, dict) or not isinstance(content.get("parts"), list):
+                            raise ProviderError("Gemini returned a malformed candidate content")
+                        text = self._candidate_text(candidate)
+                        if not text and (
+                            terminal_reason is None
+                            or any(not isinstance(part, dict) or not isinstance(part.get("text"), str)
+                                   for part in content["parts"])
+                        ):
+                            raise ProviderError("Gemini returned no usable text")
+                        if text:
+                            yielded_text = True
+                            yield text
+        except httpx.HTTPError:
+            raise ProviderError("Gemini request failed") from None
+
+        if not yielded_text:
+            raise ProviderError("Gemini returned no usable text")
+        if terminal_reason is None:
+            raise ProviderError("Gemini stream ended before completion")
+
+    @classmethod
+    async def _iter_sse_events(
+        cls, response: httpx.Response
+    ) -> AsyncIterator[dict[str, Any]]:
+        data_lines: list[str] = []
+
+        def decode_pending() -> dict[str, Any] | None:
+            if not data_lines:
+                return None
+            raw = "\n".join(data_lines)
+            data_lines.clear()
+            if raw == "[DONE]":
+                return None
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                raise ProviderError("Gemini returned a malformed stream event") from None
+            if not isinstance(event, dict):
+                raise ProviderError("Gemini returned a malformed stream event")
+            return event
+
+        async for line in response.aiter_lines():
+            if line == "":
+                event = decode_pending()
+                if event is not None:
+                    yield event
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[len("data:") :].lstrip())
+                continue
+            if line.startswith(("event:", "id:", "retry:")):
+                continue
+            raise ProviderError("Gemini returned an unexpected stream line")
+
+        event = decode_pending()
+        if event is not None:
+            yield event
+
+    @classmethod
+    def _candidate(
+        cls,
+        data: dict[str, Any],
+        *,
+        allow_missing: bool = False,
+        primary_index: int | None = None,
+    ) -> dict[str, Any] | None:
+        prompt_feedback = data.get("promptFeedback")
+        if isinstance(prompt_feedback, dict) and prompt_feedback.get("blockReason"):
+            raise ProviderError("Gemini blocked the prompt")
+
+        candidates = data.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            # These documented response metadata fields do not establish
+            # candidate completion. Explicit empty candidates are not metadata.
+            metadata_types = {
+                "usageMetadata": dict, "modelVersion": str,
+                "responseId": str, "modelStatus": dict,
+                "promptFeedback": dict,
+            }
+            if (
+                allow_missing and "candidates" not in data and data
+                and all(key in metadata_types and isinstance(value, metadata_types[key])
+                        for key, value in data.items())
+            ):
+                return None
+            raise ProviderError("Gemini returned no usable candidate")
+        candidate = next(
+            (
+                item
+                for item in candidates
+                if isinstance(item, dict) and item.get("index", 0) == (primary_index or 0)
+            ),
+            candidates[0] if primary_index is None else None,
+        )
+        if not isinstance(candidate, dict):
+            raise ProviderError("Gemini returned a malformed candidate")
+        index = candidate.get("index", 0)
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise ProviderError("Gemini returned a malformed candidate index")
+
+        finish_reason = candidate.get("finishReason", "")
+        if not isinstance(finish_reason, str):
+            raise ProviderError("Gemini returned a malformed candidate")
+        if finish_reason in _BLOCKED_FINISH_REASONS:
+            raise ProviderError("Gemini blocked the response")
+        if finish_reason and finish_reason not in _SUCCESS_FINISH_REASONS:
+            raise ProviderError("Gemini could not complete the response")
+        return candidate
 
     @staticmethod
-    def _raise_for_status(status: int) -> None:
+    def _candidate_text(candidate: dict[str, Any]) -> str:
+        content = candidate.get("content")
+        if not isinstance(content, dict):
+            return ""
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            return ""
+        return "".join(
+            text
+            for part in parts
+            if isinstance(part, dict)
+            and isinstance((text := part.get("text")), str)
+            and text
+        )
+
+    @staticmethod
+    def _response_json(response: httpx.Response) -> dict[str, Any]:
+        try:
+            data = response.json()
+        except json.JSONDecodeError:
+            raise ProviderError("Gemini returned a malformed response") from None
+        if not isinstance(data, dict):
+            raise ProviderError("Gemini returned a malformed response")
+        return data
+
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
+        status = response.status_code
         if status == 429:
-            raise ProviderRateLimited("gemini rate limited", {"retry_after": 5})
+            details: dict[str, str] = {}
+            retry_after = response.headers.get("Retry-After")
+            if retry_after:
+                details["retry_after"] = retry_after
+            raise ProviderRateLimited("Gemini rate limited", details)
+        if status in {401, 403}:
+            raise ProviderError("Gemini authentication or permission failed")
+        if status == 404:
+            raise ProviderError("Gemini model is unavailable")
+        if status == 400:
+            raise ProviderError("Gemini rejected the request")
+        if status >= 500:
+            raise ProviderError("Gemini provider unavailable")
         if status >= 400:
-            raise ProviderError(f"gemini returned status {status}")
+            raise ProviderError("Gemini request failed")

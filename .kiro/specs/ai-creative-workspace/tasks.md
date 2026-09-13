@@ -170,6 +170,12 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 - **Migration 판단:** **B** — `Chapter.id/work_id/index`, `UNIQUE(work_id,index)`, Entry Chapter subject와 lifecycle 필드로 충분하나 application invariant/validation 보강이 필요하다. schema migration은 불필요하다.
 - **추천 모델/effort:** Claude Opus 5 / High (cross-cutting correctness contract).
 
+#### AOS-3 direct Gemini generation
+- **상태:** `feature/aos-gemini-direct-generation`에서 구현 완료, Draft PR 및 독립 review 대기. PR #32 merge commit `b39e6fff48b82d8c356f241aaa1357a56c7a535b` 기반이다.
+- **경계:** 기존 `ContinueRequest → GenerationPreparation → PromptEngine → ProviderRequest → ProviderRegistry → GeminiAdapter → Novel SSE → Chapter/edit-diff`만 사용한다. 새 endpoint, adapter, prompt assembler, Scene logic, SDK, schema/migration, UI는 없다.
+- **공식 검증:** 2026-09-12 Google AI for Developers 기준 stable `gemini-3.8-flash`, input 1,048,576, output 65,536, Standard free tier, `x-goog-api-key` header를 확인했다. 상세 기록은 `docs/architecture/aos-3-gemini-direct-generation.md`다.
+- **다음:** 독립 reviewer가 Draft PR을 review한 뒤 merge 판단한다. merge 후 `external Prompt Packet → Novel Workspace → Chapter apply/import → Voice minimal` 순서다.
+
 #### P1-9 review 감사(actor/action history) persistence 결정
 - **목적:** `review-card-api.md`가 남긴 미결 사항(리뷰 행위자·이력·되돌림 메타데이터)을 **버전 없는 JSON 즉흥 스키마 없이** 결정한다.
 - **선행 의존성:** P1-1.
@@ -383,10 +389,11 @@ Phase 6  Bench 확장  ← Phase 3 checks 확보 후 본격화(픽스처는 Phas
 | 2 | ~~**P1-8 implementation**~~ | **완료:** PR #28 merge commit `ac791ba`; diagnostics only, authority cutover 없음. | GPT-5.6 Sol / High |
 | 3 | ~~**Story-summary chronology Architecture Contract**~~ | **완료:** PR #29 merge commit `e5ffc730`; concurrent reorder와 legacy blank/provenance scope 포함. | Claude Opus 5 / High |
 | 4 | ~~**Story-summary chronology implementation**~~ | **완료:** PR #30 merge commit `b5b51a4`; reviewed final head `f21be77`과 동일 tree. | GPT-5.6 Sol / High |
-| 5 | **AOS-1 shared Generation Preparation final targeted re-review** | 동일 timestamp Character와 동일 priority/timestamp Lore가 legacy source sequence로 provider prompt에 나타나는 두 반례만 최종 재검증한다. | GPT-5.6 Sol / High |
-| 6 | **minimum Scene/generation input** | AOS-1 merge 뒤 현재 instruction seam을 첫 usable scene 입력까지 최소 확장한다. | GPT-5.6 Terra / High |
+| 5 | ~~**AOS-1 shared Generation Preparation**~~ | **완료 및 merge:** provider-neutral immutable preparation과 legacy exact-order compatibility를 확정했다. | GPT-5.6 Sol / High |
+| 6 | ~~**AOS-2 minimum Scene/generation input**~~ | **완료 및 merge:** PR #32 merge commit `b39e6fff`; Scene intent를 동일 preparation/prompt 경로에 추가했다. | GPT-5.6 Terra / High |
+| 7 | **AOS-3 Gemini Direct independent review** | 기존 Novel continue/provider registry/GeminiAdapter 경로의 header auth, capability, stream/error/owner/write atomicity를 독립 검증한다. Author PR은 Draft 상태를 유지한다. | GPT-5.6 Sol / High |
 
-**현재 순서:** PR #28 P1-8 merge 완료 → PR #29 chronology Contract merge 완료 → PR #30 chronology implementation merge 완료 → PR #31 AOS-1 blocker targeted re-review → minimum Scene/generation input → Gemini direct generation → external Prompt Packet. P1-8과 chronology implementation은 authority cutover나 legacy 제거가 아니다. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
+**현재 순서:** AOS-1/2 merge 완료 → AOS-3 Gemini Direct Draft 독립 review → merge 뒤 `external Prompt Packet → Novel Workspace → Chapter apply/import → Voice minimal`. P1-8과 chronology implementation은 authority cutover나 legacy 제거가 아니다. P1-9(review 감사 persistence)는 독립 작업이며, P1-7 capture 소비는 AOS-8/P2-5 read contract 이후의 Analyst가 소유한다.
 
 ---
 
