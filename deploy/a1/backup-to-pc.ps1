@@ -23,12 +23,25 @@ if (Test-Path -LiteralPath $Destination) {
     New-Item -ItemType Directory -Path $Destination | Out-Null
 }
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$acl = New-Object Security.AccessControl.DirectorySecurity
-$acl.SetOwner($sid)
-$acl.SetAccessRuleProtection($true, $false)
-$rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
-$acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $Destination -AclObject $acl
+$acl = Get-Acl -LiteralPath $Destination
+if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) {
+    throw 'Recovery destination must be owned by the current Windows user.'
+}
+# icacls changes only DACL access rules; Set-Acl can also attempt privileged
+# owner/audit descriptor changes on repeated runs. Never require elevation here.
+& icacls.exe $Destination '/inheritance:r' '/grant:r' ("*" + $sid.Value + ':(OI)(CI)F') '/q' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not protect recovery destination access rules.' }
+$otherSids = @($acl.Access | ForEach-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } | Where-Object { $_ -ne $sid.Value } | Select-Object -Unique)
+foreach ($otherSid in $otherSids) {
+    & icacls.exe $Destination '/remove' ("*" + $otherSid) '/q' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not remove unrelated recovery access rule.' }
+}
+& icacls.exe $Destination '/remove:d' ("*" + $sid.Value) '/q' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not clear a conflicting current-user deny rule.' }
+$protected = Get-Acl -LiteralPath $Destination
+if (-not $protected.AreAccessRulesProtected -or @($protected.Access | Where-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value }).Count -gt 0) {
+    throw 'Private current-user recovery permissions could not be verified.'
+}
 Set-Content -LiteralPath (Join-Path $Destination 'gorofan-recovery-target') -Value 'Private gorofan recovery backup; never upload to Git.'
 
 function Quote-NativeArg([string]$Value) {
