@@ -47,7 +47,7 @@ _BLOCKED_FINISH_REASONS = {
     "SPII",
     "IMAGE_SAFETY",
 }
-_SUCCESS_FINISH_REASONS = {"", "STOP", "MAX_TOKENS"}
+_SUCCESS_FINISH_REASONS = {"STOP", "MAX_TOKENS"}
 
 
 class GeminiAdapter:
@@ -154,6 +154,8 @@ class GeminiAdapter:
         body["generationConfig"] = self._generation_config(req)
         headers = self._headers(req)
         yielded_text = False
+        primary_index: int | None = None
+        terminal_reason: str | None = None
 
         try:
             async with httpx.AsyncClient(timeout=None, transport=self._transport) as client:
@@ -166,10 +168,38 @@ class GeminiAdapter:
                 ) as response:
                     self._raise_for_status(response)
                     async for event in self._iter_sse_events(response):
-                        candidate = self._candidate(event, allow_missing=True)
+                        # Errors are irreversible, including errors delivered inside
+                        # an HTTP-200 stream. Never expose Google's raw error body.
+                        if "error" in event:
+                            error = event["error"]
+                            if isinstance(error, dict) and error.get("code") == 429:
+                                raise ProviderRateLimited("Gemini rate limited")
+                            raise ProviderError("Gemini stream failed")
+                        candidate = self._candidate(
+                            event, allow_missing=True, primary_index=primary_index,
+                        )
                         if candidate is None:
                             continue
+                        primary_index = candidate.get("index", 0)
+                        if terminal_reason is not None:
+                            raise ProviderError("Gemini returned a candidate after completion")
+                        finish_reason = candidate.get("finishReason", "")
+                        if finish_reason in _SUCCESS_FINISH_REASONS:
+                            terminal_reason = finish_reason
+                        # A finish-only candidate is valid; an intermediate
+                        # candidate must carry usable text for this prose adapter.
+                        if "content" not in candidate and terminal_reason is not None:
+                            continue
+                        content = candidate.get("content")
+                        if not isinstance(content, dict) or not isinstance(content.get("parts"), list):
+                            raise ProviderError("Gemini returned a malformed candidate content")
                         text = self._candidate_text(candidate)
+                        if not text and (
+                            terminal_reason is None
+                            or any(not isinstance(part, dict) or not isinstance(part.get("text"), str)
+                                   for part in content["parts"])
+                        ):
+                            raise ProviderError("Gemini returned no usable text")
                         if text:
                             yielded_text = True
                             yield text
@@ -178,6 +208,8 @@ class GeminiAdapter:
 
         if not yielded_text:
             raise ProviderError("Gemini returned no usable text")
+        if terminal_reason is None:
+            raise ProviderError("Gemini stream ended before completion")
 
     @classmethod
     async def _iter_sse_events(
@@ -225,6 +257,7 @@ class GeminiAdapter:
         data: dict[str, Any],
         *,
         allow_missing: bool = False,
+        primary_index: int | None = None,
     ) -> dict[str, Any] | None:
         prompt_feedback = data.get("promptFeedback")
         if isinstance(prompt_feedback, dict) and prompt_feedback.get("blockReason"):
@@ -232,26 +265,40 @@ class GeminiAdapter:
 
         candidates = data.get("candidates")
         if not isinstance(candidates, list) or not candidates:
-            if allow_missing:
+            # These documented response metadata fields do not establish
+            # candidate completion. Explicit empty candidates are not metadata.
+            metadata_types = {
+                "usageMetadata": dict, "modelVersion": str,
+                "responseId": str, "modelStatus": dict,
+                "promptFeedback": dict,
+            }
+            if (
+                allow_missing and "candidates" not in data and data
+                and all(key in metadata_types and isinstance(value, metadata_types[key])
+                        for key, value in data.items())
+            ):
                 return None
             raise ProviderError("Gemini returned no usable candidate")
         candidate = next(
             (
                 item
                 for item in candidates
-                if isinstance(item, dict) and item.get("index") == 0
+                if isinstance(item, dict) and item.get("index", 0) == (primary_index or 0)
             ),
-            candidates[0],
+            candidates[0] if primary_index is None else None,
         )
         if not isinstance(candidate, dict):
             raise ProviderError("Gemini returned a malformed candidate")
+        index = candidate.get("index", 0)
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise ProviderError("Gemini returned a malformed candidate index")
 
         finish_reason = candidate.get("finishReason", "")
         if not isinstance(finish_reason, str):
             raise ProviderError("Gemini returned a malformed candidate")
         if finish_reason in _BLOCKED_FINISH_REASONS:
             raise ProviderError("Gemini blocked the response")
-        if finish_reason not in _SUCCESS_FINISH_REASONS:
+        if finish_reason and finish_reason not in _SUCCESS_FINISH_REASONS:
             raise ProviderError("Gemini could not complete the response")
         return candidate
 

@@ -6,10 +6,12 @@ assertion here is about what the production write path actually persisted.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import AsyncIterator
 from functools import partial
 from itertools import count
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -169,6 +171,8 @@ def test_the_stream_error_path_marks_partial_and_keeps_the_provider_error(
         _work_id, chapter_id = _setup(novel_client, title="부분실패")
         response = _continue(novel_client, chapter_id)
         assert "event: error" in response.text
+        fixture_path = Path(__file__).resolve().parents[3] / "frontend/src/lib/api/fixtures/novel-sse.json"
+        assert response.text == json.loads(fixture_path.read_text(encoding="utf-8"))["other_provider_error"]
     finally:
         cast(Any, novel_client.app).state.registry.register("fake", _RecordingAdapter)
 

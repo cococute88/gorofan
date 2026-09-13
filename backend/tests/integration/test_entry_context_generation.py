@@ -8,9 +8,11 @@ that must survive the new pre-stream retrieval step.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -1109,6 +1111,8 @@ def test_novel_impossible_budget_returns_controlled_sse_error_without_provider_o
     assert response.text.count("event: error") == 1
     assert '"code": "VALIDATION_ERROR"' in response.text
     assert "Prompt cannot fit the available context budget" in response.text
+    fixture_path = Path(__file__).resolve().parents[3] / "frontend/src/lib/api/fixtures/novel-sse.json"
+    assert response.text == json.loads(fixture_path.read_text(encoding="utf-8"))["budget_error"]
     assert "event: token" not in response.text
     assert "event: done" not in response.text
     assert _CAPTURED == []

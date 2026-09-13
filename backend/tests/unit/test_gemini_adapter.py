@@ -359,3 +359,93 @@ async def test_gemini_stream_cancellation_closes_upstream_without_duplicate_requ
     assert pending.done()
     assert upstream.closed is True
     assert attempts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("followup", [
+    None,
+    {},
+    {"candidates": []},
+    {"candidates": [{"index": 0}]},
+    {"candidates": [{"index": 0, "content": {}}]},
+    {"candidates": [{"index": 0, "content": {"parts": [{"functionCall": {}}]}}]},
+    _response_event(finish_reason="SAFETY"),
+    _response_event(finish_reason="OTHER"),
+    _response_event(finish_reason="UNEXPECTED_TOOL_CALL"),
+    _response_event("대안", finish_reason="STOP", index=1),
+])
+async def test_gemini_partial_stream_requires_primary_terminal_completion(followup: dict | None) -> None:
+    events = [_response_event("앞부분")]
+    if followup is not None:
+        events.append(followup)
+    adapter = GeminiAdapter(transport=httpx.MockTransport(
+        lambda _req: httpx.Response(200, text=_sse(*events)),
+    ))
+    stream = adapter.stream_chat(_prompt(), _request())
+    assert await anext(stream) == "앞부분"
+    with pytest.raises(ProviderError):
+        await anext(stream)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [400, 429, 503])
+@pytest.mark.parametrize("later_stop", [False, True])
+async def test_gemini_in_band_error_is_irreversible_and_secret_safe(code: int, later_stop: bool) -> None:
+    events = [_response_event("앞부분"), {"error": {"code": code, "message": SECRET}}]
+    if later_stop:
+        events.append(_response_event("부활 금지", finish_reason="STOP"))
+    adapter = GeminiAdapter(transport=httpx.MockTransport(
+        lambda _req: httpx.Response(200, text=_sse(*events)),
+    ))
+    stream = adapter.stream_chat(_prompt(), _request())
+    assert await anext(stream) == "앞부분"
+    with pytest.raises(ProviderRateLimited if code == 429 else ProviderError) as raised:
+        await anext(stream)
+    assert SECRET not in str(raised.value)
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish_reason", ["STOP", "MAX_TOKENS"])
+@pytest.mark.parametrize("empty_text_part", [False, True])
+async def test_gemini_finish_only_and_documented_metadata_complete_prose(
+    finish_reason: str, empty_text_part: bool,
+) -> None:
+    terminal: dict[str, object] = {"index": 0, "finishReason": finish_reason}
+    if empty_text_part:
+        terminal["content"] = {"parts": [{"text": ""}]}
+    events = [
+        _response_event("첫째"),
+        {"usageMetadata": {"totalTokenCount": 1}, "modelVersion": "test"},
+        _response_event("둘째"),
+        {"candidates": [terminal]},
+        {"usageMetadata": {"totalTokenCount": 2}, "responseId": "test"},
+    ]
+    adapter = GeminiAdapter(transport=httpx.MockTransport(
+        lambda _req: httpx.Response(200, text=_sse(*events)),
+    ))
+    assert await _collect(adapter) == ["첫째", "둘째"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_in_band_429_before_text_uses_registry_bounded_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.adapters.registry import ProviderRegistry
+
+    attempts = 0
+
+    async def no_delay(_seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr("app.adapters.registry.asyncio.sleep", no_delay)
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(200, text=_sse({"error": {"code": 429, "message": SECRET}}))
+
+    registry = ProviderRegistry()
+    registry.register("gemini", lambda: GeminiAdapter(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ProviderRateLimited):
+        _ = [text async for text in registry.stream_with_resilience(_prompt(), _request())]
+    assert attempts == 3

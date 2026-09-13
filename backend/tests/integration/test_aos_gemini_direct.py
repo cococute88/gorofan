@@ -5,6 +5,7 @@ import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from functools import partial
+from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
@@ -30,6 +31,12 @@ OWNER_SECRET = "owner-gemini-secret"
 FOREIGN_SECRET = "foreign-gemini-secret-must-not-leak"
 MEMORY_SENTINEL = "PRIVATE_CHAT_MEMORY_MUST_NOT_REACH_NOVEL"
 FUTURE_SENTINEL = "FUTURE_CHAPTER_SUMMARY_MUST_NOT_LEAK"
+
+
+def _wire_fixture(name: str) -> str:
+    """Shared captured wire, also consumed by the actual frontend streamSSE."""
+    path = Path(__file__).resolve().parents[3] / "frontend/src/lib/api/fixtures/novel-sse.json"
+    return json.loads(path.read_text(encoding="utf-8"))[name]
 
 
 def _sse(*events: dict) -> str:
@@ -398,6 +405,9 @@ def test_aos_preparation_reaches_existing_gemini_once_and_appends_once(
     )
 
     assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-store"
+    assert response.text == _wire_fixture("success")
     assert response.text.count("event: token") == 2
     assert response.text.count("event: done") == 1
     assert "event: error" not in response.text
@@ -459,6 +469,128 @@ def test_aos_preparation_reaches_existing_gemini_once_and_appends_once(
     assert OWNER_SECRET not in ciphertext
     listed = gemini_client.get("/api/v1/credentials").text
     assert OWNER_SECRET not in listed
+
+
+@pytest.mark.parametrize("followup,fixture_name", [
+    (None, "premature_eof"),
+    ({"error": {"code": 429, "message": OWNER_SECRET}}, "rate_limited"),
+    ({}, None),
+    ({"candidates": []}, None),
+    ({"candidates": [{"index": 0}]}, None),
+    ({"candidates": [{"index": 0, "content": {}}]}, None),
+    ({"candidates": [{"index": 0, "content": {"parts": [{"functionCall": {}}]}}]}, None),
+    ({"candidates": [{"index": 0, "finishReason": "SAFETY"}]}, None),
+])
+def test_gemini_partial_failure_uses_existing_partial_append_and_real_error_wire(
+    gemini_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    followup: dict | None, fixture_name: str | None,
+) -> None:
+    calls = 0
+    append_modes = []
+    original_append = NovelService._append_chapter
+
+    async def counted_append(self, *args, **kwargs):  # noqa: ANN001, ANN202
+        append_modes.append(kwargs["partial"])
+        return await original_append(self, *args, **kwargs)
+
+    monkeypatch.setattr(NovelService, "_append_chapter", counted_append)
+    events = [_text_event("앞부분")]
+    if followup is not None:
+        events.append(followup)
+    # In-band failure must not be revived by a subsequent fabricated STOP.
+    if followup is not None and "error" in followup:
+        events.append(_text_event("부활 금지", finish_reason="STOP"))
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, text=_sse(*events))
+
+    cast(Any, gemini_client.app).state.registry.register(
+        "gemini", lambda: GeminiAdapter(transport=httpx.MockTransport(handler)),
+    )
+    credential = gemini_client.post("/api/v1/credentials", json={
+        "provider": "gemini", "api_key": OWNER_SECRET,
+    }).json()
+    _create_gemini_config(gemini_client, credential_id=credential["id"])
+    # Keep this failure fixture operation-local: unrelated Characters would
+    # fill the shared test DB's paginated list before the existing CRUD suite.
+    work_id = gemini_client.post("/api/v1/works", json={"title": "partial failure"}).json()["id"]
+    chapter_id = gemini_client.post(f"/api/v1/works/{work_id}/chapters", json={
+        "title": "current", "content_text": "기존 본문",
+    }).json()["id"]
+    before = _chapter(gemini_client, work_id, chapter_id)
+    response = gemini_client.post(
+        f"/api/v1/works/chapters/{chapter_id}/continue",
+        json={"instruction": "계속", "target_words": 100},
+    )
+    assert calls == 1  # Registry must not retry after the first text delta.
+    assert append_modes == [True]
+    assert "data: event:" not in response.text
+    frames = response.text.replace("\r\n", "\n").strip().split("\n\n")
+    assert [frame.splitlines()[0] for frame in frames] == ["event: token", "event: error"]
+    assert OWNER_SECRET not in response.text
+    if fixture_name is not None:
+        assert response.text == _wire_fixture(fixture_name)
+    after = _chapter(gemini_client, work_id, chapter_id)
+    assert after["content_text"] == before["content_text"] + "\n\n앞부분"
+    assert after["version"] == before["version"] + 1
+    captures = _run(gemini_client, _captures, chapter_id)
+    assert len(captures) == 1
+    assert captures[0].context["partial_stream"] is True
+
+
+@pytest.mark.parametrize("event,fixture_name", [
+    ({"promptFeedback": {"blockReason": "SAFETY"}}, "blocked"),
+    (_text_event("", finish_reason="STOP"), None),
+])
+def test_gemini_pre_text_blocked_or_empty_has_error_wire_and_zero_writes(
+    gemini_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    event: dict, fixture_name: str | None,
+) -> None:
+    calls = 0
+    append_calls = 0
+    original_append = NovelService._append_chapter
+
+    async def counted_append(self, *args, **kwargs):  # noqa: ANN001, ANN202
+        nonlocal append_calls
+        append_calls += 1
+        return await original_append(self, *args, **kwargs)
+
+    monkeypatch.setattr(NovelService, "_append_chapter", counted_append)
+    _disable_retries(gemini_client, monkeypatch)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, text=_sse(event))
+
+    cast(Any, gemini_client.app).state.registry.register(
+        "gemini", lambda: GeminiAdapter(transport=httpx.MockTransport(handler)),
+    )
+    credential = gemini_client.post("/api/v1/credentials", json={
+        "provider": "gemini", "api_key": OWNER_SECRET,
+    }).json()
+    _create_gemini_config(gemini_client, credential_id=credential["id"])
+    work_id = gemini_client.post("/api/v1/works", json={"title": "empty failure"}).json()["id"]
+    chapter_id = gemini_client.post(f"/api/v1/works/{work_id}/chapters", json={
+        "title": "current", "content_text": "기존 본문",
+    }).json()["id"]
+    before = _chapter(gemini_client, work_id, chapter_id)
+    response = gemini_client.post(f"/api/v1/works/chapters/{chapter_id}/continue", json={
+        "instruction": "계속", "target_words": 100,
+    })
+    assert calls == 1
+    assert append_calls == 0
+    assert response.text.startswith("event: error\r\ndata: ")
+    assert response.text.count("event: error") == 1
+    assert "event: done" not in response.text and "event: token" not in response.text
+    if fixture_name is not None:
+        assert response.text == _wire_fixture(fixture_name)
+    after = _chapter(gemini_client, work_id, chapter_id)
+    assert after["version"] == before["version"]
+    assert after["content_text"] == before["content_text"]
+    assert _run(gemini_client, _capture_count, chapter_id) == 0
 
 
 def test_gemini_legacy_request_without_scene_still_streams_and_appends(

@@ -69,8 +69,10 @@ and is supplied as the header value.
 ## Adapter and failure contract
 
 The existing `generateContent` and `streamGenerateContent` REST paths remain in use.
-The official documentation still defines both for content generation, so AOS-3 does
-not migrate the provider architecture to Interactions and adds no Google SDK.
+On 2026-09-13, Google's [Interactions overview](https://ai.google.dev/gemini-api/docs/interactions-overview)
+describes Interactions as GA and recommended for new projects, while the legacy
+Generate Content surface remains fully supported. AOS-3 keeps that supported surface
+to minimize scope; it adds no Interactions migration or Google SDK.
 
 Gemini request mapping is deliberately thin:
 
@@ -90,6 +92,45 @@ secrets are not included in exception messages. A first-token-free failure write
 Chapter content, version, or edit-diff row; an existing mid-stream partial contract
 remains unchanged. Registry retry remains bounded before the first token and never
 restarts after streaming begins.
+
+### Stream completion and browser wire fix — 2026-09-13
+
+Text received does not imply completion. The adapter pins the primary candidate
+index and requires its explicit `STOP` or `MAX_TOKENS` terminal reason before EOF.
+The [official Candidate/FinishReason schema](https://ai.google.dev/api/generate-content#Candidate)
+defines an empty reason as still generating; `MAX_TOKENS` means the requested token
+limit was reached and is accepted as completed, possibly truncated prose. Safety,
+tool-specific, unknown reasons, malformed candidates, and terminal-free EOF fail.
+Documented response metadata is allowed without treating it as completion; a
+finish-only primary candidate is allowed after usable text.
+
+An SSE JSON `error` immediately and irreversibly fails the stream. The
+[Google HTTP JSON error contract](https://google.aip.dev/193#http11json-representation)
+uses an `error` object with HTTP `code`: 429 maps to `ProviderRateLimited`, other
+errors to `ProviderError`, without copying raw upstream messages. Registry retry
+remains before-first-text only. A partial failure emits token(s), one error and no
+done; the existing partial append/version/edit-diff contract records
+`partial_stream=true`. No successful/full completion is recorded.
+
+`app/api/sse.py` now supplies structured event/data input. `EventSourceResponse`
+alone frames the wire for Novel and Chat. The frontend accepts both LF and CRLF
+frame boundaries, including boundaries split across byte chunks. The shared
+`frontend/src/lib/api/fixtures/novel-sse.json` contains actual Novel success,
+premature-EOF and in-band-429 wire: backend endpoint tests assert exact equality,
+and the real frontend `streamSSE()` consumes the same bytes with 1/17/all-byte chunks.
+Pre-token blocked, AOS-2 budget-error and non-Gemini partial-error wire are also
+asserted by their real endpoint tests and consumed by that frontend matrix.
+
+Follow-up validation: Gemini adapter **45**, registry **4**, AOS-3 endpoint **18**,
+SSE helper **6**, network guard **2** tests passed; backend full **461 passed**.
+The prior independent review's **49** counterexamples passed. Frontend **49** tests
+passed (including **41** SSE parser/stream tests), lint and production build passed.
+Ruff passed; scoped MyPy **0 errors / 9 files**; full MyPy **29 errors / 8 files**
+remains the pre-existing baseline after removing the old SSE helper type error
+(previously 30 / 9). Alembic retains the single `0003_edit_diff_capture` head.
+Protected database fingerprints and stash are unchanged; no real credential was
+used. **automated external AI-provider request attempts = 0**; live Gemini smoke:
+**NOT RUN**. PR #33 remains Draft for targeted independent re-review.
 
 ## Capability policy
 

@@ -2,7 +2,8 @@
 
 > **Canonical handoff document for a new AI session.**
 >
-> **Verified at:** 2026-09-12
+> **Verified at:** 2026-09-13 stream/SSE follow-up; the 2026-09-12 tables below are the original implementation baseline.
+> **Follow-up:** backend 461 passed; frontend 49 passed; independent counterexamples 49 passed. Gemini requires explicit primary-candidate completion; EventSourceResponse frames structured events once. See [AOS-3 record](docs/architecture/aos-3-gemini-direct-generation.md). PR #33 stays Draft for targeted independent re-review.
 > **Verified `main`:** `b39e6fff48b82d8c356f241aaa1357a56c7a535b`
 > **Current implementation branch:** `feature/aos-gemini-direct-generation`
 
@@ -287,7 +288,7 @@ The current `tasks.md`, `implementation-status.md`, and production code agree on
 | ~~**P1-8**~~ legacy Character/World/Lore ↔ Entry equivalence bridge | **Complete** (design PR #27, implementation PR #28, merge `ac791ba`). Pure projections, coverage precedence, typed owner-safe API, and Chat/Novel runtime shadows are covered by 54 focused tests. Legacy remains authoritative and `_make_lore_blocks()` still runs. | — | Backfill, legacy deletion, read cutover, migration, or flipping the flag as part of the bridge. | Done; chronology evidence feeds the next gate. |
 | ~~**Story-summary chronology contract**~~ | **Complete** (PR #29 merge `e5ffc730`). | P1-8 merged. | — | Done. |
 | ~~**Story-summary chronology implementation**~~ | **Complete** (PR #30 merge `b5b51a4`, reviewed head `f21be77`, identical tree). Explicit target anchor, consistent snapshot, prior-only eligibility, Chapter-index order, overlap/duplicate fail-closed, and P1-8 alignment are present. | Accepted chronology contract. | — | Done. |
-| **AOS-1 shared Generation Preparation** | PR #31 tied-order compatibility fix complete; Draft pending final targeted independent re-review. Character/Lore equal-key cases now preserve the legacy query-supplied sequence without a new UUID tie-break; previous blocker fixes remain intact. | PR #30 merged. | Provider endpoint/key/model UI, Prompt Packet, Scene table/UI, apply/import, Taste/Voice. | Final tied-order re-review, then separate Ready/merge decision. |
+| ~~**AOS-1 shared Generation Preparation**~~ | **Merged in PR #31.** Character/Lore equal-key cases preserve the legacy query-supplied sequence without a new UUID tie-break; previous blocker fixes remain intact. | PR #30 merged. | Provider endpoint/key/model UI, Prompt Packet, Scene table/UI, apply/import, Taste/Voice. | Done; AOS-2 minimum Scene input also merged in PR #32. |
 | **P1-9** review audit persistence decision | Not implemented. Current Entries have lifecycle/provenance but no approved actor/action history design. P1-7 deliberately defined no actor or action vocabulary. | P1-1 complete. | Unapproved JSON schema, implementation migration in the design PR, reusing `edit_diff_captures` as a review timeline. | Independent of the chronology/AOS path unless architecture review chooses earlier. |
 | **P1-10** local development environment cleanup | Optional and blocked by user-data safety. Local DB stamp is stale; protected stashes exist. | Explicit user approval for data/stash actions. | Automatic DB recreation, `alembic stamp`, stash application/deletion. | Last, and only with approval. |
 
@@ -385,7 +386,7 @@ PR #31's independent reviews found five preparation correctness issues plus one 
 
 ## 12. First-run checklist for a new AI
 
-1. Read `AI-HANDOFF.md`, `docs/architecture/personal-author-os-roadmap.md`, and `docs/architecture/story-summary-chronology.md`. The next action is final targeted re-review of PR #31's identical-timestamp Character/Lore provider-visible order.
+1. Read `AI-HANDOFF.md`, `docs/architecture/personal-author-os-roadmap.md`, and `docs/architecture/story-summary-chronology.md`. PRs #31/#32 are merged. The next action is PR #33 targeted independent re-review of Gemini terminal completion/errors and backend→frontend SSE wire compatibility.
 2. Fetch and compare `origin/main`; if this handoff SHA (`b5b51a4`) is no longer current, re-validate GitHub state, code call sites, and status documents.
 3. Check the working tree and list stashes without modifying either. Keep user work, the local DB, and stashes untouched.
 4. Confirm `FEATURES["entry_store_context"]` still defaults OFF and Alembic head remains `0003_edit_diff_capture` without running or changing the user's local DB.

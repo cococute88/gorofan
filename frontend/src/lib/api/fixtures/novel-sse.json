@@ -1,0 +1,8 @@
+{
+  "success": "event: token\r\ndata: {\"delta\": \"새 문장이 \"}\r\n\r\nevent: token\r\ndata: {\"delta\": \"이어졌다. 😊\"}\r\n\r\nevent: done\r\ndata: {\"message_id\": null, \"token_count\": 13, \"finish_reason\": \"stop\"}\r\n\r\n",
+  "premature_eof": "event: token\r\ndata: {\"delta\": \"앞부분\"}\r\n\r\nevent: error\r\ndata: {\"code\": \"PROVIDER_ERROR\", \"message\": \"Gemini stream ended before completion\"}\r\n\r\n",
+  "rate_limited": "event: token\r\ndata: {\"delta\": \"앞부분\"}\r\n\r\nevent: error\r\ndata: {\"code\": \"PROVIDER_RATE_LIMIT\", \"message\": \"Gemini rate limited\"}\r\n\r\n",
+  "blocked": "event: error\r\ndata: {\"code\": \"PROVIDER_ERROR\", \"message\": \"Gemini blocked the prompt\"}\r\n\r\n",
+  "budget_error": "event: error\r\ndata: {\"code\": \"VALIDATION_ERROR\", \"message\": \"Prompt cannot fit the available context budget\"}\r\n\r\n",
+  "other_provider_error": "event: token\r\ndata: {\"delta\": \"이어\"}\r\n\r\nevent: token\r\ndata: {\"delta\": \"쓰기\"}\r\n\r\nevent: error\r\ndata: {\"code\": \"PROVIDER_ERROR\", \"message\": \"provider exploded\"}\r\n\r\n"
+}
