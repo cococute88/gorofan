@@ -154,6 +154,9 @@ available. An optional root-owned executable `/etc/gorofan/backup-upload` (700)
 receives the verified archive path; implement authenticated external transfer
 there, with credentials outside Git. Hook failure fails backup. The upload
 success marker is an operational signal, not proof of remote retention/restore.
+The managed-PC helper records a separate `last-managed-pc-copy` receipt only
+after archive and env SHA-256 verification. `check.sh` reports both receipts and
+warns if either is older than 24 hours. Keep checking the PC copy's retention.
 
 When no external hook exists, use the provided Windows managed-PC pull script:
 
@@ -229,7 +232,12 @@ replacement secret before restoring encrypted production data.
 
 Public HTTPS is outside this baseline's completion criteria. Before any public
 exposure, verify real OAuth login/auth, exact CORS and redirect origins,
-production secrets, and TLS. Reuse an existing nginx/Caddy proxy; avoid duplicate
+production secrets, TLS, and patched application dependencies. The initial A1
+build of current main emitted npm audit warnings (42 findings, including two
+critical), and Next 14.2.5's upstream security warning. Do not run audit-fix/major
+upgrades opportunistically during deployment; review/test a patched dependency
+update before public ingress. See the [Next.js security advisory](https://nextjs.org/blog/security-update-2025-12-11).
+Reuse an existing nginx/Caddy proxy; avoid duplicate
 proxies. Only then review OS firewall and OCI Security List/NSG rules for 80/443.
 Keep 3000/8000 host sockets local and preserve the existing SSH rule.
 
@@ -254,3 +262,39 @@ add CPU burn, fake traffic, memory reservation or artificial benchmark cron.
 Maintain off-instance data **and** secret backups and rehearse restoration.
 
 Source: [Oracle Always Free Resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm#compute__idleinstances).
+
+## Initial actual A1 validation (2026-09-13)
+
+The initial deployment/tested application commit was
+`fc1d41974743cdde100235aabef0c714b36059a3`, containing the main baseline above.
+After operational script/document refinements, redeploy the final branch head;
+the state file and image tags remain the authority for the current running SHA.
+
+| Check | Actual result |
+| --- | --- |
+| Inventory | Ubuntu 24.04.4 LTS, AArch64, OCI A1 shape, metadata 1 OCPU / 1 GiB RAM |
+| Disk | 45 GiB root filesystem, about 38 GiB free after build |
+| Docker / Compose | 29.1.3 / 2.40.3 (Ubuntu packages); Docker enabled |
+| Existing service | `vr-monitor` at localhost:8010 preserved; same PID after Docker restart |
+| Images | Python and Node ARM64 manifests verified; both images built on A1 |
+| Backend | Running/healthy; `/healthz` HTTP 200 |
+| Frontend | Running/healthy; `/` and proxied `/api/v1/auth/me` HTTP 200 |
+| Browser | Managed-PC SSH tunnel: home renders, proposal/chat/novel lists load |
+| SQLite | Fresh DB, exact `0003_edit_diff_capture`, persistent host mount |
+| Recreation | Both containers recreated; same DB inode, user rows and schema retained |
+| Restart | Docker daemon restarted; both healthy without running compose up |
+| Whole-server reboot | Not performed; daemon restart simulation only |
+| Secret/logs | Random external key, root:root 600; key absent from captured app logs |
+| Backup | SQLite online backup integrity/head verified; DB/media archive generated |
+| Off-instance | Archive and separate env pulled to private managed-PC directory; SHA-256 verified |
+| Restore validation | PC archive extracted; SQLite integrity/head and user rows verified |
+| Full new A1 drill | Runbook provided; no new instance provisioned/tested |
+| Resource sample after restart | About 413 MiB RAM used, 534 MiB available; app containers about 69/35 MiB |
+| Build resource safety | Sequential builds, one Next worker, 2 GiB swap; no OOM observed |
+| Public/auth/TLS | No public gorofan ingress; AUTH disabled, SSH-only; TLS/auth hardening pending |
+| OCI rules/account | No OCI credentials/config found; console NSG/Security List and account status unverified |
+| Gemini | No credential installed and no live Google generation requested |
+
+Off-instance copies are manual managed-PC backups. Automatic server upload is
+not configured; maintain freshness/PC retention or connect the external hook.
+This is not a reclamation-prevention guarantee.

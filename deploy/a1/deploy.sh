@@ -8,7 +8,9 @@ branch=$(git -C "$ROOT" branch --show-current)
 [[ $(git -C "$ROOT" rev-parse HEAD) == $(git -C "$ROOT" rev-parse "origin/$branch") ]] || die "Checkout differs from remote; synchronize approved commit first."
 compose config --quiet
 install -d -m 700 "$STATE"
-[[ ! -f $STATE/current-commit ]] || cp "$STATE/current-commit" "$STATE/previous-commit"
+if [[ -f $STATE/current-commit && $(cat "$STATE/current-commit") != "$GOROFAN_DEPLOY_SHA" ]]; then
+  cp "$STATE/current-commit" "$STATE/previous-commit"
+fi
 printf '%s\n' "$GOROFAN_DEPLOY_SHA" > "$STATE/attempted-commit"
 [[ ! -f /srv/gorofan/data/app.db ]] || bash "$ROOT/deploy/a1/backup.sh"
 # Keep builds sequential on small A1 shapes, before stopping the working app.

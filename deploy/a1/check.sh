@@ -26,6 +26,13 @@ else:
     if age > 86400:
         print('WARNING: DB backup older than 24 hours')
 marker = Path('/srv/gorofan/backups/last-off-instance-upload')
-print('Off-instance hook upload: ' + (marker.read_text().strip() if marker.exists() else 'UNVERIFIED; confirm managed-PC copy separately'))
+pc = Path('/srv/gorofan/backups/last-managed-pc-copy')
+print('Off-instance hook upload: ' + (marker.read_text().strip() if marker.exists() else 'not configured'))
+print('Verified managed-PC copy: ' + (pc.read_text().strip() if pc.exists() else 'UNVERIFIED'))
+if not marker.exists() and not pc.exists():
+    print('RECOVERY BLOCKER: no verified off-instance transfer receipt')
+for receipt in (marker, pc):
+    if receipt.exists() and time.time() - receipt.stat().st_mtime > 86400:
+        print(f'WARNING: {receipt.name} older than 24 hours; transfer a fresh backup')
 PY
 echo 'Backend + frontend + frontend API proxy checks passed.'

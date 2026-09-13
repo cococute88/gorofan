@@ -18,7 +18,9 @@ assert dst.execute('select version_num from alembic_version').fetchall() == [('0
 dst.close()
 src.close()
 PY
-printf '%s\n' "$GOROFAN_DEPLOY_SHA" > "$work/source-commit"
+source_sha=$GOROFAN_DEPLOY_SHA
+[[ ! -f $STATE/current-commit ]] || source_sha=$(cat "$STATE/current-commit")
+printf '%s\n' "$source_sha" > "$work/source-commit"
 cp -a /srv/gorofan/data/media "$work/media"
 # Include additional persistent files, excluding SQLite live files and media.
 tar -C /srv/gorofan/data --exclude='./app.db' --exclude='./app.db-*' --exclude='./media' -czf "$work/extra-data.tar.gz" .

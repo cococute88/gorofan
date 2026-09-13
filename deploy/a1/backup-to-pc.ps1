@@ -5,7 +5,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'This managed-PC helper requires Windows.' }
-if ($SshTarget -notmatch '^[a-zA-Z0-9_.@:-]+$') { throw 'Invalid SSH target.' }
+if ($SshTarget -notmatch '^[a-zA-Z0-9_][a-zA-Z0-9_.@:-]*$') { throw 'Invalid SSH target.' }
 $IdentityFile = (Resolve-Path -LiteralPath $IdentityFile).Path
 $Destination = [IO.Path]::GetFullPath($Destination)
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -61,8 +61,10 @@ function Receive-Ssh([string]$Command, [string]$OutputFile) {
     $process.Dispose()
     return $result
 }
-$null = Receive-Ssh 'cd /opt/gorofan && sudo -n bash deploy/a1/backup.sh'
-$archive = (Receive-Ssh 'sudo -n find /srv/gorofan/backups -maxdepth 1 -type f -name gorofan-*.tar.gz -printf %f\\n | sort | tail -1').Trim()
+$backupResult = Receive-Ssh 'cd /opt/gorofan && sudo -n bash deploy/a1/backup.sh'
+$verified = [regex]::Matches($backupResult, '(?m)^Backup verified: /srv/gorofan/backups/(gorofan-[a-zA-Z0-9-]+\.tar\.gz)\r?$')
+if ($verified.Count -ne 1) { throw 'Exactly one completed server backup is required.' }
+$archive = $verified[0].Groups[1].Value
 if ($archive -notmatch '^gorofan-[a-zA-Z0-9-]+\.tar\.gz$') { throw 'Unexpected server archive name.' }
 $snapshot = Join-Path $Destination ([IO.Path]::GetFileNameWithoutExtension([IO.Path]::GetFileNameWithoutExtension($archive)))
 New-Item -ItemType Directory -Path $snapshot | Out-Null
@@ -76,4 +78,5 @@ Receive-Ssh 'sudo -n cat /etc/gorofan/gorofan.env' $envPath
 $envHash = ((Receive-Ssh 'sudo -n sha256sum /etc/gorofan/gorofan.env') -split '\s+')[0]
 if ($envHash -notmatch '^[a-f0-9]{64}$' -or (Get-FileHash -Algorithm SHA256 -LiteralPath $envPath).Hash.ToLowerInvariant() -ne $envHash) { throw 'Environment checksum mismatch.' }
 Set-Content -LiteralPath (Join-Path $snapshot 'gorofan.env.sha256') -Value "$envHash  gorofan.env"
+$null = Receive-Ssh 'date -u +%FT%TZ | sudo -n tee /srv/gorofan/backups/last-managed-pc-copy >/dev/null'
 Write-Output 'Off-instance DB/media archive and separate production env copied; SHA-256 verified. Private current-user ACL applied.'
